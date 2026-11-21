@@ -6,6 +6,7 @@ use crate::gfx::{Canvas, HAlign, IRect};
 use crate::multitap::MultiTap;
 use crate::skin::Theme;
 use crate::strings as tr;
+use crate::touch::Hit;
 use crate::widgets::{self, Edit, ListState};
 use crate::UiConfig;
 use opendeskphone_hal::Lamp;
@@ -99,6 +100,38 @@ pub(crate) trait Screen: Send {
         None
     }
     fn key(&mut self, cx: &Cx, key: Key) -> Nav;
+    /// Touch: a finger tapped a region this screen registered as it drew
+    /// ([`crate::gfx::Canvas::hit`]) with [`Hit::Custom`] or [`Hit::Row`],
+    /// at pixel (`x`, `y`) of the screen.  (The other kinds of region
+    /// never come here: a [`Hit::Key`] comes as the key, a [`Hit::Soft`]
+    /// as the softkey action.)  A row this returns [`Nav::Ignored`] for is
+    /// selected in the screen's [`Screen::list_state`], if it has one, and
+    /// then [`Key::Select`] is pressed.
+    fn tap(&mut self, _cx: &Cx, _hit: Hit, _x: i32, _y: i32) -> Nav {
+        Nav::Ignored
+    }
+    /// Touch: a finger stayed on a [`Hit::Custom`] or [`Hit::Row`] region.
+    /// [`Nav::Ignored`] makes it a tap.
+    fn long_press(&mut self, _cx: &Cx, _hit: Hit, _x: i32, _y: i32) -> Nav {
+        Nav::Ignored
+    }
+    /// Touch: a finger that went down on `from` (a region of this
+    /// screen's, [`Hit::Custom`] or [`Hit::Row`], or none) moved `dx` and
+    /// `dy` pixels (up is negative).  Called for every movement of the
+    /// drag.  When this returns [`Nav::Ignored`], the screen's
+    /// [`Screen::list_state`], if it has one, is scrolled by rows of the
+    /// skin's height.
+    fn drag(&mut self, _cx: &Cx, _from: Option<Hit>, _dx: i32, _dy: i32) -> Nav {
+        Nav::Ignored
+    }
+    /// Touch: the one list of a screen that draws it with
+    /// [`widgets::list`] in rows of the skin's height (`row_h`), and the
+    /// number of its rows.  With it, and nothing else, a tap on a row
+    /// selects the row and presses [`Key::Select`], and a drag scrolls
+    /// the list.
+    fn list_state(&mut self, _cx: &Cx) -> Option<(&mut ListState, usize)> {
+        None
+    }
     /// The handset was lifted or replaced.
     fn hook(&mut self, _cx: &Cx, _off_hook: bool) -> Nav {
         Nav::Ignored
@@ -226,7 +259,11 @@ impl Screen for Menu {
     fn name(&self) -> String {
         self.name.into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: an item is touched, and the title bar has the way back.
+        if cx.th.touch {
+            return Vec::new();
+        }
         vec![soft(1, tr::SELECT), soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
@@ -235,6 +272,17 @@ impl Screen for Menu {
             4 => Nav::Pop,
             _ => Nav::Stay,
         }
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Row { row, .. } => self.activate(cx, row as usize),
+            _ => Nav::Ignored,
+        }
+    }
+    fn drag(&mut self, cx: &Cx, _from: Option<Hit>, _dx: i32, dy: i32) -> Nav {
+        let len = (self.build)(cx).len();
+        self.st.drag(dy, cx.th.row_h, len);
+        Nav::Stay
     }
     fn key(&mut self, cx: &Cx, key: Key) -> Nav {
         let len = (self.build)(cx).len();
@@ -262,14 +310,26 @@ impl Screen for Menu {
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
         let items = (self.build)(cx);
-        let num_w = if self.numbered { if th.gray { 15 } else { area.w / 10 } } else { th.pad };
+        // Touch: no row is the selected one (there is no cursor), and the
+        // rows have no numbers (there are no digit keys): an icon, or the
+        // title's inset.
+        let numbered = self.numbered && !th.touch;
+        let num_w = if numbered {
+            if th.gray { 15 } else { area.w / 10 }
+        } else if th.touch && items.iter().any(|it| it.icon.is_some()) {
+            th.back_w
+        } else if th.touch {
+            th.title_pad
+        } else {
+            th.pad
+        };
         let f = th.font(Font::Normal);
-        widgets::list(c, th, widgets::body_rows(th, body), items.len(), &mut self.st, th.row_h, true, |c, r, i, sel, fg| {
+        widgets::list(c, th, widgets::body_rows(th, body), items.len(), &mut self.st, th.row_h, !th.touch, |c, r, i, sel, fg| {
             let it = &items[i];
             let (num, rest) = r.split_left(num_w);
             if let Some(icon) = it.icon.and_then(|n| th.icon(n)) {
                 c.icon_in(icon, num, fg);
-            } else if self.numbered && i < 10 {
+            } else if numbered && i < 10 {
                 let n = if i == 9 { 0 } else { i + 1 };
                 c.text_in(f, num, &n.to_string(), if sel { fg } else { th.secondary }, HAlign::Center);
             }
@@ -351,7 +411,7 @@ impl Screen for EditScreen {
         c.fill(area, th.bg);
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
-        let h = if th.gray { th.line_h + 4 } else { 40 };
+        let h = if th.gray { th.line_h + 4 } else { th.px(40) };
         let r = IRect::new(body.x + th.pad * 2, body.y + (body.h - h) / 2, body.w - th.pad * 4, h);
         widgets::text_field(c, th, r, &self.text, self.cursor as usize, self.mode, true, self.tap.pending(cx.now_ms), "", Font::Normal);
     }
@@ -368,11 +428,27 @@ pub(crate) struct Info {
     title: String,
     build: Box<dyn Fn(&Cx) -> Vec<(String, String)> + Send>,
     top: usize,
+    /// Touch: how far a finger has dragged the rows, short of a row.
+    drag: i32,
 }
 
 impl Info {
     pub fn boxed(name: &'static str, title: impl Into<String>, build: impl Fn(&Cx) -> Vec<(String, String)> + Send + 'static) -> Box<dyn Screen> {
-        Box::new(Info { name, title: title.into(), build: Box::new(build), top: 0 })
+        Box::new(Info { name, title: title.into(), build: Box::new(build), top: 0, drag: 0 })
+    }
+}
+
+impl Info {
+    /// The height of a row: these rows are read, not touched, so the
+    /// touch skin's are lower than its lists'.
+    fn row_h(th: &Theme) -> i32 {
+        if th.gray {
+            th.line_h
+        } else if th.touch {
+            th.row_h * 3 / 4
+        } else {
+            th.row_h
+        }
     }
 }
 
@@ -380,11 +456,24 @@ impl Screen for Info {
     fn name(&self) -> String {
         self.name.into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the title bar has the way back.
+        if cx.th.touch {
+            return Vec::new();
+        }
         vec![soft(0, ""), soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
     }
     fn softkey(&mut self, _cx: &Cx, _id: u32) -> Nav {
         Nav::Pop
+    }
+    fn drag(&mut self, cx: &Cx, _from: Option<Hit>, _dx: i32, dy: i32) -> Nav {
+        let row_h = Self::row_h(cx.th);
+        self.drag -= dy;
+        let rows = self.drag / row_h;
+        self.drag -= rows * row_h;
+        // (Drawing keeps it within the rows there are.)
+        self.top = (self.top as i32 + rows).max(0) as usize;
+        Nav::Stay
     }
     fn key(&mut self, _cx: &Cx, key: Key) -> Nav {
         match key {
@@ -408,7 +497,7 @@ impl Screen for Info {
         let rows = (self.build)(cx);
         // Stock (color): 32-pixel rows from y 42 with a hairline under
         // each, text inset 15 pixels.
-        let (row_h, top, inset) = if th.gray { (th.line_h, 0, th.pad + 2) } else { (th.row_h, 2, th.title_pad) };
+        let (row_h, top, inset) = if th.gray { (th.line_h, 0, th.pad + 2) } else { (Self::row_h(th), 2, th.title_pad) };
         let visible = ((body.h - top) / row_h).max(1) as usize;
         self.top = self.top.min(rows.len().saturating_sub(visible));
         let bar = rows.len() > visible;
@@ -424,7 +513,7 @@ impl Screen for Info {
                 widgets::key_value(c, th, r, k, v, th.fg, th.fg);
             }
             if !th.gray {
-                c.hline(r.x, r.bottom(), r.w + 4, th.border);
+                c.hline(r.x, r.bottom(), r.w + th.px(4), th.border);
             }
         }
         widgets::scroll_bar(c, th, body, rows.len() as i32, visible as i32, self.top as i32);
@@ -515,7 +604,11 @@ impl Screen for Level {
     fn name(&self) -> String {
         "level".into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the title bar has the way back.
+        if cx.th.touch {
+            return vec![soft(1, "\u{2013}"), soft(2, "+")];
+        }
         vec![soft(1, "\u{2013}"), soft(2, "+"), soft(0, ""), soft(4, tr::BACK)]
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
@@ -541,7 +634,7 @@ impl Screen for Level {
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
         let level = self.shown.unwrap_or_else(|| (self.get)(cx));
-        let h = if th.gray { 10 } else { 22 };
+        let h = if th.gray { 10 } else { th.px(22) };
         let r = IRect::new(body.x + th.pad * 3, body.y + (body.h - h) / 2, body.w - th.pad * 6, h);
         widgets::progress(c, th, r, level as u32 * 100 / self.max.max(1) as u32);
         c.text_in(
@@ -577,7 +670,7 @@ pub(crate) fn splash(c: &mut Canvas, th: &Theme, area: IRect, title: &str, text:
     );
     y += used + 2;
     if let Some(p) = percent {
-        let h = if th.gray { 8 } else { 14 };
+        let h = if th.gray { 8 } else { th.px(14) };
         if y + h <= area.bottom() {
             widgets::progress(c, th, IRect::new(area.x + area.w / 6, y, area.w * 2 / 3, h), p);
         }

@@ -36,7 +36,7 @@ pub use mtd::*;
 pub use null::Null;
 pub use system::*;
 
-pub use opendeskphone_state::{AudioPath, Blink, Family, Key, LampColor, LampState, Model, Size};
+pub use opendeskphone_state::{AudioPath, Blink, Family, Key, LampColor, LampState, Model, Size, TouchPhase};
 
 /// Every hardware function for one phone.  Fields are public so that each
 /// subsystem can take ownership of its part (`std::mem::replace` with a

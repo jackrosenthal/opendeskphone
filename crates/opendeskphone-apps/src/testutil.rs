@@ -128,6 +128,9 @@ fn metrics_for(model: opendeskphone_state::Model) -> Metrics {
         opendeskphone_state::Skin::SmallGray => (Skin::SmallGray, 15, 15, 1, 15, 4, false),
         opendeskphone_state::Skin::LargeGray => (Skin::LargeGray, 17, 17, 1, 17, 4, false),
         opendeskphone_state::Skin::Color => (Skin::Color, 25, 40, 4, 32, 8, true),
+        // TODO(D80 app API): no `touch` skin in the app interface yet;
+        // as `uishell.rs` has it.
+        opendeskphone_state::Skin::Touch => (Skin::Color, 44, 96, 8, 96, 12, true),
     };
     Metrics {
         skin,

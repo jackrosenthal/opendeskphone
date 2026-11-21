@@ -170,6 +170,7 @@ impl Metrics {
             Skin::SmallGray => (15, 15, 1, 15, 4, false),
             Skin::LargeGray => (17, 17, 1, 17, 4, false),
             Skin::Color => (25, 40, 4, 32, 8, true),
+            Skin::Touch => (44, 96, 8, 96, 12, true),
         };
         Metrics {
             skin,

@@ -1,4 +1,4 @@
-//! The three skins: metrics, colors, fonts, and icons per screen class.
+//! The four skins: metrics, colors, fonts, and icons per screen class.
 //!
 //! The geometry here is measured from stock firmware screenshots, so that
 //! line-key labels sit beside their physical keys and softkey labels above
@@ -20,6 +20,14 @@
 //!
 //! Colors of the color skin are the stock values by measurement; the
 //! wallpaper and every bitmap are our own.
+//!
+//! The touch skin (D80: 800x1280, upright, about 216 pixels to the inch)
+//! is measured from nothing: the D80 has no keys for a label to sit
+//! beside.  It has the color skin's colors, fonts and icons of about twice
+//! the color skin's pixels (the same size to the eye), and everything
+//! that is touched is at least [`Theme::touch_min`] pixels each way.  Its
+//! softkeys are buttons ([`Theme::soft_button`]), and its screens say
+//! where they can be touched as they draw ([`crate::touch::Hit`]).
 
 use crate::appview::{Color, Font, ThemeColor};
 use crate::atlas;
@@ -32,6 +40,18 @@ use opendeskphone_state::{Model, Skin};
 pub struct Theme {
     pub skin: Skin,
     pub gray: bool,
+    /// The touch skin: the screen is touched, and there are no keys.
+    pub touch: bool,
+    /// How many of this skin's pixels a pixel of the color skin is, for a
+    /// length that is the same to the eye ([`Theme::px`]): 2 on the touch
+    /// skin, 1 on the others.
+    pub scale: i32,
+    /// The least width and height of what is touched (a button, a row):
+    /// 88 pixels on the touch skin, about 10 mm; 0 on the others.
+    pub touch_min: i32,
+    /// The width of the back button at the left of a title bar
+    /// ([`crate::widgets::title_bar`]); 0 where there is none.
+    pub back_w: i32,
     fonts: &'static [&'static FontData; 9],
     icons: &'static [IconRec],
     icon_data: &'static [u8],
@@ -113,9 +133,15 @@ pub struct Theme {
 
 static SMALL_GRAY: Theme = gray_theme(Skin::SmallGray);
 static LARGE_GRAY: Theme = gray_theme(Skin::LargeGray);
-static COLOR: Theme = Theme {
+static COLOR: Theme = COLOR_INIT;
+/// The color skin, as a value the touch skin is made from.
+const COLOR_INIT: Theme = Theme {
     skin: Skin::Color,
     gray: false,
+    touch: false,
+    scale: 1,
+    touch_min: 0,
+    back_w: 0,
     fonts: &atlas::FONTS_COLOR,
     icons: atlas::ICONS_COLOR,
     icon_data: atlas::ICON_DATA_COLOR,
@@ -168,11 +194,54 @@ static COLOR: Theme = Theme {
     wallpaper_fg: rgb(0xEE, 0xEE, 0xEE),
 };
 
+/// The touch skin: the color skin's colors, at the D80's size.
+///
+/// From the bottom: softkey buttons in rows of four, each row
+/// `softkey_h` (120) pixels with a button of 96 in it.  Lists have rows of
+/// 96, and a title bar is 96 tall with the back button at its left.  The
+/// lines (the D80's stand-in for line keys) are a column of tabs of 96 at
+/// the right half of the screen, from the top, as on the other skins.
+static TOUCH: Theme = Theme {
+    skin: Skin::Touch,
+    touch: true,
+    scale: 2,
+    touch_min: 88,
+    back_w: 96,
+    fonts: &atlas::FONTS_TOUCH,
+    icons: atlas::ICONS_TOUCH,
+    icon_data: atlas::ICON_DATA_TOUCH,
+    width: 800,
+    height: 1280,
+    softkey_h: 120,
+    soft_x0: 12,
+    soft_pitch: 197,
+    soft_w: 185,
+    soft_y: 1172,
+    soft_h: 96,
+    tab_x: 400,
+    tab_w: 400,
+    tab_h: 96,
+    idle_tab_x: 400,
+    header_h: 96,
+    line_h: 44,
+    row_h: 96,
+    title_h: 96,
+    scroll_w: 12,
+    pad: 16,
+    title_pad: 24,
+    icon: 44,
+    ..COLOR_INIT
+};
+
 const fn gray_theme(skin: Skin) -> Theme {
     let large = matches!(skin, Skin::LargeGray);
     Theme {
         skin,
         gray: true,
+        touch: false,
+        scale: 1,
+        touch_min: 0,
+        back_w: 0,
         fonts: if large { &atlas::FONTS_LARGE_GRAY } else { &atlas::FONTS_SMALL_GRAY },
         icons: if large { atlas::ICONS_LARGE_GRAY } else { atlas::ICONS_SMALL_GRAY },
         icon_data: if large { atlas::ICON_DATA_LARGE_GRAY } else { atlas::ICON_DATA_SMALL_GRAY },
@@ -486,6 +555,10 @@ impl Theme {
             wallpaper_fg: p.wallpaper_fg,
             skin: self.skin,
             gray: self.gray,
+            touch: self.touch,
+            scale: self.scale,
+            touch_min: self.touch_min,
+            back_w: self.back_w,
             fonts: self.fonts,
             icons: self.icons,
             icon_data: self.icon_data,
@@ -521,12 +594,24 @@ impl Theme {
     /// The color skin in the palette of a built-in wallpaper.  The default
     /// wallpaper's is the skin's own.
     pub fn for_wallpaper(wallpaper: &'static crate::wallpaper::Wallpaper) -> &'static Theme {
-        static THEMES: std::sync::OnceLock<Vec<Theme>> = std::sync::OnceLock::new();
+        COLOR.in_wallpaper(wallpaper)
+    }
+
+    /// This skin (the color skin's, or the touch skin's, own theme) in
+    /// the palette of a built-in wallpaper; the skin's own theme when the
+    /// palette is the skin's own.  A gray skin has no palettes: itself.
+    pub fn in_wallpaper(&'static self, wallpaper: &'static crate::wallpaper::Wallpaper) -> &'static Theme {
+        static THEMES: [std::sync::OnceLock<Vec<Theme>>; 2] = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+        let (base, slot): (&'static Theme, usize) = match self.skin {
+            Skin::Color => (&COLOR, 0),
+            Skin::Touch => (&TOUCH, 1),
+            Skin::SmallGray | Skin::LargeGray => return self,
+        };
         let all = crate::wallpaper::all();
-        let themes = THEMES.get_or_init(|| all.iter().map(|w| COLOR.with_palette(&w.palette())).collect());
+        let themes = THEMES[slot].get_or_init(|| all.iter().map(|w| base.with_palette(&w.palette())).collect());
         match all.iter().position(|w| w.id == wallpaper.id) {
-            Some(i) if themes[i].palette() != COLOR.palette() => &themes[i],
-            _ => &COLOR,
+            Some(i) if themes[i].palette() != base.palette() => &themes[i],
+            _ => base,
         }
     }
 
@@ -534,12 +619,24 @@ impl Theme {
     /// palette is kept for as long as the program runs; there are as many
     /// as there were palette files.
     pub fn color_in(palette: &Palette) -> &'static Theme {
+        COLOR.in_palette(palette)
+    }
+
+    /// This skin (the color skin's, or the touch skin's, own theme) in
+    /// `palette`, kept as [`Theme::color_in`] keeps its themes.  A gray
+    /// skin has no palettes: itself.
+    pub fn in_palette(&'static self, palette: &Palette) -> &'static Theme {
         static MADE: std::sync::Mutex<Vec<&'static Theme>> = std::sync::Mutex::new(Vec::new());
+        let base: &'static Theme = match self.skin {
+            Skin::Color => &COLOR,
+            Skin::Touch => &TOUCH,
+            Skin::SmallGray | Skin::LargeGray => return self,
+        };
         let mut made = MADE.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(th) = made.iter().find(|th| th.palette() == *palette) {
+        if let Some(th) = made.iter().find(|th| th.skin == base.skin && th.palette() == *palette) {
             return th;
         }
-        let th: &'static Theme = Box::leak(Box::new(COLOR.with_palette(palette)));
+        let th: &'static Theme = Box::leak(Box::new(base.with_palette(palette)));
         made.push(th);
         th
     }
@@ -549,6 +646,7 @@ impl Theme {
             Skin::SmallGray => &SMALL_GRAY,
             Skin::LargeGray => &LARGE_GRAY,
             Skin::Color => &COLOR,
+            Skin::Touch => &TOUCH,
         }
     }
     pub fn for_model(model: Model) -> &'static Theme {
@@ -618,6 +716,33 @@ impl Theme {
             Color::Theme(t) => Some(self.theme_color(t)),
             Color::Rgb(r, g, b) => Some(rgb(r, g, b)),
         }
+    }
+
+    /// A length given in pixels of the color skin, in this skin's: the
+    /// same on the color skin, twice as many on the touch skin.  For the
+    /// sizes the screens give in numbers (a dialog's width, an inset).
+    pub const fn px(&self, color_px: i32) -> i32 {
+        color_px * self.scale
+    }
+
+    /// How many rows of buttons `n` softkeys take on the touch skin: four
+    /// to a row.
+    pub const fn soft_rows(&self, n: usize) -> i32 {
+        n.div_ceil(4) as i32
+    }
+
+    /// Button `i` of `n` softkeys on the touch skin: rows of four,
+    /// the first row uppermost, the last row at the bottom of the screen.
+    /// With four or fewer it is [`Theme::softkey_rect`].
+    pub const fn soft_button(&self, i: usize, n: usize) -> IRect {
+        let rows = self.soft_rows(n);
+        let row = (i / 4) as i32;
+        IRect::new(
+            self.soft_x0 + (i % 4) as i32 * self.soft_pitch,
+            self.soft_y - (rows - 1 - row) * self.softkey_h,
+            self.soft_w,
+            self.soft_h,
+        )
     }
 
     /// The app content area on the main screen.

@@ -1,4 +1,5 @@
-//! The built-in wallpapers of the color skin (480 x 272).
+//! The built-in wallpapers of the color skin (480 x 272), which the touch
+//! skin shows fitted to its screen ([`with_fitted`]).
 //!
 //! A wallpaper is a small description (a gradient and a few layers of
 //! shapes) that is drawn on the phone, in integers, when it is first
@@ -376,6 +377,71 @@ pub enum Backdrop<'a> {
     /// ([`Wallpaper::with_frame`]).
     Moving(&'static Wallpaper, u64),
     Picture(&'a Picture),
+}
+
+/// Calls `f` with the still picture of `backdrop` fitted to a screen of
+/// `w` x `h` pixels that is not the size the wallpapers are drawn at (the
+/// touch skin's 800 x 1280): scaled to cover the screen, the excess cut
+/// off evenly.  A built-in wallpaper is turned for an upright screen (its
+/// rows become the screen's columns), so that most of it shows; a picture
+/// is not turned.  One fitted picture is kept.
+///
+/// This is the simplest thing that fills the D80's screen with the theme's
+/// picture: a wallpaper drawn at the screen's own size, and the motion,
+/// are still to be done.
+pub fn with_fitted<R>(backdrop: Backdrop, w: i32, h: i32, f: impl FnOnce(&[u32]) -> R) -> R {
+    static KEPT: Mutex<Option<(String, i32, i32, Vec<u32>)>> = Mutex::new(None);
+    let key = match backdrop {
+        Backdrop::Builtin(wallpaper) | Backdrop::Moving(wallpaper, _) => format!("builtin {}", wallpaper.id),
+        Backdrop::Picture(picture) => {
+            // Which picture: where it is, and a sample of what it is.
+            let sample = picture.pixels().iter().step_by(97).fold(0u32, |a, p| a.rotate_left(5) ^ p);
+            format!("picture {:p} {sample:08x}", picture)
+        }
+    };
+    let mut kept = KEPT.lock().unwrap_or_else(|p| p.into_inner());
+    if kept.as_ref().is_none_or(|(k, kw, kh, _)| *k != key || (*kw, *kh) != (w, h)) {
+        *kept = None;
+        let fitted = match backdrop {
+            Backdrop::Builtin(wallpaper) | Backdrop::Moving(wallpaper, _) => wallpaper.with_pixels(|src| fit(src, w, h, h > w)),
+            Backdrop::Picture(picture) => fit(picture.pixels(), w, h, false),
+        };
+        *kept = Some((key, w, h, fitted));
+    }
+    f(&kept.as_ref().expect("just set").3)
+}
+
+/// `src` (`WIDTH` x `HEIGHT`) scaled to cover `w` x `h`, between its
+/// pixels in proportion; `turn` swaps its rows and columns first.
+fn fit(src: &[u32], w: i32, h: i32, turn: bool) -> Vec<u32> {
+    // The source's size along the screen's x and y.
+    let (sw, sh) = if turn { (HEIGHT, WIDTH) } else { (WIDTH, HEIGHT) };
+    let at = |sx: i32, sy: i32| {
+        let (sx, sy) = (sx.clamp(0, sw - 1), sy.clamp(0, sh - 1));
+        src[if turn { sx * WIDTH + sy } else { sy * WIDTH + sx } as usize]
+    };
+    // Source pixels to one of the screen's, in 1/256: the lesser of the
+    // two directions' covers the screen.
+    let step = (sw * 256 / w.max(1)).min(sh * 256 / h.max(1)).max(1);
+    let (x0, y0) = ((sw * 256 - w * step) / 2, (sh * 256 - h * step) / 2);
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for y in 0..h {
+        let fy = y0 + y * step;
+        let (sy, ty) = (fy >> 8, (fy & 255) as u32);
+        for x in 0..w {
+            let fx = x0 + x * step;
+            let (sx, tx) = (fx >> 8, (fx & 255) as u32);
+            let (a, b, c, d) = (at(sx, sy), at(sx + 1, sy), at(sx, sy + 1), at(sx + 1, sy + 1));
+            let ch = |shift: u32| {
+                let v = |p: u32| (p >> shift) & 255;
+                let top = v(a) * (256 - tx) + v(b) * tx;
+                let bottom = v(c) * (256 - tx) + v(d) * tx;
+                ((top * (256 - ty) + bottom * ty + 32768) >> 16) << shift
+            };
+            out.push(ch(16) | ch(8) | ch(0));
+        }
+    }
+    out
 }
 
 /// Every wallpaper, grouped by family in the order of [`Family::ALL`].

@@ -12,7 +12,7 @@ Run the commands on this page from the root of the repository, in a [`nix develo
 cargo run -p opendeskphone -- main --sim --model d60 --nvdata /tmp/opendeskphone-sim
 ```
 
-`--nvdata` names the directory that serves as nvdata.  `--model` accepts any of the seven models; the default is `d60`.  The main role logs to the terminal.
+`--nvdata` names the directory that serves as nvdata.  `--model` accepts any of the seven models, and `d80`, whose touchscreen user interface is under development (the simulator is the only place it runs); the default is `d60`.  The main role logs to the terminal.
 
 | Interface | Details |
 | --- | --- |

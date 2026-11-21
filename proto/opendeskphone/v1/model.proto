@@ -13,6 +13,7 @@ enum Model {
   MODEL_D62 = 5;
   MODEL_D65 = 6;
   MODEL_D70 = 7;
+  MODEL_D80 = 8;
 }
 
 // The kind of screen a model has, which its user interface is drawn for.
@@ -24,4 +25,6 @@ enum Skin {
   SKIN_LARGE_GRAY = 2;
   // D60, D62, D65: 480x272 color.
   SKIN_COLOR = 3;
+  // D80: 800x1280 color, upright, with a touchscreen.
+  SKIN_TOUCH = 4;
 }

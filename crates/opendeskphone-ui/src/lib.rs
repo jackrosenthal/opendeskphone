@@ -15,6 +15,8 @@
 //! - [`gfx`], [`font`], [`skin`], and [`widgets`] are the toolkit, public
 //!   for tools and tests.
 //! - [`wallpaper`] has the color skin's built-in wallpapers.
+//! - [`touch`] is the touch skin's input (D80): the regions of the screen
+//!   that can be touched, and the gestures of a finger.
 //!
 //! Fonts and artwork are rasterized at build time (`build.rs`) from
 //! `assets/`; drawing at run time uses no floating point.  The one file
@@ -35,6 +37,7 @@ mod screens;
 pub mod skin;
 pub mod strings;
 pub mod time;
+pub mod touch;
 mod ui;
 pub mod wallpaper;
 pub mod widgets;
@@ -45,6 +48,7 @@ mod atlas {
 }
 
 pub use appview::{AppEvent, AppEvents, AppView};
+pub use touch::{Gesture, Hit};
 pub use ui::{IdleSoftkey, Ui, UiConfig, UiHandle, TRIAL_COVER_MAX_SECS};
 
 /// Size in pixels of the area on the idle screen offered to an app's idle

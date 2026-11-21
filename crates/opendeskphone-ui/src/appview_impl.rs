@@ -236,7 +236,7 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
             }
         }
         WidgetKind::List => {
-            let mut st = ListState { selected: node.selected as usize, top: node.top_row as usize };
+            let mut st = ListState { selected: node.selected as usize, top: node.top_row as usize, drag: 0 };
             let bar = node.rows.len() as i32 * node.row_height as i32 > r.h;
             let widths = column_widths(&node.columns, r.w - if bar { th.scroll_w } else { 0 });
             // A list shows its selection whenever it has focus, or when
@@ -433,7 +433,7 @@ fn dispatch_locked(tree: &mut Tree, key: Key, now_ms: u64, events: &mut Vec<AppE
                 let len = n.rows.len();
                 match key {
                     Key::Up | Key::Down => {
-                        let mut st = ListState { selected: n.selected as usize, top: n.top_row as usize };
+                        let mut st = ListState { selected: n.selected as usize, top: n.top_row as usize, drag: 0 };
                         if st.step(if key == Key::Up { -1 } else { 1 }, len, n.wrap_selection) {
                             n.selected = st.selected as u32;
                             events.push(AppEvent::ListSelected { widget: id, row: n.selected });

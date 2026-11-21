@@ -48,7 +48,7 @@ impl Screen for AlarmScreen {
         let (time, mer) = (at.time(h24), at.meridiem(h24));
         let (big, sub) = (th.clock_font(), th.date_font());
         let icon = th.icon("alarm");
-        let gap = if th.gray { 4 } else { 10 };
+        let gap = if th.gray { 4 } else { th.px(10) };
         let digits = big.glyph('0').map(|g| g.top as i32).unwrap_or(big.ascent as i32);
         let (tw, mw) = (big.width(&time), if mer.is_empty() { 0 } else { sub.width(mer) + gap / 2 });
         let iw = icon.map(|i| i.width() + gap).unwrap_or(0);

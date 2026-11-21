@@ -66,6 +66,10 @@ impl CallLogScreen {
 }
 
 impl Screen for CallLogScreen {
+    fn list_state(&mut self, cx: &Cx) -> Option<(&mut ListState, usize)> {
+        let len = self.rows(cx).len();
+        Some((&mut self.st, len))
+    }
     fn name(&self) -> String {
         "call_log".into()
     }
@@ -257,7 +261,7 @@ impl Launcher {
 
 impl Launcher {
     fn columns(th: &Theme) -> usize {
-        if th.gray { 1 } else { 4 }
+        if th.gray { 1 } else if th.touch { 3 } else { 4 }
     }
     fn launch(&self, cx: &Cx) -> Nav {
         if let Some(a) = visible_apps(cx).get(self.st.selected) {
@@ -789,6 +793,9 @@ fn ringtones() -> Box<dyn Screen> {
 }
 
 impl Screen for Ringtones {
+    fn list_state(&mut self, cx: &Cx) -> Option<(&mut ListState, usize)> {
+        Some((&mut self.st, cx.cfg.ringtones.len()))
+    }
     fn name(&self) -> String {
         "ringtones".into()
     }

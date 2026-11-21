@@ -154,6 +154,10 @@ pub enum Command {
     InjectKey { key: Key, down: bool },
     /// Lift or replace the handset, as if from the hookswitch.
     InjectHook { off_hook: bool },
+    /// A touch of the main screen at pixel (`x`, `y`), as if from the
+    /// touchscreen (web screen mirror, SSH diagnostics, tests).  A model
+    /// without a touchscreen refuses it.
+    InjectTouch { phase: crate::TouchPhase, x: u16, y: u16 },
     /// Raise a notice.  Replies [`Reply::Id`].
     Notify { level: NoticeLevel, title: String, text: String, timeout_ms: u32 },
     DismissNotice { id: u64 },
@@ -270,7 +274,7 @@ impl Command {
             SetAudioPath { .. } | SetMute { .. } | SetVolume { .. } | AdjustVolume { .. }
             | SetHeadsetMode { .. } | PlayTone { .. } | StopTone | PlaySound { .. } | PlayAlarmTone { .. }
             | PlayData { .. } | StopSound => Domain::Audio,
-            InjectKey { .. } | InjectHook { .. } | Notify { .. } | DismissNotice { .. }
+            InjectKey { .. } | InjectHook { .. } | InjectTouch { .. } | Notify { .. } | DismissNotice { .. }
             | SetBacklight { .. } | SetContrast { .. } | ShowScreen { .. } | ResetIdleTimer => Domain::Ui,
             ReloadConfig | SetSettings { .. } | SetTheme { .. } | ReloadContacts => Domain::Config,
             StartProvisioning { .. } | SelectUser { .. } | Reprovision | ForgetProvisioning

@@ -29,6 +29,9 @@ pub const fn replication_for(family: Family) -> Replication {
     match family {
         Family::Old => Replication::BlockStart,
         Family::New => Replication::EveryPage,
+        // The D80 has no `ctrl` partition (its images are Android OTA
+        // packages), so this is never asked for one.
+        Family::Touch => Replication::EveryPage,
     }
 }
 

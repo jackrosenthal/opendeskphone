@@ -24,6 +24,9 @@ pub enum Event {
     Key { key: Key, down: bool, source: InputSource },
     /// The handset was lifted (`off_hook`) or replaced.
     Hook { off_hook: bool, source: InputSource },
+    /// The touchscreen was touched at pixel (`x`, `y`) of the main screen
+    /// (D80).  Emitted by the input owner, as keys are.
+    Touch { phase: crate::TouchPhase, x: u16, y: u16, source: InputSource },
     /// A new incoming call started alerting.
     IncomingCall { call: CallId },
     /// A call ended; carries its final snapshot (for the call log, screens,

@@ -837,6 +837,10 @@ impl api::config::Host for AppCtx {
             opendeskphone_state::Model::D62 => M::D62,
             opendeskphone_state::Model::D65 => M::D65,
             opendeskphone_state::Model::D70 => M::D70,
+            // TODO(D80 app API): the app interface (`wit/app.wit`) has no
+            // `d80` phone model yet; an app is told the model whose skin
+            // it is given until then (see `uishell.rs`).
+            opendeskphone_state::Model::D80 => M::D65,
         }
     }
     fn firmware_version(&mut self) -> String {

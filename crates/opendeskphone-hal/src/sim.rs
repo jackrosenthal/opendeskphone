@@ -303,6 +303,28 @@ impl SimHandle {
         self.inject(InputEvent::Hook { off_hook });
     }
 
+    /// One event of a touch of the main screen (D80).
+    pub fn touch(&self, phase: TouchPhase, x: u16, y: u16) {
+        self.inject(InputEvent::Touch { phase, x, y });
+    }
+
+    /// A finger put down at (`x`, `y`) and lifted there.
+    pub fn touch_tap(&self, x: u16, y: u16) {
+        self.touch(TouchPhase::Down, x, y);
+        self.touch(TouchPhase::Up, x, y);
+    }
+
+    /// A finger put down at `from`, moved to `to` in `steps` moves, and
+    /// lifted there.
+    pub fn touch_drag(&self, from: (u16, u16), to: (u16, u16), steps: u16) {
+        self.touch(TouchPhase::Down, from.0, from.1);
+        let at = |a: u16, b: u16, i: u16| (a as i32 + (b as i32 - a as i32) * i as i32 / steps.max(1) as i32) as u16;
+        for i in 1..=steps.max(1) {
+            self.touch(TouchPhase::Move, at(from.0, to.0, i), at(from.1, to.1, i));
+        }
+        self.touch(TouchPhase::Up, to.0, to.1);
+    }
+
     // ---- lamps
 
     pub fn lamp(&self, lamp: Lamp) -> LampColor {

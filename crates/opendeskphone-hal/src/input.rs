@@ -1,6 +1,6 @@
-//! Keys and the hookswitch.
+//! Keys, the hookswitch, and the touchscreen.
 
-use crate::{Key, Result};
+use crate::{Key, Result, TouchPhase};
 use std::os::fd::RawFd;
 use std::time::Duration;
 
@@ -10,9 +10,13 @@ pub enum InputEvent {
     Key { key: Key, down: bool },
     /// `off_hook`: the handset was lifted.
     Hook { off_hook: bool },
+    /// The touchscreen (D80): one finger, at pixel (`x`, `y`) of the main
+    /// screen as the UI draws it (the backend turns the panel's own
+    /// coordinates into these).
+    Touch { phase: TouchPhase, x: u16, y: u16 },
 }
 
-/// Keypad and hookswitch.
+/// Keypad, hookswitch, and touchscreen.
 pub trait Input: Send {
     /// Waits for the next event.  `None` timeout blocks; `Some(0)` polls.
     /// Returns `Ok(None)` on timeout.

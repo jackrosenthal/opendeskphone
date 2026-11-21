@@ -5,6 +5,7 @@ use crate::appview::{Font, InputMode};
 use crate::gfx::{Canvas, HAlign, IRect, Rgb};
 use crate::multitap::{MultiTap, Tap};
 use crate::skin::Theme;
+use crate::touch::Hit;
 use opendeskphone_state::Key;
 
 /// Selection and scroll position of a list.
@@ -12,6 +13,9 @@ use opendeskphone_state::Key;
 pub struct ListState {
     pub selected: usize,
     pub top: usize,
+    /// Touch: how far a finger has dragged the list, in pixels, short of
+    /// a whole row ([`ListState::drag`]).
+    pub drag: i32,
 }
 
 impl ListState {
@@ -27,6 +31,28 @@ impl ListState {
         let new = if wrap { new.rem_euclid(len as i32) } else { new.clamp(0, len as i32 - 1) } as usize;
         self.selected = new;
         new != old
+    }
+
+    /// Touch: a finger dragged the list `dy` pixels (up is negative: the
+    /// rows follow the finger, so the list scrolls down).  The list moves
+    /// by whole rows of `row_h` pixels; what is left of the way is kept
+    /// for the next call.  [`list`] keeps the top row within the rows
+    /// there are when it next draws.  Returns whether the list moved.
+    pub fn drag(&mut self, dy: i32, row_h: i32, len: usize) -> bool {
+        self.drag -= dy;
+        let rows = self.drag / row_h.max(1);
+        self.drag -= rows * row_h.max(1);
+        let top = (self.top as i32 + rows).clamp(0, len.saturating_sub(1) as i32) as usize;
+        let moved = top != self.top;
+        self.top = top;
+        moved
+    }
+
+    /// Touch: clamps to `len` rows without scrolling to the selection
+    /// (the finger scrolls; nothing follows a cursor).
+    pub fn settle_touch(&mut self, len: usize, visible: usize) {
+        self.selected = self.selected.min(len.saturating_sub(1));
+        self.top = self.top.min(len.saturating_sub(visible.max(1)));
     }
 
     /// Clamps to `len` rows and scrolls so the selection is within the
@@ -55,7 +81,7 @@ pub fn scroll_bar(c: &mut Canvas, th: &Theme, r: IRect, total: i32, visible: i32
     } else {
         c.vline(track.x, track.y, track.h, th.border);
     }
-    let h = (r.h * visible / total).max(6);
+    let h = (r.h * visible / total).max(th.px(6));
     let y = r.y + (r.h - h) * pos / (total - visible).max(1);
     let thumb = IRect::new(track.x + 1, y, th.scroll_w - 1, h);
     c.fill(thumb, if th.gray { th.fg } else { th.secondary });
@@ -64,6 +90,11 @@ pub fn scroll_bar(c: &mut Canvas, th: &Theme, r: IRect, total: i32, visible: i32
 /// Draws rows of a list.  `draw_row(canvas, rect, index, selected, fg)`
 /// paints the content of one row (its background is already painted).
 /// Returns the number of visible rows.
+///
+/// On the touch skin each row shown is a region to touch,
+/// [`Hit::Row`] of list 0 ([`list_as`] for another number), and the list
+/// does not scroll to its selection: a finger scrolls it
+/// ([`ListState::drag`]).
 pub fn list(
     c: &mut Canvas,
     th: &Theme,
@@ -72,11 +103,31 @@ pub fn list(
     state: &mut ListState,
     row_h: i32,
     focused: bool,
+    draw_row: impl FnMut(&mut Canvas, IRect, usize, bool, Rgb),
+) -> usize {
+    list_as(c, th, r, len, state, row_h, focused, 0, draw_row)
+}
+
+/// [`list`], for a screen with more than one list: the rows' regions are
+/// [`Hit::Row`] of list `list`.
+pub fn list_as(
+    c: &mut Canvas,
+    th: &Theme,
+    r: IRect,
+    len: usize,
+    state: &mut ListState,
+    row_h: i32,
+    focused: bool,
+    list: u32,
     mut draw_row: impl FnMut(&mut Canvas, IRect, usize, bool, Rgb),
 ) -> usize {
     let row_h = row_h.max(1);
     let visible = (r.h / row_h).max(1) as usize;
-    state.settle(len, visible);
+    if th.touch {
+        state.settle_touch(len, visible);
+    } else {
+        state.settle(len, visible);
+    }
     let bar = len > visible;
     let w = if bar { r.w - th.scroll_w } else { r.w };
     let old = c.push_clip(r);
@@ -86,6 +137,9 @@ pub fn list(
             break;
         }
         let rr = IRect::new(r.x, r.y + i as i32 * row_h, w, row_h);
+        if th.touch {
+            c.hit(rr, Hit::Row { list, row: idx as u32 });
+        }
         let sel = idx == state.selected && focused;
         if sel {
             if th.gray {
@@ -97,7 +151,7 @@ pub fn list(
         draw_row(c, rr, idx, sel, if sel { th.sel_fg } else { th.fg });
         if !th.gray {
             // Stock: a hairline under each row.
-            c.hline(rr.x + 16, rr.bottom() - 1, rr.w - 24, th.border);
+            c.hline(rr.x + th.px(16), rr.bottom() - 1, rr.w - th.px(24), th.border);
         }
     }
     if bar {
@@ -107,12 +161,76 @@ pub fn list(
     visible
 }
 
-/// A title bar across `r`.
+/// A title bar across `r`.  On the touch skin it begins with the back
+/// button ([`back_button`]), which does what the X key does on a phone
+/// that has it.
 pub fn title_bar(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
     c.fill(r, th.title_bg);
+    let r = if th.touch {
+        let (back, rest) = r.split_left(th.back_w);
+        back_button(c, th, back, th.title_fg);
+        // The title begins where the other skins' does, after the button.
+        IRect { x: rest.x - th.title_pad, w: rest.w + th.title_pad, ..rest }
+    } else {
+        r
+    };
     let f = th.font(Font::Title);
     // Stock: left-aligned on every skin (x 15 on color, 3 on gray).
     c.text_in(f, IRect { x: r.x + th.title_pad, w: r.w - 2 * th.title_pad, ..r }, title, th.title_fg, HAlign::Left);
+}
+
+/// The touch skin's back button, in `r`: an arrow, and a region that is
+/// [`Key::Cancel`] (which leaves a screen, as the X key does).  For a
+/// screen that draws its own title.
+pub fn back_button(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) {
+    if let Some(icon) = th.icon("left") {
+        c.icon_in(icon, r, fg);
+    }
+    c.hit(r, Hit::Key(Key::Cancel));
+}
+
+/// A button of the touch skin in `r`: a rounded shape in `fill` (with an
+/// outline in `edge`, if given) with `label` in `fg` in its middle, and a
+/// region that is `hit`.  A label starting with `icon:` draws that icon
+/// instead.
+pub fn button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, fill: Rgb, edge: Option<Rgb>, fg: Rgb, hit: Hit) {
+    let rad = th.px(6);
+    match edge {
+        Some(edge) => {
+            c.fill_round_aa(r, rad, edge);
+            c.fill_round_aa(r.inset(2), rad - 2, fill);
+        }
+        None => c.fill_round_aa(r, rad, fill),
+    }
+    if let Some(icon) = label.strip_prefix("icon:").and_then(|n| th.icon(n)) {
+        c.icon_in(icon, r, fg);
+    } else {
+        // The smaller font for a label the usual one has no room for.
+        let inner = r.inset_xy(th.px(4), 0);
+        let f = th.font(Font::Bold);
+        let f = if f.width(label) > inner.w { th.font(Font::Small) } else { f };
+        c.text_in(f, inner, label, fg, HAlign::Center);
+    }
+    c.hit(r, hit);
+}
+
+/// The softkeys of the touch skin: buttons in rows of four above the
+/// bottom of the screen ([`Theme::soft_button`]), one for each entry that
+/// has a label, at the entry's position; each button's region is the
+/// entry's [`Hit`].  The colors are the softkeys' of the other skins
+/// ([`soft_style`]).  The background behind the buttons is the caller's.
+pub fn soft_buttons(c: &mut Canvas, th: &Theme, keys: &[(Hit, String)]) {
+    for (i, (hit, label)) in keys.iter().enumerate() {
+        if label.is_empty() {
+            continue;
+        }
+        let (fill, edge) = match soft_style(label) {
+            SoftStyle::Normal => (th.sk_bg, Some(th.sk_edge)),
+            SoftStyle::Go => (th.sk_go, None),
+            SoftStyle::Stop => (th.sk_stop, None),
+        };
+        button(c, th, th.soft_button(i, keys.len()), label, fill, edge, th.sk_fg, *hit);
+    }
 }
 
 /// How a softkey is colored.
@@ -202,7 +320,7 @@ pub fn progress(c: &mut Canvas, th: &Theme, r: IRect, percent: u32) {
 /// A level meter of `max` segments with `level` lit (volume popups).
 pub fn meter(c: &mut Canvas, th: &Theme, r: IRect, level: u32, max: u32) {
     let max = max.max(1) as i32;
-    let gap = if th.gray { 1 } else { 3 };
+    let gap = if th.gray { 1 } else { th.px(3) };
     let seg = (r.w - gap * (max - 1)) / max;
     for i in 0..max {
         let x = r.x + i * (seg + gap);
@@ -225,8 +343,8 @@ pub fn modal(c: &mut Canvas, th: &Theme, area: IRect, w: i32, h: i32) -> IRect {
         c.frame(r, th.fg);
         c.frame(r.inset(1), th.fg);
     } else {
-        c.fill_round(r.inset(-1), 5, th.sk_edge);
-        c.fill_round(r, 4, th.modal_bg);
+        c.fill_round(r.inset(-th.scale), th.px(5), th.sk_edge);
+        c.fill_round(r, th.px(4), th.modal_bg);
     }
     r.inset(th.pad)
 }
@@ -341,8 +459,8 @@ pub fn text_field(
         c.fill(r, th.bg);
         c.frame(r, th.fg);
     } else {
-        c.fill_round(r, 4, if focused { th.accent } else { th.sk_edge });
-        c.fill_round(r.inset(1), 3, th.input_bg());
+        c.fill_round(r, th.px(4), if focused { th.accent } else { th.sk_edge });
+        c.fill_round(r.inset(th.scale), th.px(3), th.input_bg());
     }
     let inner = r.inset_xy(th.pad.max(4), 2);
     if text.is_empty() && !placeholder.is_empty() {

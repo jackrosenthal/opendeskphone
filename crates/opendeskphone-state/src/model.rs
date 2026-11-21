@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-/// The seven supported phones.
+/// The supported phones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Model {
     D40,
@@ -14,13 +14,17 @@ pub enum Model {
     D62,
     D65,
     D70,
+    D80,
 }
 
 /// Hardware family.  Old: grayscale, 16 kHz audio.  New: color, 32 kHz audio.
+/// Touch: the D80, which has a touchscreen and no keys, and is not built on
+/// the processors of the other two.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Family {
     Old,
     New,
+    Touch,
 }
 
 /// UI skin class (plan section 10).
@@ -32,6 +36,9 @@ pub enum Skin {
     LargeGray,
     /// D60, D62, D65: 480x272 color.
     Color,
+    /// D80: 800x1280 color, upright, with a touchscreen: everything on it
+    /// is operated by touching it.
+    Touch,
 }
 
 /// A size in pixels.
@@ -54,6 +61,9 @@ pub enum Soc {
     Bcm11109,
     Bcm11189,
     Bcm11188,
+    /// The D80's processor, which is not of the BCMRING family.  Which it
+    /// is, is to be settled when the hardware is brought up.
+    D80,
 }
 
 /// Error from parsing a model name.
@@ -69,7 +79,7 @@ impl std::error::Error for UnknownModel {}
 
 impl Model {
     /// Every model, in numeric order.
-    pub const ALL: [Model; 7] = [
+    pub const ALL: [Model; 8] = [
         Model::D40,
         Model::D45,
         Model::D50,
@@ -77,6 +87,7 @@ impl Model {
         Model::D62,
         Model::D65,
         Model::D70,
+        Model::D80,
     ];
 
     /// The name as it appears in `digium_board=`, the EFF label, and the
@@ -90,6 +101,7 @@ impl Model {
             Model::D62 => "D62",
             Model::D65 => "D65",
             Model::D70 => "D70",
+            Model::D80 => "D80",
         }
     }
 
@@ -112,6 +124,7 @@ impl Model {
         match self {
             Model::D40 | Model::D45 | Model::D50 | Model::D70 => Family::Old,
             Model::D60 | Model::D62 | Model::D65 => Family::New,
+            Model::D80 => Family::Touch,
         }
     }
 
@@ -120,6 +133,7 @@ impl Model {
             Model::D40 | Model::D45 | Model::D50 => Skin::SmallGray,
             Model::D70 => Skin::LargeGray,
             Model::D60 | Model::D62 | Model::D65 => Skin::Color,
+            Model::D80 => Skin::Touch,
         }
     }
 
@@ -129,12 +143,19 @@ impl Model {
             Model::D45 | Model::D70 => Soc::Bcm11109,
             Model::D60 => Soc::Bcm11189,
             Model::D62 | Model::D65 => Soc::Bcm11188,
+            Model::D80 => Soc::D80,
         }
     }
 
-    /// True for the color panel (XRGB8888); false for gray (R8, four levels).
+    /// True for a color panel (XRGB8888); false for gray (R8, four levels).
     pub const fn is_color(self) -> bool {
-        matches!(self.skin(), Skin::Color)
+        matches!(self.skin(), Skin::Color | Skin::Touch)
+    }
+
+    /// True for the model whose screen is a touchscreen, and which has no
+    /// keys: the D80.
+    pub const fn is_touch(self) -> bool {
+        matches!(self.skin(), Skin::Touch)
     }
 
     /// Main display size.
@@ -143,6 +164,7 @@ impl Model {
             Skin::SmallGray => Size::new(240, 120),
             Skin::LargeGray => Size::new(320, 160),
             Skin::Color => Size::new(480, 272),
+            Skin::Touch => Size::new(800, 1280),
         }
     }
 
@@ -154,12 +176,14 @@ impl Model {
         }
     }
 
-    /// Height of the softkey bar at the bottom of the main screen.
+    /// Height of the softkey bar at the bottom of the main screen.  On the
+    /// touchscreen: of one row of softkey buttons.
     pub const fn softkey_bar_height(self) -> u16 {
         match self.skin() {
             Skin::SmallGray => 18,
             Skin::LargeGray => 20,
             Skin::Color => 29,
+            Skin::Touch => 120,
         }
     }
 
@@ -169,18 +193,34 @@ impl Model {
         Size::new(s.width, s.height - self.softkey_bar_height())
     }
 
-    /// Number of line keys beside the screen.
+    /// Number of line keys beside the screen.  The D80 has none.
     pub const fn line_keys(self) -> u8 {
         match self {
             Model::D40 | Model::D45 | Model::D60 | Model::D62 => 2,
             Model::D50 => 4,
             Model::D65 | Model::D70 => 6,
+            Model::D80 => 0,
+        }
+    }
+
+    /// Number of lines the screen shows: one beside each line key, and on
+    /// the D80, which has no line keys, the lines drawn on its screen
+    /// (touching one does what the line key of a model that has it does:
+    /// [`crate::Key::Line`]).  The call core's key table
+    /// ([`crate::Keys::line_keys`]) has this many positions.
+    ///
+    /// The D80's number is a choice, not a fact of the hardware, and is to
+    /// be settled with the hardware.
+    pub const fn lines(self) -> u8 {
+        match self {
+            Model::D80 => 6,
+            _ => self.line_keys(),
         }
     }
 
     /// Number of SIP accounts the factory layer allows.
     pub const fn max_accounts(self) -> u8 {
-        self.line_keys()
+        self.lines()
     }
 
     /// Dedicated BLF/rapid-dial keys (D50 and D70 have ten).
@@ -210,6 +250,8 @@ impl Model {
             Model::D70 => 6,
             // The D6x table lists six; a D60 has fewer fitted.
             Model::D60 | Model::D62 | Model::D65 => 6,
+            // Not established: the D80 is taken to have no lamps.
+            Model::D80 => 0,
         }
     }
 
@@ -223,11 +265,12 @@ impl Model {
     }
 
     pub const fn gigabit(self) -> bool {
-        matches!(self, Model::D45 | Model::D70 | Model::D62 | Model::D65)
+        matches!(self, Model::D45 | Model::D70 | Model::D62 | Model::D65 | Model::D80)
     }
 
     pub const fn bluetooth(self) -> bool {
-        matches!(self, Model::D65)
+        // The D80: by its data sheet; not yet seen on the hardware.
+        matches!(self, Model::D65 | Model::D80)
     }
 
     /// EXP100/EXP150 expansion modules (new family).
@@ -240,6 +283,10 @@ impl Model {
         match self.family() {
             Family::Old => 16_000,
             Family::New => 32_000,
+            // Not the hardware's: the new family's, whose voice processor
+            // the simulator stands in for.  To be settled with the D80's
+            // audio.
+            Family::Touch => 32_000,
         }
     }
 
@@ -248,6 +295,9 @@ impl Model {
         match self.family() {
             Family::Old => 31,
             Family::New => 32,
+            // A guess (the range of an Android backlight), to be settled
+            // with the hardware.
+            Family::Touch => 255,
         }
     }
 
@@ -256,6 +306,8 @@ impl Model {
         match self {
             Model::D40 | Model::D45 | Model::D50 | Model::D60 => 128,
             Model::D62 | Model::D65 | Model::D70 => 256,
+            // A guess, to be settled with the hardware.
+            Model::D80 => 1024,
         }
     }
 

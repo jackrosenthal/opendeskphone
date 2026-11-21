@@ -217,7 +217,7 @@ fn fabricate(store: &Store, model: Model) {
         a.default_account = Some(st::AccountId(0));
     });
     store.update::<st::Keys, _>(|k| {
-        k.line_keys = (0..model.line_keys())
+        k.line_keys = (0..model.lines())
             .map(|i| st::LineKey {
                 index: i,
                 binding: if i < 2 { st::LineKeyBinding::Account(st::AccountId(i)) } else { st::LineKeyBinding::Unused },

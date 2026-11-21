@@ -81,7 +81,7 @@ fn of_contact(c: &Contact, account: AccountId, location: BlfLocation, index: u8,
 /// The contacts of the BLF contact group on the keys the accounts leave
 /// free: per page the line keys, then (old family) the strip.
 fn from_group(contacts: &[&Contact], model: Model, accounts: usize, page_line_keys: bool, account: AccountId) -> Vec<BlfConfig> {
-    let keys = model.line_keys() as usize;
+    let keys = model.lines() as usize;
     let first = accounts.clamp(1, keys);
     let strip = if model.family() == Family::Old { model.blf_keys() as usize } else { 0 };
     let pages = model.blf_pages().max(1) as usize;

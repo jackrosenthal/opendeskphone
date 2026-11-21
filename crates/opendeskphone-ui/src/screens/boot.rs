@@ -100,6 +100,7 @@ impl Screen for Boot {
             Skin::SmallGray => (12, 7, 4),
             Skin::LargeGray => (16, 9, 5),
             Skin::Color => (30, 8, 12),
+            Skin::Touch => (60, 16, 24),
         };
         // The color artwork carries the name; on gray the name is text, in
         // black, so that its edges get all four levels.
@@ -338,6 +339,13 @@ impl Screen for Provision {
         // the count for Settings, Info, and About alike.
         if self.countdown != Countdown::Idle {
             self.countdown = Countdown::Stopped;
+        }
+    }
+    fn list_state(&mut self, cx: &Cx) -> Option<(&mut ListState, usize)> {
+        match cx.st.provisioning.phase {
+            ProvisionPhase::AwaitingServer => Some((&mut self.servers, Self::server_rows(cx))),
+            ProvisionPhase::AwaitingUser => Some((&mut self.users, cx.st.provisioning.users.len())),
+            _ => None,
         }
     }
     fn key(&mut self, cx: &Cx, key: Key) -> Nav {

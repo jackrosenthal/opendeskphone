@@ -461,7 +461,7 @@ impl Core {
         let presence = self.store.get::<opendeskphone_state::Presence>();
         let mwi = self.store.get::<opendeskphone_state::Mwi>();
         let mut line_keys = Vec::new();
-        for i in 0..model.line_keys() {
+        for i in 0..model.lines() {
             let id = AccountId(i);
             let mut key = LineKey { index: i, ..Default::default() };
             if let Some(a) = self.acct(id) {

@@ -393,7 +393,7 @@ pub(crate) struct Card<'a> {
 
 /// Height of one card including its separator line.
 pub(crate) fn card_pitch(th: &Theme) -> i32 {
-    if th.gray { 2 * th.line_h } else { 63 }
+    if th.gray { 2 * th.line_h } else { th.px(63) }
 }
 
 /// How many cards fit between the header and the softkeys.
@@ -408,7 +408,7 @@ pub(crate) fn card_rect(th: &Theme, idx: usize) -> IRect {
     if th.gray {
         IRect::new(0, th.header_h + 1 + idx as i32 * card_pitch(th), r.w, card_pitch(th))
     } else {
-        IRect::new(0, th.header_h + 1 + idx as i32 * card_pitch(th), r.w, 62)
+        IRect::new(0, th.header_h + 1 + idx as i32 * card_pitch(th), r.w, card_pitch(th) - 1)
     }
 }
 

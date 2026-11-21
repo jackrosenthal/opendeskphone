@@ -279,6 +279,10 @@ pub async fn tail_logs(
 
 /// The keys a model has.
 fn model_keys(model: st::Model) -> Vec<pb::Key> {
+    // The D80 has a touchscreen and no keys.
+    if model.is_touch() {
+        return Vec::new();
+    }
     let mut keys: Vec<Key> = (1..=model.line_keys()).map(Key::Line).collect();
     keys.extend((1..=4).map(Key::Soft));
     keys.extend([Key::Up, Key::Down, Key::Left, Key::Right, Key::Select, Key::Cancel]);

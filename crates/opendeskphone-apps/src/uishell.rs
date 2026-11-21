@@ -62,6 +62,11 @@ impl AppWindow for UiWindow {
                 opendeskphone_state::Skin::SmallGray => Skin::SmallGray,
                 opendeskphone_state::Skin::LargeGray => Skin::LargeGray,
                 opendeskphone_state::Skin::Color => Skin::Color,
+                // TODO(D80 app API): the app interface's `skin` enum
+                // (`wit/app.wit`) has no `touch` case yet.  Until it has,
+                // a D80 tells an app it has the color skin, with the
+                // touch skin's (larger) metrics.
+                opendeskphone_state::Skin::Touch => Skin::Color,
             },
             width: m.width,
             height: m.height,

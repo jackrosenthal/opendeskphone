@@ -149,6 +149,9 @@ const fn backlight_table(model: Model, screen: Screen) -> [u8; 11] {
         (Model::D70, Screen::Main) => [0, 1, 4, 6, 9, 11, 13, 15, 17, 19, 21],
         (Model::D70, Screen::Side) => [0, 1, 3, 4, 6, 7, 9, 12, 14, 17, 16],
         (Model::D60 | Model::D62 | Model::D65, _) => [0, 2, 6, 10, 14, 17, 20, 23, 26, 29, 32],
+        // Not stock's: even steps of the range taken for the D80's
+        // backlight, until the hardware's is known.
+        (Model::D80, _) => [0, 26, 51, 77, 102, 128, 153, 179, 204, 230, 255],
     }
 }
 
@@ -213,7 +216,7 @@ mod backlight_tests {
 
     #[test]
     fn no_level_exceeds_the_driver_range() {
-        for m in [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70] {
+        for m in Model::ALL {
             for s in [Screen::Main, Screen::Side] {
                 for b in 0..=10 {
                     assert!(backlight_level(m, s, b) <= m.backlight_max());

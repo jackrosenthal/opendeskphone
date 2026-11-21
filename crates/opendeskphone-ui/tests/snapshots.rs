@@ -520,6 +520,12 @@ fn d65() {
 fn d70() {
     all_screens(Model::D70);
 }
+/// The D80 has no keys, but its screens answer to them (the web mirror
+/// and the diagnostics send them), so the same walk draws them all.
+#[test]
+fn d80() {
+    all_screens(Model::D80);
+}
 
 #[test]
 fn idle_app_view() {

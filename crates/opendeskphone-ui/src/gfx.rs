@@ -167,6 +167,9 @@ pub struct Canvas {
     /// False until the first present: everything is damaged.
     presented: bool,
     clip: IRect,
+    /// Where the picture can be touched ([`Canvas::hit`]), in the order
+    /// registered.
+    hits: Vec<(IRect, crate::touch::Hit)>,
 }
 
 fn quantize(c: Rgb) -> Rgb {
@@ -210,6 +213,7 @@ impl Canvas {
             front: vec![0; n],
             presented: false,
             clip: IRect::new(0, 0, width as i32, height as i32),
+            hits: Vec::new(),
         }
     }
 
@@ -696,21 +700,73 @@ impl Canvas {
     }
 }
 
+// ----------------------------------------------------------------- touch
+
+impl Canvas {
+    /// Registers `r` as a place the picture can be touched, and what
+    /// touching it does ([`crate::touch`]).  The part of `r` within the
+    /// clip rectangle and the canvas counts (so a row half scrolled out
+    /// of its list is touched only where it shows).  A region registered
+    /// later is on top of the ones before it.
+    pub fn hit(&mut self, r: IRect, hit: crate::touch::Hit) {
+        let r = r.intersect(&self.clip);
+        if !r.is_empty() {
+            self.hits.push((r, hit));
+        }
+    }
+
+    /// What touching the picture at (`x`, `y`) does: the topmost region
+    /// there.
+    pub fn hit_at(&self, x: i32, y: i32) -> Option<crate::touch::Hit> {
+        let within = |r: &IRect| x >= r.x && x < r.right() && y >= r.y && y < r.bottom();
+        self.hits.iter().rev().find(|(r, _)| within(r)).map(|(_, hit)| *hit)
+    }
+
+    /// Every region, in the order registered (tests and tools).
+    pub fn hits(&self) -> &[(IRect, crate::touch::Hit)] {
+        &self.hits
+    }
+
+    /// The first region registered with `hit` (tests and tools).
+    pub fn hit_rect(&self, hit: crate::touch::Hit) -> Option<IRect> {
+        self.hits.iter().find(|(_, h)| *h == hit).map(|(r, _)| *r)
+    }
+
+    /// Forgets every region: the picture is about to be drawn again.
+    pub fn clear_hits(&mut self) {
+        self.hits.clear();
+    }
+}
+
 // ------------------------------------------------------------- wallpaper
 
 impl Canvas {
     /// Paints the idle/call background over the whole screen: the
-    /// wallpaper on the color skin, the plain background on gray.
+    /// wallpaper on the color skin, the plain background on gray.  On a
+    /// screen of another size than the wallpapers are drawn at (the touch
+    /// skin's), the wallpaper's still picture fitted to the screen
+    /// ([`crate::wallpaper::with_fitted`]); nothing moves there.
     ///
     /// Returns the number of the frame drawn, of a wallpaper in motion
     /// ([`crate::wallpaper::Changes::serial`]).
     pub fn wallpaper(&mut self, plain: Rgb, backdrop: crate::wallpaper::Backdrop) -> Option<u64> {
         use crate::wallpaper::{Backdrop, HEIGHT, WIDTH};
-        if self.gray || self.w != WIDTH || self.h != HEIGHT {
+        if self.gray {
             self.clear(plain);
             return None;
         }
         let clip = self.clip;
+        if self.w != WIDTH || self.h != HEIGHT {
+            let (w, h, pix) = (self.w, self.h, &mut self.pix);
+            crate::wallpaper::with_fitted(backdrop, w, h, |src| {
+                for y in clip.y..clip.bottom() {
+                    let row = (y * w) as usize;
+                    let (a, b) = (row + clip.x as usize, row + clip.right() as usize);
+                    pix[a..b].copy_from_slice(&src[a..b]);
+                }
+            });
+            return None;
+        }
         let (w, pix) = (self.w, &mut self.pix);
         let mut copy = |src: &[u32]| {
             for y in clip.y..clip.bottom() {

@@ -17,6 +17,7 @@ pub fn model(m: st::Model) -> pb::Model {
         st::Model::D62 => pb::Model::MODEL_D62,
         st::Model::D65 => pb::Model::MODEL_D65,
         st::Model::D70 => pb::Model::MODEL_D70,
+        st::Model::D80 => pb::Model::MODEL_D80,
     }
 }
 
@@ -25,6 +26,7 @@ pub fn skin(model: st::Model) -> pb::Skin {
         st::Skin::SmallGray => pb::Skin::SmallGray,
         st::Skin::LargeGray => pb::Skin::LargeGray,
         st::Skin::Color => pb::Skin::Color,
+        st::Skin::Touch => pb::Skin::Touch,
     }
 }
 

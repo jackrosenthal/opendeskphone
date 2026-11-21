@@ -5,6 +5,18 @@ use serde::{Deserialize, Serialize};
 
 /// A front-panel key.  The hookswitch is not a key; see
 /// [`crate::Event::Hook`].
+/// What a touch of the touchscreen (D80) did.  One finger is followed: a
+/// touch begins with `Down`, moves with any number of `Move`s, and ends
+/// with `Up` (the finger was lifted) or `Cancel` (the touch is to be
+/// forgotten: nothing was touched).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TouchPhase {
+    Down,
+    Move,
+    Up,
+    Cancel,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Key {
     /// Dial pad `0`..`9` (the value is the digit).

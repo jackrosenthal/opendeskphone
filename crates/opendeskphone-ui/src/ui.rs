@@ -8,12 +8,13 @@ use crate::screens::{boot, idle, menus, side, Cx, Nav, Screen, Soft, Tag};
 use crate::skin::Theme;
 use crate::wallpaper::{self, Backdrop};
 use crate::strings as tr;
+use crate::touch::{Gesture, Hit, Recognizer};
 use crate::widgets;
 use opendeskphone_hal::{Backlight, Blinker, Display, Hal, Input, InputEvent, Lamp, Lamps, Null, BLINK_TICK_MS};
 use opendeskphone_state::{
     self as ds, clock, AudioPath, BlfState, CallId, CallState, Command, CommandError, Domain, Envelope, Event,
     InputSource, Key, LampState, LineKeyBinding, Model, Notice, Phase, ProvisionPhase, Reply, Store,
-    Subsystem, Topic, TopicSet, UpdatePhase, VolumeTarget,
+    Subsystem, Topic, TopicSet, TouchPhase, UpdatePhase, VolumeTarget,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -139,8 +140,8 @@ fn configured_theme(model: opendeskphone_state::Model, cfg: &UiConfig) -> &'stat
         return skin;
     }
     match &cfg.wallpaper_picture {
-        Some(picture) => picture.palette.as_ref().map_or(skin, Theme::color_in),
-        None => Theme::for_wallpaper(wallpaper::find_or_default(&cfg.theme)),
+        Some(picture) => picture.palette.as_ref().map_or(skin, |p| skin.in_palette(p)),
+        None => skin.in_wallpaper(wallpaper::find_or_default(&cfg.theme)),
     }
 }
 
@@ -427,6 +428,33 @@ fn soft_slots(keys: &[Soft], page: u8) -> [(u32, String); 4] {
         out[3] = (MORE, tr::MORE.to_string());
     }
     out
+}
+
+/// The softkey buttons of a native screen on the touch skin: action id
+/// and label, by position ([`Theme::soft_button`]).  Up to four actions
+/// keep their positions (a screen puts "Back" at the right), blanks and
+/// all.  More are shown without their blanks, all of them when they fit
+/// in two rows; beyond that, seven at a time and "More", which pages.
+fn touch_soft_slots(keys: &[Soft], page: u8) -> Vec<Soft> {
+    if keys.len() <= 4 {
+        return keys.to_vec();
+    }
+    let keys: Vec<Soft> = keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).cloned().collect();
+    if keys.len() <= 8 {
+        return keys;
+    }
+    let page = page as usize % keys.len().div_ceil(7);
+    let mut out: Vec<Soft> = keys.into_iter().skip(page * 7).take(7).collect();
+    // "More" is the last button of the second row.
+    out.resize(7, (0, String::new()));
+    out.push((u32::MAX, tr::MORE.to_string()));
+    out
+}
+
+/// How many pages [`touch_soft_slots`] makes of these softkeys.
+fn touch_soft_pages(keys: &[Soft]) -> usize {
+    let n = keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).count();
+    if n <= 8 { 1 } else { n.div_ceil(7) }
 }
 
 impl Stack {
@@ -796,6 +824,14 @@ pub struct Ui {
     cfg: Arc<UiConfig>,
     nav: Stack,
     off_hook: bool,
+    /// Touch: the finger on the screen.
+    finger: Recognizer,
+    /// What the finger went down on: the region of the picture that was
+    /// on the screen then.
+    touched: Option<Hit>,
+    /// The finger went down on a dark screen: it lights the screen, and
+    /// does nothing else until it is lifted.
+    touch_wakes: bool,
     popup: Option<Popup>,
     notice_deadlines: Vec<(u64, u64)>,
     blinker: Blinker,
@@ -903,6 +939,9 @@ impl Ui {
             cfg: Arc::new(cfg),
             nav,
             off_hook,
+            finger: Recognizer::new(),
+            touched: None,
+            touch_wakes: false,
             popup: None,
             notice_deadlines: Vec::new(),
             blinker: Blinker::new(),
@@ -1135,7 +1174,8 @@ impl Ui {
         if !captures && matches!(key, Key::VolumeUp | Key::VolumeDown) {
             let delta = if key == Key::VolumeUp { 1 } else { -1 };
             self.store.post(Command::AdjustVolume { target: VolumeTarget::Current, delta });
-            self.popup = Some(Popup { until_ms: self.now().0 + 2000 });
+            // (Touch: long enough to reach for the popup's own buttons.)
+            self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch { 4000 } else { 2000 } });
             self.needs_draw = true;
             return;
         }
@@ -1177,10 +1217,118 @@ impl Ui {
         self.with_cx(|nav, cx| nav.hook(cx, off_hook));
     }
 
+    /// Feeds one event of a finger on the main screen, at pixel (`x`,
+    /// `y`), as if from the touchscreen.  Only the touch skin takes it.
+    ///
+    /// A touch counts as activity.  A finger that comes down on a dark
+    /// screen lights it and does nothing else.  Otherwise the gesture the
+    /// finger makes ([`crate::touch::Recognizer`]) goes to the region it
+    /// came down on, of the picture that was on the screen then
+    /// ([`crate::gfx::Canvas::hit`]): a tap does what the region's
+    /// [`Hit`] says, through the same paths as keys; a drag goes to the
+    /// top screen.
+    pub fn touch(&mut self, phase: TouchPhase, x: u16, y: u16, source: InputSource) {
+        self.store.emit(Event::Touch { phase, x, y, source });
+        if !self.th.touch {
+            return;
+        }
+        let dark = !self.backlight_on;
+        self.activity();
+        let (x, y) = (i32::from(x), i32::from(y));
+        if phase == TouchPhase::Down {
+            self.touch_wakes = dark;
+            self.touched = self.main.hit_at(x, y);
+        }
+        let gesture = self.finger.touch(phase, x, y, self.now().0);
+        if let Some(g) = gesture {
+            self.gesture(g, source);
+        }
+    }
+
+    /// What a finger did, to the region it came down on.
+    fn gesture(&mut self, gesture: Gesture, source: InputSource) {
+        if self.touch_wakes || self.nav.kind == BaseKind::Update {
+            return;
+        }
+        let hit = self.touched;
+        match gesture {
+            Gesture::Tap { x, y } => self.tapped(hit, x, y, false, source),
+            Gesture::LongPress { x, y } => self.tapped(hit, x, y, true, source),
+            // A drag is the top screen's, unless the finger came down on
+            // something that is not the screen's (a softkey, a dialog).
+            Gesture::Drag { dx, dy, .. } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
+                self.with_cx(|nav, cx| {
+                    let mut r = nav.top().drag(cx, hit, dx, dy);
+                    if matches!(r, Nav::Ignored)
+                        && let Some((list, len)) = nav.top().list_state(cx)
+                    {
+                        list.drag(dy, cx.th.row_h, len);
+                        r = Nav::Stay;
+                    }
+                    nav.apply(cx, r);
+                });
+            }
+            Gesture::Drag { .. } | Gesture::DragEnd { .. } => {}
+        }
+    }
+
+    /// A tap (or, with `long`, a long press) on a region.
+    fn tapped(&mut self, hit: Option<Hit>, x: i32, y: i32, long: bool, source: InputSource) {
+        match hit {
+            None | Some(Hit::Nothing) => {}
+            Some(Hit::Dismiss) => {
+                let notice = self.store.read::<ds::Ui, _>(|u| u.notices.last().map(|n| n.id));
+                match notice {
+                    Some(id) => self.dismiss_notice(id),
+                    None => self.popup = None,
+                }
+                self.needs_draw = true;
+            }
+            Some(Hit::Key(key)) => {
+                self.key(key, true, source);
+                self.key(key, false, source);
+            }
+            Some(Hit::Soft(id)) => self.with_cx(|nav, cx| {
+                if id == u32::MAX {
+                    let pages = touch_soft_pages(&nav.top_ref().softkeys(cx));
+                    nav.soft_page = ((nav.soft_page as usize + 1) % pages) as u8;
+                } else if id != 0 {
+                    let r = nav.top().softkey(cx, id);
+                    nav.apply(cx, r);
+                }
+            }),
+            Some(hit @ (Hit::Row { .. } | Hit::Custom(_))) => {
+                let select = self.with_cx(|nav, cx| {
+                    let mut r = if long { nav.top().long_press(cx, hit, x, y) } else { Nav::Ignored };
+                    if matches!(r, Nav::Ignored) {
+                        r = nav.top().tap(cx, hit, x, y);
+                    }
+                    // A row of a list nobody took: selected, and then
+                    // the Select key.
+                    let mut select = false;
+                    if let (Nav::Ignored, Hit::Row { row, .. }) = (&r, hit)
+                        && let Some((list, len)) = nav.top().list_state(cx)
+                        && (row as usize) < len
+                    {
+                        list.selected = row as usize;
+                        select = true;
+                    }
+                    nav.apply(cx, r);
+                    select
+                });
+                if select {
+                    self.key(Key::Select, true, source);
+                    self.key(Key::Select, false, source);
+                }
+            }
+        }
+    }
+
     fn input_event(&mut self, ev: InputEvent, source: InputSource) {
         match ev {
             InputEvent::Key { key, down } => self.key(key, down, source),
             InputEvent::Hook { off_hook } => self.hook(off_hook, source),
+            InputEvent::Touch { phase, x, y } => self.touch(phase, x, y, source),
         }
     }
 
@@ -1219,6 +1367,14 @@ impl Ui {
             Command::InjectHook { off_hook } => {
                 self.hook(off_hook, InputSource::Injected);
                 Ok(Reply::Done)
+            }
+            Command::InjectTouch { phase, x, y } => {
+                if self.th.touch {
+                    self.touch(phase, x, y, InputSource::Injected);
+                    Ok(Reply::Done)
+                } else {
+                    Err(CommandError::Invalid(format!("the {} has no touchscreen", self.model)))
+                }
             }
             Command::Notify { level, title, text, timeout_ms } => Ok(Reply::Id(self.notify(level, title, text, timeout_ms))),
             Command::DismissNotice { id } => {
@@ -1344,7 +1500,7 @@ impl Ui {
             && let Some(own) = top.look(&cx)
         {
             backdrop = Backdrop::Builtin(own);
-            th = Theme::for_wallpaper(own);
+            th = Theme::for_model(self.model).in_wallpaper(own);
             cx.th = th;
         }
         // A wallpaper that moves does so on the idle screen, while the
@@ -1355,6 +1511,8 @@ impl Ui {
         let motion_time = self.motion_time.or(self.fixed_time.is_none().then_some(now_ms));
         if let (Backdrop::Builtin(wallpaper), Some(t)) = (backdrop, motion_time)
             && !th.gray
+            // (The touch skin's wallpapers do not move yet.)
+            && !th.touch
             && self.backlight_on
             && top.motion()
             && top.wallpaper()
@@ -1372,6 +1530,8 @@ impl Ui {
         let passes: &[Pass] = if frame_ms.is_some() { &[Pass::OverBlack, Pass::OverWhite, Pass::Shown] } else { &[Pass::Shown] };
         let mut serial = None;
         for pass in passes {
+            // The regions to touch are those of this picture.
+            c.clear_hits();
             if top.full_screen() {
                 top.draw(&cx, c, bounds);
             } else {
@@ -1383,7 +1543,26 @@ impl Ui {
                     Pass::Shown if top.wallpaper() => serial = c.wallpaper(th.bg, backdrop),
                     Pass::Shown => c.clear(th.bg),
                 }
-                if top.softkey_bar(&cx) {
+                if top.softkey_bar(&cx) && th.touch {
+                    // Buttons: an app's four softkeys are the four keys
+                    // (and its window keeps its size, whatever they are);
+                    // a native screen's are its actions, in as many rows
+                    // as they take, and in none when it has none.
+                    let (keys, rows): (Vec<(Hit, String)>, i32) = match top.raw_softkeys(&cx) {
+                        Some(labels) => (
+                            labels.into_iter().enumerate().map(|(i, l)| (Hit::Key(Key::Soft(i as u8 + 1)), l)).collect(),
+                            1,
+                        ),
+                        None => {
+                            let keys = touch_soft_slots(&top.softkeys(&cx), self.nav.soft_page);
+                            let rows = if keys.iter().all(|(_, l)| l.is_empty()) { 0 } else { th.soft_rows(keys.len()) };
+                            (keys.into_iter().map(|(id, l)| (Hit::Soft(id), l)).collect(), rows)
+                        }
+                    };
+                    let (area, _) = bounds.split_bottom(rows * th.softkey_h);
+                    top.draw(&cx, c, area);
+                    widgets::soft_buttons(c, th, &keys);
+                } else if top.softkey_bar(&cx) {
                     let (area, _) = bounds.split_bottom(th.softkey_h);
                     top.draw(&cx, c, area);
                     let labels = match top.raw_softkeys(&cx) {
@@ -1408,15 +1587,34 @@ impl Ui {
                     VolumeTarget::Speaker => (tr::VOL_SPEAKER, "speaker"),
                     VolumeTarget::Ringer | VolumeTarget::Current => (tr::VOL_RINGER, "ring"),
                 };
-                let (w, h) = if th.gray { (bounds.w * 3 / 4, th.line_h * 2 + 12) } else { (300, 84) };
+                let (w, h) = if th.gray { (bounds.w * 3 / 4, th.line_h * 2 + 12) } else { (th.px(300), th.px(84)) };
+                // Touch: a touch beside the popup takes it down, and one
+                // on it does nothing.
+                if th.touch {
+                    c.hit(bounds, Hit::Dismiss);
+                }
                 let inner = widgets::modal(c, th, bounds, w, h);
+                if th.touch {
+                    c.hit(inner.inset(-th.pad), Hit::Nothing);
+                }
                 let (head, rest) = inner.split_top(th.line_h);
                 let (ic, text) = head.split_left(th.icon + th.pad);
                 if let Some(i) = th.icon(icon) {
                     c.icon_in(i, IRect { w: th.icon, ..ic }, th.fg);
                 }
                 c.text_in(th.font(crate::appview::Font::Bold), text, label, th.fg, HAlign::Left);
-                let mh = if th.gray { 8 } else { 18 };
+                let mh = if th.gray { 8 } else { th.px(18) };
+                // Touch: the volume keys, at the two ends of the meter.
+                let rest = if th.touch {
+                    let (minus, rest) = rest.split_left(th.touch_min);
+                    let (rest, plus) = rest.split_right(th.touch_min);
+                    for (r, label, key) in [(minus, "\u{2013}", Key::VolumeDown), (plus, "+", Key::VolumeUp)] {
+                        widgets::button(c, th, r, label, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Key(key));
+                    }
+                    rest.inset_xy(th.pad, 0)
+                } else {
+                    rest
+                };
                 widgets::meter(
                     c,
                     th,
@@ -1429,9 +1627,14 @@ impl Ui {
             // The newest notice.
             if let Some(n) = st.ui.notices.last() {
                 let f = th.font(crate::appview::Font::Normal);
-                let w = if th.gray { bounds.w - 12 } else { 380 };
+                let w = if th.gray { bounds.w - 12 } else { th.px(380) };
                 let lines = f.wrap(&n.text, w - 2 * th.pad).len().clamp(1, 4) as i32;
                 let h = (lines + 1) * th.line_h + 2 * th.pad + 2;
+                // Touch: a touch anywhere takes the notice down, as Select,
+                // Cancel, and the softkeys do.
+                if th.touch {
+                    c.hit(bounds, Hit::Dismiss);
+                }
                 let inner = widgets::modal(c, th, bounds, w, h);
                 let (head, rest) = inner.split_top(th.line_h);
                 let (icon, tint) = match n.level {
@@ -1660,6 +1863,10 @@ impl Ui {
         if self.motion_deadline.is_some_and(|d| real_now_mono >= d) {
             self.motion_due = true;
         }
+        // A finger that has stayed where it came down: a long press.
+        if let Some(g) = self.finger.tick(now_ms) {
+            self.gesture(g, InputSource::Physical);
+        }
         self.check_light();
     }
 
@@ -1682,6 +1889,7 @@ impl Ui {
             add(Some(now + BLINK_TICK_MS));
         }
         if self.fixed_time.is_none() {
+            add(self.finger.deadline());
             add(self.screen_deadline);
             if self.nav.kind == BaseKind::Finishing {
                 add(self.nav.cover_until);

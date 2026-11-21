@@ -151,7 +151,7 @@ impl BluetoothScreen {
         let th = cx.th;
         let bt = &cx.st.bluetooth;
         let lines = lines(rows);
-        let heading_h = if th.gray { th.line_h } else { 26 };
+        let heading_h = if th.gray { th.line_h } else { th.px(26) };
         let height = |l: &Line| if matches!(l, Line::Heading(_)) { heading_h } else { th.row_h };
         let current = self.current(rows);
         if let Some(i) = current {
@@ -185,7 +185,7 @@ impl BluetoothScreen {
                     // Small, dim, and sitting on the rows it heads.
                     let small = th.font(Font::Small);
                     let descent = small.height() - small.ascent as i32;
-                    c.text(small, r.x + th.title_pad, r.bottom() - descent - if th.gray { 1 } else { 6 }, text, th.secondary);
+                    c.text(small, r.x + th.title_pad, r.bottom() - descent - if th.gray { 1 } else { th.px(6) }, text, th.secondary);
                     continue;
                 }
                 Line::Device(i) => i,
@@ -228,10 +228,10 @@ impl BluetoothScreen {
         let th = cx.th;
         let f = th.font(Font::Normal);
         let big = th.font(Font::Large);
-        let w = if th.gray { area.w - 12 } else { 380 };
+        let w = if th.gray { area.w - 12 } else { th.px(380) };
         let text_w = w - 2 * th.pad;
-        let field_h = if th.gray { th.line_h + 4 } else { 36 };
-        let gap = if th.gray { 2 } else { 8 };
+        let field_h = if th.gray { th.line_h + 4 } else { th.px(36) };
+        let gap = if th.gray { 2 } else { th.px(8) };
         let (text, extra) = match (q.pin_needed, q.passkey) {
             (true, _) => (tr::BT_TYPE_PIN, field_h + gap),
             (false, Some(_)) => (tr::BT_COMPARE, big.height() + gap),
@@ -275,7 +275,7 @@ fn message(c: &mut Canvas, th: &Theme, r: IRect, text: &str, hint: &str) {
 /// "Searching" at the right of the title bar, followed by three dots that
 /// light one after the other.
 fn searching(c: &mut Canvas, th: &Theme, title: IRect, now_ms: u64) {
-    let (dot, gap) = if th.gray { (3, 2) } else { (6, 4) };
+    let (dot, gap) = if th.gray { (3, 2) } else { (th.px(6), th.px(4)) };
     let dots_w = PULSE_DOTS as i32 * (dot + gap) - gap;
     let f = th.font(Font::Normal);
     let tw = f.width(tr::BT_SEARCHING);
@@ -391,7 +391,7 @@ impl Screen for BluetoothScreen {
             Key::Up | Key::Down => {
                 let rows = rows(bt);
                 if let Some(i) = self.current(&rows) {
-                    let mut st = widgets::ListState { selected: i, top: 0 };
+                    let mut st = widgets::ListState { selected: i, top: 0, drag: 0 };
                     st.step(if key == Key::Up { -1 } else { 1 }, rows.len(), true);
                     self.highlight(&rows, st.selected);
                 }
@@ -423,7 +423,7 @@ impl Screen for BluetoothScreen {
         // Why the last pairing failed, in a band at the bottom.
         let mut list = body;
         if !bt.error.is_empty() {
-            let (rest, band) = body.split_bottom(th.line_h + if th.gray { 1 } else { 6 });
+            let (rest, band) = body.split_bottom(th.line_h + if th.gray { 1 } else { th.px(6) });
             list = rest;
             c.hline(band.x, band.y, band.w, th.border);
             let (icon, text) = band.inset_xy(th.title_pad, 0).split_left(th.icon + th.pad);

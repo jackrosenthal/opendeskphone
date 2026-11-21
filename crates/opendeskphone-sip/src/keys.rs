@@ -67,7 +67,7 @@ fn place(grid: &mut [Vec<Slot>], key: usize, slot: Slot, on_first_free_page: boo
 /// Assigns `items` (in configuration order) to the keys of `model` with
 /// `accounts` accounts in use.
 pub fn layout(model: Model, accounts: usize, page_line_keys: bool, items: &[BlfConfig]) -> Layout {
-    let keys = model.line_keys() as usize;
+    let keys = model.lines() as usize;
     let n = accounts.clamp(1, keys);
     let strip = model.blf_keys() as usize;
     let max_pages = model.blf_pages().max(1) as usize;

@@ -25,6 +25,7 @@ pub fn boot_list(family: Family) -> Vec<String> {
     let key = match family {
         Family::Old => "old",
         Family::New => "new",
+        Family::Touch => "touch",
     };
     if let Ok(text) = std::fs::read_to_string(format!("/etc/opendeskphone/modules-{key}")) {
         return parse_list(&text);
@@ -33,14 +34,18 @@ pub fn boot_list(family: Family) -> Vec<String> {
     if family == Family::Old {
         list.extend(OLD_FAMILY_DISPLAY.iter().map(|s| s.to_string()));
     }
-    list.extend(ALL_MODELS.iter().map(|s| s.to_string()));
+    // The D80 is not a BCMRING phone: none of these modules is its.  What
+    // it loads is to be settled when its kernel is.
+    if family != Family::Touch {
+        list.extend(ALL_MODELS.iter().map(|s| s.to_string()));
+    }
     list
 }
 
 /// Old family only, first, so the SPI display comes up early.
 const OLD_FAMILY_DISPLAY: &[&str] = &["spi-pl022", "lcd", "drm_shmem_helper", "digium-gray-lcd"];
 
-/// Every model, in dependency order (see `kernel/README.md`).
+/// Every model of the old and new families, in dependency order (see `kernel/README.md`).
 const ALL_MODELS: &[&str] = &[
     "dw_dmac_core",
     "dw_dmac",
@@ -61,6 +66,7 @@ pub fn firmware_dir(family: Family) -> &'static str {
     match family {
         Family::Old => "/lib/firmware/old-family",
         Family::New => "/lib/firmware/new-family",
+        Family::Touch => "/lib/firmware",
     }
 }
 

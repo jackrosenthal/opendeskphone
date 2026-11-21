@@ -42,7 +42,7 @@ pub(crate) fn line_tabs(cx: &Cx) -> Vec<Tab> {
     st.keys
         .line_keys
         .iter()
-        .take(cx.model.line_keys() as usize)
+        .take(cx.model.lines() as usize)
         .map(|k| match &k.binding {
             LineKeyBinding::Account(id) => account_tab(*id, &k.label, !k.calls.is_empty()),
             LineKeyBinding::Blf(entry) => {
@@ -126,7 +126,7 @@ pub(crate) fn draw_status_icons(cx: &Cx, c: &mut Canvas, r: IRect, fg: Rgb) {
     let f = th.font(Font::Normal);
     // Stock: the first icon starts at x 8 (color); the count follows 8
     // pixels after it.
-    let (start, gap, after) = if th.gray { (3, 2, 5) } else { (8, 8, 12) };
+    let (start, gap, after) = if th.gray { (3, 2, 5) } else { (th.px(8), th.px(8), th.px(12)) };
     let mut x = r.x + start;
     let old = c.push_clip(r);
     for (name, count) in status_icons(cx) {
@@ -158,6 +158,11 @@ pub(crate) fn draw_tabs(cx: &Cx, c: &mut Canvas, x: i32) {
         if tab.label.is_empty() && tab.icon.is_empty() {
             continue;
         }
+        // Touching a line does what its line key does on a phone that
+        // has one.
+        if th.touch {
+            c.hit(r, crate::touch::Hit::Key(Key::Line(i as u8 + 1)));
+        }
         // The tab is open to the right edge of the screen and to the tab
         // above; its left and bottom edges are drawn, with the lower-left
         // corner cut (color) or rounded (gray) as on stock.
@@ -187,7 +192,7 @@ pub(crate) fn draw_tabs(cx: &Cx, c: &mut Canvas, x: i32) {
                 c.span(y, r.x + off + run, r.right(), th.tab_bg);
             }
         }
-        let (left, right) = if th.gray { (6, 5) } else { (14, 9) };
+        let (left, right) = if th.gray { (6, 5) } else { (th.px(14), th.px(9)) };
         let mut text = IRect::new(r.x + left, r.y, r.w - left - right, r.h - 1);
         if let Some(icon) = th.icon(tab.icon) {
             let ir = IRect::new(r.right() - right - icon.width(), r.y, icon.width(), r.h - 1);
@@ -228,7 +233,9 @@ pub(crate) struct ClockLayout {
 }
 
 pub(crate) fn clock_layout(th: &Theme, area: IRect) -> ClockLayout {
-    if !th.gray {
+    // (The touch skin has no stock clock either: its is placed as the
+    // gray skins' is, until its idle screen is designed.)
+    if !th.gray && !th.touch {
         return ClockLayout { time_right: 228, time_base: 152, mer_x: 240, date_cx: 148, date_base: 196 };
     }
     // Gray: no stock clock to match (stock shows a logo with a small time
@@ -250,7 +257,7 @@ pub(crate) fn clock_layout(th: &Theme, area: IRect) -> ClockLayout {
 
 /// Height of the idle-screen area offered to an app's idle view.
 pub(crate) fn idle_app_h(th: &Theme) -> i32 {
-    if th.gray { 2 * th.line_h } else { 36 }
+    if th.gray { 2 * th.line_h } else { th.px(36) }
 }
 
 impl Screen for Idle {
@@ -369,7 +376,7 @@ impl Screen for Idle {
         let mer = if clock_set { civil.meridiem(cx.cfg.time_24h) } else { "" };
         let lay = clock_layout(th, main);
         let tw = big.width(&time);
-        if th.gray {
+        if th.gray || th.touch {
             let mw = if mer.is_empty() { 0 } else { sub.width(mer) + 3 };
             let x = lay.date_cx - (tw + mw) / 2;
             c.text(big, x, lay.time_base, &time, th.wallpaper_fg);

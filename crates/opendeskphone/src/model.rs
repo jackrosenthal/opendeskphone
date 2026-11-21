@@ -12,23 +12,27 @@ pub enum Model {
     D62,
     D65,
     D70,
+    D80,
 }
 
 /// Old family: grayscale, 16 kHz audio.  New family: color, 32 kHz audio.
+/// Touch: the D80.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Family {
     Old,
     New,
+    Touch,
 }
 
 impl Model {
-    pub const ALL: [Model; 7] =
-        [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70];
+    pub const ALL: [Model; 8] =
+        [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70, Model::D80];
 
     pub fn family(self) -> Family {
         match self {
             Model::D40 | Model::D45 | Model::D50 | Model::D70 => Family::Old,
             Model::D60 | Model::D62 | Model::D65 => Family::New,
+            Model::D80 => Family::Touch,
         }
     }
 
@@ -42,6 +46,7 @@ impl Model {
             Model::D62 => "D62",
             Model::D65 => "D65",
             Model::D70 => "D70",
+            Model::D80 => "D80",
         }
     }
 }

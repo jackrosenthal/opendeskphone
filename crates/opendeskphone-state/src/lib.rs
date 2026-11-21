@@ -73,7 +73,7 @@ pub use command::{
     Pending, Reply, Responder, SoundData,
 };
 pub use event::{Event, InputSource};
-pub use key::Key;
+pub use key::{Key, TouchPhase};
 pub use logring::{Level, LogEntry, LogRing};
 pub use model::{Family, Model, Size, Skin, Soc, UnknownModel};
 pub use store::{CallbackGuard, Changed, Store, Subscription, Wake};

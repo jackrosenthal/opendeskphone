@@ -9,7 +9,7 @@ import { enumDesc, fileDesc } from "@bufbuild/protobuf/codegenv2";
  * Describes the file opendeskphone/v1/model.proto.
  */
 export const file_opendeskphone_v1_model: GenFile = /*@__PURE__*/
-  fileDesc("ChxvcGVuZGVza3Bob25lL3YxL21vZGVsLnByb3RvEhBvcGVuZGVza3Bob25lLnYxKocBCgVNb2RlbBIVChFNT0RFTF9VTlNQRUNJRklFRBAAEg0KCU1PREVMX0Q0MBABEg0KCU1PREVMX0Q0NRACEg0KCU1PREVMX0Q1MBADEg0KCU1PREVMX0Q2MBAEEg0KCU1PREVMX0Q2MhAFEg0KCU1PREVMX0Q2NRAGEg0KCU1PREVMX0Q3MBAHKlYKBFNraW4SFAoQU0tJTl9VTlNQRUNJRklFRBAAEhMKD1NLSU5fU01BTExfR1JBWRABEhMKD1NLSU5fTEFSR0VfR1JBWRACEg4KClNLSU5fQ09MT1IQA2IGcHJvdG8z");
+  fileDesc("ChxvcGVuZGVza3Bob25lL3YxL21vZGVsLnByb3RvEhBvcGVuZGVza3Bob25lLnYxKpYBCgVNb2RlbBIVChFNT0RFTF9VTlNQRUNJRklFRBAAEg0KCU1PREVMX0Q0MBABEg0KCU1PREVMX0Q0NRACEg0KCU1PREVMX0Q1MBADEg0KCU1PREVMX0Q2MBAEEg0KCU1PREVMX0Q2MhAFEg0KCU1PREVMX0Q2NRAGEg0KCU1PREVMX0Q3MBAHEg0KCU1PREVMX0Q4MBAIKmYKBFNraW4SFAoQU0tJTl9VTlNQRUNJRklFRBAAEhMKD1NLSU5fU01BTExfR1JBWRABEhMKD1NLSU5fTEFSR0VfR1JBWRACEg4KClNLSU5fQ09MT1IQAxIOCgpTS0lOX1RPVUNIEARiBnByb3RvMw");
 
 /**
  * A model of phone.
@@ -58,6 +58,11 @@ export enum Model {
    * @generated from enum value: MODEL_D70 = 7;
    */
   D70 = 7,
+
+  /**
+   * @generated from enum value: MODEL_D80 = 8;
+   */
+  D80 = 8,
 }
 
 /**
@@ -97,6 +102,13 @@ export enum Skin {
    * @generated from enum value: SKIN_COLOR = 3;
    */
   COLOR = 3,
+
+  /**
+   * D80: 800x1280 color, upright, with a touchscreen.
+   *
+   * @generated from enum value: SKIN_TOUCH = 4;
+   */
+  TOUCH = 4,
 }
 
 /**

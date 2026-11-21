@@ -11,9 +11,9 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-const SKINS: [&str; 3] = ["SMALL_GRAY", "LARGE_GRAY", "COLOR"];
+const SKINS: [&str; 4] = ["SMALL_GRAY", "LARGE_GRAY", "COLOR", "TOUCH"];
 /// The skins' names in asset file names (`splash.small-gray.svg`).
-const SKIN_FILE_TAGS: [&str; 3] = ["small-gray", "large-gray", "color"];
+const SKIN_FILE_TAGS: [&str; 4] = ["small-gray", "large-gray", "color", "touch"];
 
 /// (font file, pixel size, digits only) per skin, in role order: Normal,
 /// Bold, Small, Title, Large, then the two idle-screen roles: Clock (the
@@ -32,7 +32,7 @@ const SKIN_FILE_TAGS: [&str; 3] = ["small-gray", "large-gray", "color"];
 /// height of 8 pixels on the small panels (stock's 10 px text: 7) and 9
 /// on the D70.  The clock is the largest size there is (digits 25 pixels
 /// tall).
-const FONTS: [[(&str, f32, bool); 9]; 3] = [
+const FONTS: [[(&str, f32, bool); 9]; 4] = [
     [
         ("helvR10-75dpi.bdf", 10.0, false),
         ("helvB10-75dpi.bdf", 10.0, false),
@@ -66,6 +66,20 @@ const FONTS: [[(&str, f32, bool); 9]; 3] = [
         ("Roboto-Regular.ttf", 17.0, false),
         ("Roboto-Regular.ttf", 22.0, false),
     ],
+    // The touch skin (D80, about 216 pixels to the inch): about twice the
+    // color skin's sizes.  The clock is as large as a glyph table holds
+    // (`GlyphRec` and `FontData` keep a font's ascent in eight bits).
+    [
+        ("Roboto-Regular.ttf", 28.0, false),
+        ("Roboto-Medium.ttf", 30.0, false),
+        ("Roboto-Regular.ttf", 24.0, false),
+        ("Roboto-Bold.ttf", 32.0, false),
+        ("Roboto-Regular.ttf", 60.0, false),
+        ("Roboto-Thin.ttf", 130.0, true),
+        ("Roboto-Light.ttf", 44.0, false),
+        ("Roboto-Regular.ttf", 34.0, false),
+        ("Roboto-Regular.ttf", 44.0, false),
+    ],
 ];
 
 /// The fallback of each bitmap face: a fixed-width X11 "misc" font of
@@ -86,17 +100,17 @@ const BITMAP_FALLBACKS: [(&str, &str); 8] = [
 ];
 
 /// Asset classes: directory, pixel height per skin, and whether the color
-/// skin keeps color (else an alpha mask tinted at draw time).
+/// and touch skins keep color (else an alpha mask tinted at draw time).
 /// The last flag inverts luminance on the gray skins (artwork drawn for a
 /// dark background, shown on the light gray screens).
 ///
 /// A file named `<name>.<skin>.svg` (`small-gray`, `large-gray`, or
 /// `color`) replaces `<name>.svg` on that skin.  It is drawn for that
 /// skin's pixels: it is rendered at its own size, and never inverted.
-const CLASSES: [(&str, [u32; 3], bool, bool); 3] = [
-    ("icons/status", [13, 15, 22], false, false),
-    ("icons/app", [24, 28, 48], true, false),
-    ("art", [44, 60, 104], true, true),
+const CLASSES: [(&str, [u32; 4], bool, bool); 3] = [
+    ("icons/status", [13, 15, 22, 44], false, false),
+    ("icons/app", [24, 28, 48, 96], true, false),
+    ("art", [44, 60, 104, 150], true, true),
 ];
 
 const FMT_MASK4: u8 = 0;
@@ -390,7 +404,7 @@ fn main() {
                 let name = if dir == "icons/app" { format!("app-{stem}") } else { stem };
                 let fmt = match (colored, si) {
                     (false, _) => FMT_MASK4,
-                    (true, 2) => FMT_RGBA_RLE,
+                    (true, 2 | 3) => FMT_RGBA_RLE,
                     (true, _) => FMT_GRAY2,
                 };
                 let height = if own { None } else { Some(heights[si]) };
