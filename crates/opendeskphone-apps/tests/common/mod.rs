@@ -289,3 +289,73 @@ impl Rig {
         self.commands.lock().unwrap().clone()
     }
 }
+
+// ------------------------------------------- touch: the SDK's controls
+
+/// A button an app drew on the touchscreen (`controls::Button` of the
+/// SDK): its label, where it is (in the widget it is in), and the color
+/// of its inside.
+#[derive(Clone, Debug)]
+pub struct Drawn {
+    pub label: String,
+    pub at: opendeskphone_apps::Rect,
+    pub fill: opendeskphone_apps::Color,
+}
+
+/// The labeled buttons of the app's window, in the order the app made
+/// them.
+pub fn buttons(r: &Rig, app: &str) -> Vec<Drawn> {
+    use opendeskphone_apps::DrawOp;
+    r.ui.drawings(app)
+        .into_iter()
+        .filter_map(|(at, ops)| {
+            let label = ops.iter().find_map(|op| match op {
+                DrawOp::Text(t) => Some(t.text.clone()),
+                _ => None,
+            })?;
+            let fill = ops.iter().rev().find_map(|op| match op {
+                DrawOp::Fill((_, c)) => Some(c.clone()),
+                _ => None,
+            })?;
+            Some(Drawn { label, at, fill })
+        })
+        .collect()
+}
+
+/// The labels of the app's buttons.
+pub fn labels(r: &Rig, app: &str) -> Vec<String> {
+    buttons(r, app).into_iter().map(|b| b.label).collect()
+}
+
+/// The button labeled `label`.  Panics when there is none.
+pub fn button(r: &Rig, app: &str, label: &str) -> Drawn {
+    let all = buttons(r, app);
+    all.iter().find(|b| b.label == label).cloned().unwrap_or_else(|| {
+        panic!("no button {label:?}; have {:?}", all.iter().map(|b| &b.label).collect::<Vec<_>>())
+    })
+}
+
+/// A finger touches the middle of the button labeled `label`, which is in
+/// the window (not in another widget).
+pub fn press(r: &mut Rig, app: &str, label: &str) {
+    let at = button(r, app, label).at;
+    r.ui.tap(app, at.x as i32 + at.width as i32 / 2, at.y as i32 + at.height as i32 / 2);
+    r.settle();
+}
+
+/// The colors the fake gives the skin's roles (`FakeUi`'s
+/// `theme_color`): the selection's, for a button that is chosen or the
+/// screen's main action.
+pub fn highlight() -> opendeskphone_apps::Color {
+    opendeskphone_apps::Color { r: 48, g: 48, b: 48 }
+}
+
+/// The red of a button that deletes.
+pub fn red() -> opendeskphone_apps::Color {
+    opendeskphone_apps::Color { r: 0xB7, g: 0x1C, b: 0x1C }
+}
+
+/// The green of a button that calls.
+pub fn green() -> opendeskphone_apps::Color {
+    opendeskphone_apps::Color { r: 0x38, g: 0x8E, b: 0x3C }
+}

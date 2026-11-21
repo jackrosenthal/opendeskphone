@@ -6,18 +6,20 @@
 //! list of fields; Select on a field opens a dialog over the list in which
 //! the field is changed.
 //!
-//! On the touchscreen, which has no keys, touching an alarm opens it:
-//! its fields, and under them the buttons that save it, switch it on or
-//! off, and delete it.  Touching a field opens its dialog, and the time
-//! is not typed but chosen: the hours and the minutes are two lists side
-//! by side.  The phone's back button is Cancel.
+//! The touchscreen, which has no keys, has screens of its own
+//! ([`touch`]): each alarm of the list has a switch that turns it on and
+//! off, and touching the alarm opens it; its days are a row of buttons, one
+//! for each day; and its time is typed on a number pad, with AM and PM
+//! beside it.  The phone's back button is Cancel.
 
 use opendeskphone_app_sdk::alarms::{self, Alarm};
 use opendeskphone_app_sdk::canvas::{self, Op, Role};
+use opendeskphone_app_sdk::controls::{Button, Switch};
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::{Align, Error, Font, nav};
 
 mod text;
+mod touch;
 
 use text::{Typed, days_label, sentence};
 
@@ -33,12 +35,6 @@ const SK_OK: u32 = 9;
 const SK_MERIDIEM: u32 = 10;
 const SK_ERASE: u32 = 11;
 const SK_PLAY: u32 = 12;
-
-/// The softkeys the touchscreen does without: the back button is the way
-/// back and out.
-fn keys(keys: &[Softkey]) -> Vec<Softkey> {
-    nav::softkeys(keys, &[SK_EXIT, SK_CANCEL])
-}
 
 const DAY_NAMES: [&str; 7] = [
     "Sunday",
@@ -64,7 +60,8 @@ enum Screen {
     Error,
 }
 
-/// The dialog that changes one field of the alarm.
+/// The dialog that changes one field of the alarm.  (Touch: the screen
+/// of its own that changes it.)
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Dialog {
     Time,
@@ -72,18 +69,32 @@ enum Dialog {
     Tones,
 }
 
-/// Touch: the widgets of the dialog in which a time is chosen.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Picker {
-    hours: Widget,
-    minutes: Widget,
-    /// The text of the time chosen.
-    shown: Widget,
+/// What a control of the touchscreen does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Act {
+    New,
+    /// Switches the alarm on the day (0 is Sunday) or off.
+    Day(u8),
+    Dismiss,
+    Delete,
+    Save,
+    Digit(u8),
+    Erase,
+    /// AM (`false`) or PM.
+    Half(bool),
+    SetTime,
 }
 
-/// How many rows of hours and minutes the time's dialog shows on the
-/// touchscreen.
-const PICKER_ROWS: usize = 5;
+/// The controls of the screen on the touchscreen.
+#[derive(Default)]
+struct Controls {
+    buttons: Vec<(Button, Act)>,
+    /// The switch of each alarm of the list, in the list's order.
+    switches: Vec<Switch>,
+    /// The time typed, on the time's screen; the days chosen, on the
+    /// alarm's.
+    shown: Option<Widget>,
+}
 
 #[derive(Default)]
 struct Alarms {
@@ -106,12 +117,8 @@ struct Alarms {
     typed: Typed,
     /// The phone shows times with AM and PM.
     meridiem: bool,
-    /// Touch: the time's dialog, while it is open, and the rows chosen in
-    /// its lists (the hour's row is the hour of the half of the day where
-    /// the phone shows AM and PM; `typed.pm` has the half).
-    picker: Option<Picker>,
-    hour_row: u32,
-    minute_row: u32,
+    /// Touch: the controls on the screen.
+    touch: Controls,
 }
 
 /// The text of a time of day as the phone shows times.
@@ -138,35 +145,28 @@ impl Alarms {
         self.alarms.get(self.row as usize)
     }
 
-    /// The softkeys for the alarm `a`: what switches it, ends its snooze,
-    /// and deletes it.
-    fn alarm_keys(a: &Alarm) -> Vec<Softkey> {
-        let mut keys = vec![Softkey::new(SK_SWITCH, if a.enabled { "Disable" } else { "Enable" })];
-        if alarms::snoozed().is_some_and(|(id, _)| id == a.id) {
-            keys.push(Softkey::new(SK_DISMISS, "Dismiss"));
-        }
-        keys.push(Softkey::new(SK_DELETE, "Delete"));
-        keys
-    }
-
     fn list_softkeys(&self) {
         let mut keys = vec![Softkey::new(SK_NEW, "New")];
-        // (Touch: no alarm is the highlighted one; an alarm's softkeys
-        // are with its fields, and the back button leaves.)
-        if has_keys() {
-            if let Some(a) = self.selected() {
-                keys.push(Softkey::new(SK_EDIT, "Edit"));
-                keys.extend(Self::alarm_keys(a));
+        if let Some(a) = self.selected() {
+            keys.push(Softkey::new(SK_EDIT, "Edit"));
+            keys.push(Softkey::new(SK_SWITCH, if a.enabled { "Disable" } else { "Enable" }));
+            if alarms::snoozed().is_some_and(|(id, _)| id == a.id) {
+                keys.push(Softkey::new(SK_DISMISS, "Dismiss"));
             }
-            keys.push(Softkey::new(SK_EXIT, "Exit"));
+            keys.push(Softkey::new(SK_DELETE, "Delete"));
         }
+        keys.push(Softkey::new(SK_EXIT, "Exit"));
         ui::set_softkeys(ROOT, &keys);
     }
 
     fn show_list(&mut self) {
         self.screen = Screen::List;
         self.draft = None;
+        self.dialog = None;
         self.alarms = alarms::list();
+        if !has_keys() {
+            return self.show_list_touch();
+        }
         let snoozed = alarms::snoozed().map(|(id, _)| id);
         let items: Vec<ListItem> = self
             .alarms
@@ -206,6 +206,7 @@ impl Alarms {
 
     fn show_error(&mut self, e: &Error) {
         self.screen = Screen::Error;
+        self.touch = Controls::default();
         let (Error::Invalid(why) | Error::Failed(why)) = e;
         let why = sentence(why);
         Message::show("Alarms", &why, &[Softkey::new(SK_OK, "OK")]);
@@ -244,22 +245,17 @@ impl Alarms {
         };
         self.screen = Screen::Edit;
         self.dialog = None;
-        self.picker = None;
+        if !has_keys() {
+            return self.show_edit_touch();
+        }
         let items = [
             ListItem::with_detail("Time", time_text(d.hour, d.minute)),
             ListItem::with_detail("Repeat", days_label(d.days)),
             ListItem::with_detail("Tone", d.tone.clone()),
         ];
         let title = if d.id == 0 { "New Alarm" } else { "Edit Alarm" };
-        let mut softkeys = vec![Softkey::new(SK_SAVE, "Save")];
-        // Touch: the softkeys the list has for the highlighted alarm on
-        // the other phones.
-        if !has_keys() && d.id != 0 {
-            softkeys.extend(Self::alarm_keys(d));
-        }
-        softkeys.push(Softkey::new(SK_CANCEL, "Cancel"));
         self.list_widget(title, &items, self.edit_row);
-        ui::set_softkeys(ROOT, &keys(&softkeys));
+        ui::set_softkeys(ROOT, &[Softkey::new(SK_SAVE, "Save"), Softkey::new(SK_CANCEL, "Cancel")]);
     }
 
     fn save(&mut self) {
@@ -273,18 +269,21 @@ impl Alarms {
         }
     }
 
+    /// Deletes the alarm `id`, and shows the list.
+    fn delete(&mut self, id: u32) {
+        self.after(alarms::remove(id));
+    }
+
     // ----------------------------------------------------------- the dialogs
 
-    /// Opens the dialog that changes the highlighted field, over the
-    /// alarm's fields.
-    fn open_dialog(&mut self) {
+    /// Opens the dialog that changes the field `row` of the alarm's rows
+    /// (`ROW_TIME`, `ROW_REPEAT`, or `ROW_TONE`).
+    fn open_dialog(&mut self, row: u32) {
         let Some(d) = &self.draft else { return };
-        let dialog = match self.edit_row {
+        let dialog = match row {
             ROW_TIME => {
                 self.meridiem = time_text(13, 0).contains('M');
                 self.typed = Typed::of(d.hour, d.minute, self.meridiem);
-                self.hour_row = u32::from(if self.meridiem { d.hour % 12 } else { d.hour });
-                self.minute_row = u32::from(d.minute);
                 Dialog::Time
             }
             ROW_REPEAT => {
@@ -304,29 +303,30 @@ impl Alarms {
 
     /// Draws the open dialog as it stands: a box in the phone's manner
     /// over the middle of the fields, with the field's name and the value.
-    /// The screen's title stays in view above it.
+    /// The screen's title stays in view above it.  (Touch: a screen of its
+    /// own.)
     fn draw_dialog(&mut self) {
         let Some(dialog) = self.dialog else { return };
         let m = ui::get_metrics();
+        if !m.keys {
+            return match dialog {
+                Dialog::Time => self.show_time_touch(),
+                Dialog::Tones => self.show_tones_touch(),
+                // (The days are buttons on the alarm's screen.)
+                Dialog::Days => {}
+            };
+        }
         // As the phone frames its own notices: two lines of the text's
         // color on the gray displays, a thin edge on the color one.
         // On the gray ones a line of the background is left inside the
         // frame, so that a highlighted row does not run into it.
-        let touch = !m.keys;
-        let (edge, pad) = match (touch, m.color) {
-            (true, _) => (2, 16),
-            (false, true) => (1, 8),
-            (false, false) => (3, 2),
-        };
-        let width = if m.color && !touch { 300 } else { m.width * 3 / 4 };
-        // (Touch: the head is as high as what is touched under it needs.)
-        let head = if touch { m.line_height * 2 } else { m.line_height };
-        self.picker = None;
+        let (edge, pad) = if m.color { (1, 8) } else { (3, 2) };
+        let width = if m.color { 300 } else { m.width * 3 / 4 };
+        let head = m.line_height;
         let below = m.height.saturating_sub(m.title_height);
         let room = below.saturating_sub(2 * edge + head);
         let rows = |n: usize| (n as u16).min(room / m.row_height.max(1)) * m.row_height;
         let (title, body) = match dialog {
-            Dialog::Time if touch => ("Time", rows(PICKER_ROWS)),
             Dialog::Time => ("Time", (m.line_height * 2 + m.line_height + pad).min(room)),
             Dialog::Days => ("Repeat", rows(DAY_NAMES.len())),
             Dialog::Tones => ("Tone", rows(alarms::tones().len().max(1))),
@@ -334,11 +334,6 @@ impl Alarms {
         let height = 2 * edge + head + body;
         let top = m.title_height + (below - height) / 2;
         let bounds = Rect::new(((m.width - width) / 2) as i16, top as i16, width, height);
-        if touch {
-            // What is under the dialog is not touched while it is open.
-            let under = ui::create(WidgetKind::Group, ROOT, Rect::new(0, 0, m.width, m.height));
-            ui::claim_touch(under, true);
-        }
         let group = ui::create(WidgetKind::Group, ROOT, bounds);
         let back = canvas::create(group, Rect::new(0, 0, width, height));
         let line = canvas::theme_color(if m.color { Role::Border } else { Role::Foreground });
@@ -356,45 +351,6 @@ impl Alarms {
         ui::set_text(name, title);
         let area = Rect::new(edge as i16, (edge + head) as i16, width - 2 * edge, body);
         match dialog {
-            Dialog::Time if touch => {
-                // The time chosen, at the right of the head.
-                let shown = ui::create(
-                    WidgetKind::Text,
-                    group,
-                    Rect::new((width / 2) as i16, edge as i16, width / 2 - edge - pad, head),
-                );
-                ui::set_font(shown, Font::Bold);
-                ui::set_align(shown, Align::Right);
-                // The hours and the minutes, side by side.
-                let half = area.width / 2;
-                let hours = ui::create(WidgetKind::TextList, group, Rect::new(area.x, area.y, half, body));
-                let minutes = ui::create(
-                    WidgetKind::TextList,
-                    group,
-                    Rect::new(area.x + half as i16, area.y, area.width - half, body),
-                );
-                let hour_items: Vec<ListItem> = if self.meridiem {
-                    (0..12).map(|h| ListItem::new(if h == 0 { "12".to_string() } else { h.to_string() })).collect()
-                } else {
-                    (0..24).map(|h| ListItem::new(format!("{h:02}"))).collect()
-                };
-                let minute_items: Vec<ListItem> = (0..60).map(|m| ListItem::new(format!(":{m:02}"))).collect();
-                ui::set_items(hours, &hour_items);
-                ui::set_items(minutes, &minute_items);
-                ui::set_selected(hours, self.hour_row);
-                ui::set_selected(minutes, self.minute_row);
-                let mut softkeys = vec![Softkey::new(SK_OK, "OK")];
-                if self.meridiem {
-                    softkeys.push(Softkey::new(SK_MERIDIEM, "AM/PM"));
-                }
-                softkeys.push(Softkey::new(SK_CANCEL, "Cancel"));
-                ui::set_softkeys(group, &keys(&softkeys));
-                ui::claim_keys(group, &[Key::Cancel]);
-                ui::set_focus(hours);
-                self.field = hours;
-                self.picker = Some(Picker { hours, minutes, shown });
-                self.draw_time();
-            }
             Dialog::Time => {
                 let hint_h = m.line_height;
                 let time = ui::create(WidgetKind::Text, group, Rect::new(area.x, area.y, area.width, body - hint_h - pad));
@@ -427,8 +383,6 @@ impl Alarms {
                 let list = ui::create(WidgetKind::TextList, group, area);
                 ui::set_focus(list);
                 let softkeys = match dialog {
-                    // (Touch: a tone that is touched is heard.)
-                    Dialog::Tones if touch => vec![Softkey::new(SK_OK, "OK"), Softkey::new(SK_CANCEL, "Cancel")],
                     Dialog::Tones => vec![
                         Softkey::new(SK_OK, "Select"),
                         Softkey::new(SK_PLAY, "Play"),
@@ -436,30 +390,18 @@ impl Alarms {
                     ],
                     _ => vec![Softkey::new(SK_OK, "OK"), Softkey::new(SK_CANCEL, "Cancel")],
                 };
-                ui::set_softkeys(list, &keys(&softkeys));
+                ui::set_softkeys(list, &softkeys);
                 self.field = list;
                 self.draw_choices();
             }
         }
     }
 
-    /// Touch: the time chosen in the dialog's lists.
-    fn picked(&self) -> (u8, u8) {
-        let hour = if self.meridiem {
-            self.hour_row % 12 + if self.typed.pm { 12 } else { 0 }
+    fn draw_time(&mut self) {
+        if has_keys() {
+            ui::set_text(self.field, &self.typed.text(self.meridiem));
         } else {
-            self.hour_row.min(23)
-        };
-        (hour as u8, self.minute_row.min(59) as u8)
-    }
-
-    fn draw_time(&self) {
-        match self.picker {
-            Some(p) => {
-                let (hour, minute) = self.picked();
-                ui::set_text(p.shown, &time_text(hour, minute));
-            }
-            None => ui::set_text(self.field, &self.typed.text(self.meridiem)),
+            self.draw_time_touch();
         }
     }
 
@@ -488,17 +430,14 @@ impl Alarms {
     }
 
     /// Select in a dialog: a day is switched; a time or a tone is
-    /// taken.
+    /// taken.  (Touch: a tone is taken and heard, and the list stays.)
     fn dialog_select(&mut self) {
         match self.dialog {
             Some(Dialog::Days) => {
                 self.days ^= 1 << self.dialog_row.min(6);
                 self.draw_choices();
             }
-            // Touch: a tone that is touched is heard, and OK takes it.
-            Some(Dialog::Tones) if !has_keys() => {
-                alarms::preview(alarms::tones().get(self.dialog_row as usize).map(String::as_str))
-            }
+            Some(Dialog::Tones) if !has_keys() => self.tone_touched(),
             Some(_) => self.dialog_done(),
             None => {}
         }
@@ -507,10 +446,8 @@ impl Alarms {
     /// Takes the dialog's value into the alarm and closes the dialog.  A
     /// time that is not one keeps the dialog open.
     fn dialog_done(&mut self) {
-        let (picking, picked) = (self.picker.is_some(), self.picked());
         let (Some(dialog), Some(d)) = (self.dialog, &mut self.draft) else { return };
         match dialog {
-            Dialog::Time if picking => (d.hour, d.minute) = picked,
             Dialog::Time => match self.typed.time(self.meridiem) {
                 Some((hour, minute)) => (d.hour, d.minute) = (hour, minute),
                 None => return,
@@ -526,7 +463,8 @@ impl Alarms {
         self.show_edit();
     }
 
-    /// Closes the dialog and leaves the alarm as it was.
+    /// Closes the dialog and leaves the alarm as it was.  (Touch: the
+    /// tone touched last is the alarm's.)
     fn dialog_cancel(&mut self) {
         if self.dialog == Some(Dialog::Tones) {
             alarms::preview(None);
@@ -541,7 +479,7 @@ impl Alarms {
         match self.screen {
             Screen::List => self.edit_alarm(),
             Screen::Edit if self.dialog.is_some() => self.dialog_select(),
-            Screen::Edit => self.open_dialog(),
+            Screen::Edit => self.open_dialog(self.edit_row),
             Screen::Error => self.show_list(),
         }
     }
@@ -577,22 +515,10 @@ impl Alarms {
         match id {
             SK_NEW => self.new_alarm(),
             SK_EDIT => self.edit_alarm(),
-            // Touch: the alarm as its fields now are, switched.
-            SK_SWITCH if self.screen == Screen::Edit => {
-                if let Some(d) = &mut self.draft {
-                    d.enabled = !d.enabled;
-                }
-                self.save();
-            }
             SK_SWITCH => self.switch(),
             SK_DELETE => {
-                // (Touch: the alarm whose fields are shown.)
-                let alarm = match self.screen {
-                    Screen::Edit => self.draft.as_ref(),
-                    _ => self.selected(),
-                };
-                if let Some(id) = alarm.map(|a| a.id) {
-                    self.after(alarms::remove(id));
+                if let Some(id) = self.selected().map(|a| a.id) {
+                    self.delete(id);
                 }
             }
             SK_DISMISS => self.after(alarms::dismiss()),
@@ -622,7 +548,8 @@ impl App for Alarms {
         match event {
             Event::Foreground => {
                 // The phone's theme may have changed: what was on screen
-                // is drawn again.
+                // is drawn again, from the start.
+                self.touch = Controls::default();
                 match self.screen {
                     Screen::Edit => {
                         // An open dialog stays open, as it stood.
@@ -644,17 +571,7 @@ impl App for Alarms {
             Event::AlarmsChanged if self.screen == Screen::List && runtime::in_foreground() => {
                 self.show_list()
             }
-            // Touch: an hour or a minute of the time's dialog.
-            Event::Widget((w, WidgetEvent::Highlighted(row) | WidgetEvent::Activated(row)))
-                if self.picker.is_some_and(|p| w == p.hours || w == p.minutes) =>
-            {
-                if self.picker.is_some_and(|p| w == p.hours) {
-                    self.hour_row = row;
-                } else {
-                    self.minute_row = row;
-                }
-                self.draw_time();
-            }
+            Event::Touch((w, t)) => self.touched(w, &t),
             Event::Widget((w, WidgetEvent::Highlighted(row))) if self.dialog.is_some() => {
                 if w == self.field {
                     self.dialog_row = row;
@@ -677,7 +594,8 @@ impl App for Alarms {
             Event::Widget((w, WidgetEvent::Activated(row))) if w == self.widget => {
                 match self.screen {
                     Screen::List => self.row = row,
-                    Screen::Edit => self.edit_row = row,
+                    // (Touch: the rows are fewer, and are not the keys'.)
+                    Screen::Edit => self.edit_row = touch::field(row),
                     Screen::Error => {}
                 }
                 self.activate();

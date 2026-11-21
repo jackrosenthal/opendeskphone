@@ -40,6 +40,7 @@ pub mod bindings {
     });
 }
 
+pub mod controls;
 pub mod manifest;
 pub mod nav;
 pub mod xml;
@@ -161,7 +162,9 @@ pub fn has_keys() -> bool {
 /// below it.  The window claims `cancel`, so the app sees it as
 /// [`Event::Key`] and decides between "back" and leaving.  (On the
 /// touchscreen `cancel` is the back button, which the phone draws at the
-/// left of the title line; the title begins after it.)
+/// left of the title line; the title begins after it.  There the title
+/// has the focus, so that a list made after it shows no highlighted row
+/// until a row is touched: see [`nav::focus_list`].)
 pub fn screen(title: &str) -> Rect {
     ui::clear(ROOT);
     ui::claim_keys(ROOT, &[Key::Cancel]);
@@ -178,6 +181,9 @@ pub fn screen(title: &str) -> Rect {
     );
     ui::set_font(t, Font::Title);
     ui::set_text(t, title);
+    if !m.keys {
+        ui::set_focus(t);
+    }
     Rect::new(
         0,
         m.title_height as i16,

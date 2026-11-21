@@ -1,7 +1,8 @@
-//! Small screen helpers shared by the built-in apps: a message screen and
-//! a labeled-input form.
+//! Small screen helpers shared by the built-in apps: a message screen, a
+//! labeled-input form, and a question before an action.
 
-use crate::{InputMode, ROOT, Rect, Skin, Softkey, Widget, WidgetKind, row_height, screen, ui};
+use crate::controls::{self, Button, Look};
+use crate::{Align, InputMode, ROOT, Rect, Skin, Softkey, Touch, Widget, WidgetKind, row_height, screen, ui};
 
 /// The space these screens leave around what they show, in pixels: at the
 /// sides of the window, above and below a text, between the rows of a
@@ -34,22 +35,47 @@ fn space() -> Space {
 
 /// A wrapped text that fills `area` (what [`screen`] returned), inset as
 /// the text of a [`Message`] is: for a screen that has something to say
-/// in place of its list.
+/// in place of its list.  (A text is in the middle of its widget's
+/// height.)  On the touchscreen the text is centered, and its middle is a
+/// quarter of the way down `area`: in the upper part of the screen, which
+/// is read first, and not lost in the middle of the tall screen.
 pub fn note(area: Rect, text: &str) -> Widget {
     let s = space();
-    let w = ui::create(
-        WidgetKind::Text,
-        ROOT,
-        Rect::new(
-            s.side as i16,
-            area.y + s.edge as i16,
-            area.width.saturating_sub(2 * s.side),
-            area.height.saturating_sub(2 * s.edge),
-        ),
+    let m = ui::get_metrics();
+    let inner = Rect::new(
+        s.side as i16,
+        area.y + s.edge as i16,
+        area.width.saturating_sub(2 * s.side),
+        area.height.saturating_sub(2 * s.edge),
     );
+    let bounds = if m.keys {
+        inner
+    } else {
+        // Room for the lines the text takes, about: a character is about
+        // half as wide as a line is high.
+        let per_line = (inner.width / (m.line_height / 2).max(1)).max(1) as usize;
+        let lines = text.lines().map(|l| l.chars().count().div_ceil(per_line).max(1)).sum::<usize>() as u16;
+        let height = (area.height / 4).max((lines + 1) * m.line_height).min(inner.height);
+        let top = (area.height / 4).saturating_sub(height / 2);
+        Rect::new(inner.x, area.y + top as i16, inner.width, height)
+    };
+    let w = ui::create(WidgetKind::Text, ROOT, bounds);
     ui::set_wrap(w, true);
+    if !m.keys {
+        ui::set_align(w, Align::Center);
+    }
     ui::set_text(w, text);
     w
+}
+
+/// Gives a list the focus on a phone with keys, where the arrows move its
+/// highlight.  On the touchscreen a list has no highlighted row until a
+/// row is touched: [`screen`] gives its title the focus there, and this
+/// leaves it.
+pub fn focus_list(list: Widget) {
+    if ui::get_metrics().keys {
+        ui::set_focus(list);
+    }
 }
 
 /// The softkeys a screen shows of `keys`: all of them on a phone with
@@ -83,6 +109,43 @@ impl Message {
         ui::set_softkeys(ROOT, keys);
         ui::set_focus(w);
         Message { text: w }
+    }
+}
+
+/// Touch: a question before an action, on a screen of its own: the
+/// question under the title, and across the bottom two buttons, "Cancel"
+/// at the left and the action at the right, named for what it does
+/// ("Delete", "Log out").  The back button is Cancel too.  (A phone with
+/// keys asks with a [`Message`] and softkeys.)
+pub struct Confirm {
+    cancel: Button,
+    act: Button,
+}
+
+impl Confirm {
+    /// Clears the window and asks `question`; `look` is the action's
+    /// button's ([`Look::Destructive`] for one that deletes).
+    pub fn show(title: &str, question: &str, action: &str, look: Look) -> Confirm {
+        let area = screen(title);
+        let (rest, bottom) = controls::split_bottom(area);
+        note(rest, question);
+        let places = controls::columns(bottom, 2);
+        Confirm {
+            cancel: Button::new(ROOT, places[0], "Cancel", Look::Secondary),
+            act: Button::new(ROOT, places[1], action, look),
+        }
+    }
+
+    /// What a finger did on `w`: `Some(true)` when it touched the action,
+    /// and `Some(false)` when it touched Cancel.
+    pub fn touched(&mut self, w: Widget, t: &Touch) -> Option<bool> {
+        if self.act.touched(w, t) {
+            Some(true)
+        } else if self.cancel.touched(w, t) {
+            Some(false)
+        } else {
+            None
+        }
     }
 }
 
