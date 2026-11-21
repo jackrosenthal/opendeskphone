@@ -37,7 +37,10 @@
 //! [`Recognizer`] turns the touchscreen's events (one finger: down, moves,
 //! up) into [`Gesture`]s: a tap, a long press, or a drag.  The UI
 //! ([`crate::Ui::touch`]) sends a tap to the region under the place the
-//! finger went down, and a drag to the top screen.
+//! finger went down, and a drag to the top screen.  Before any gesture, the
+//! top screen is told of a finger that came down on a region of its own
+//! ([`crate::screens`]' `Screen::touch_down`), for what cannot wait for
+//! the finger to be lifted (an app's game).
 
 use opendeskphone_state::{Key, TouchPhase};
 

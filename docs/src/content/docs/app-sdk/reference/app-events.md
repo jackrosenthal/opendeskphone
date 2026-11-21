@@ -94,7 +94,7 @@ Event::Widget((widget, widget_event))
 Event::Touch((widget, touch))
 ```
 
-A finger tapped or dragged on `widget`, a widget that takes touches ([`ui::claim_touch`](ui.md#claim_touch)); `ROOT` is the window.  [`Touch`](types.md#touch) tells what the finger did and where, counted from the widget's top-left corner.  Only a phone with a touchscreen sends `Touch` ([`Skin::Touch`](types.md#metrics-and-skin)).  Touches on the stock widgets, the softkeys, and the back button arrive as the events of those: `Widget`, `Softkey`, and `Key(Key::Cancel)`.
+A finger came down, tapped, or dragged on `widget`, a widget that takes touches ([`ui::claim_touch`](ui.md#claim_touch)); `ROOT` is the window.  [`Touch`](types.md#touch) tells what the finger did and where, counted from the widget's top-left corner.  Only a phone with a touchscreen sends `Touch` ([`Skin::Touch`](types.md#metrics-and-skin)).  Touches on the stock widgets, the softkeys, and the back button arrive as the events of those: `Widget`, `Softkey`, and `Key(Key::Cancel)`.
 
 ## `Timer`
 

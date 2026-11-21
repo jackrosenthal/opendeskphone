@@ -18,6 +18,17 @@ const SK_EXIT: u32 = 5;
 const SK_BACK: u32 = 6;
 const SK_OPEN: u32 = 7;
 
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out, and a touch opens a row.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_BACK, SK_OPEN, SK_GROUPS])
+}
+
+/// Sets the window's softkeys: of `all`, those the phone needs.
+fn set_keys(all: &[Softkey]) {
+    ui::set_softkeys(ROOT, &keys(all));
+}
+
 #[derive(Clone, Default)]
 struct Number {
     dial: String,
@@ -249,14 +260,11 @@ impl Contacts {
             .map(|g| ListItem::with_detail(g.name.clone(), g.contacts.len().to_string()))
             .collect();
         ui::set_items(list, &items);
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_OPEN, "Open"),
-                Softkey::new(SK_SEARCH, "Search"),
-                Softkey::new(SK_EXIT, "Exit"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_OPEN, "Open"),
+            Softkey::new(SK_SEARCH, "Search"),
+            Softkey::new(SK_EXIT, "Exit"),
+        ]);
         ui::set_focus(list);
         self.screen = Screen::Groups(list);
     }
@@ -276,7 +284,7 @@ impl Contacts {
         let r = screen(&title);
         if self.view.is_empty() {
             opendeskphone_app_sdk::nav::note(r, "There are no contacts.");
-            ui::set_softkeys(ROOT, &[Softkey::new(SK_EXIT, "Exit")]);
+            set_keys(&[Softkey::new(SK_EXIT, "Exit")]);
             self.screen = Screen::None;
             return;
         }
@@ -288,7 +296,7 @@ impl Contacts {
             keys.push(Softkey::new(SK_GROUPS, "Groups"));
         }
         keys.push(Softkey::new(SK_EXIT, "Exit"));
-        ui::set_softkeys(ROOT, &keys);
+        set_keys(&keys);
         ui::set_focus(list);
         self.screen = Screen::List(list);
     }
@@ -324,7 +332,7 @@ impl Contacts {
         );
         let mut keys = Self::row_keys();
         keys.push(Softkey::new(SK_BACK, "Back"));
-        ui::set_softkeys(ROOT, &keys);
+        set_keys(&keys);
         ui::set_focus(input);
         self.screen = Screen::Search { list };
         self.filter();
@@ -375,7 +383,7 @@ impl Contacts {
         if has_keys() {
             keys.insert(0, Softkey::new(SK_DIAL, "Dial"));
         }
-        ui::set_softkeys(ROOT, &keys);
+        set_keys(&keys);
         ui::set_focus(list);
         self.detail = Some(c);
         self.screen = Screen::Details(list);

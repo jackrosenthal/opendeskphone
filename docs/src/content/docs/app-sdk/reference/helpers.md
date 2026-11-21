@@ -48,6 +48,21 @@ pub fn has_keys() -> bool
 
 Returns `ui::get_metrics().keys`: `false` on a phone that is used by touch alone (the D80).  See [`Metrics`](types.md#metrics-and-skin).
 
+### `nav::softkeys`
+
+```rust
+pub fn softkeys(keys: &[Softkey], for_keys: &[u32]) -> Vec<Softkey>
+```
+
+Returns the softkeys of `keys` that the phone needs: all of them on a phone with keys, and on the touchscreen those whose `id` isn't in `for_keys`.  Name in `for_keys` the softkeys that do what `cancel` does on the screen ("Back", "Exit"), because the touchscreen's [back button](ui.md#touch) is `cancel`, and the softkeys that act on the highlighted row of a list ("Open", "Select"), because a touch on the row does that.
+
+```rust
+ui::set_softkeys(ROOT, &nav::softkeys(
+    &[Softkey::new(SK_REFRESH, "Refresh"), Softkey::new(SK_EXIT, "Exit")],
+    &[SK_EXIT],
+));
+```
+
 ### `Message`
 
 ```rust

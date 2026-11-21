@@ -303,6 +303,7 @@ impl App for Checks {
             )),
             Event::PlaybackStopped(at) => self.log.push(format!("stopped {at}")),
             Event::HotdeskDone(result) => self.log.push(format!("hotdesk {result:?}")),
+            Event::Touch((w, Touch::Down(p))) => self.log.push(format!("down {w} {},{}", p.x, p.y)),
             Event::Touch((w, Touch::Tap(p))) => self.log.push(format!("tap {w} {},{}", p.x, p.y)),
             Event::Touch((w, Touch::Drag((a, b)))) => self.log.push(format!("drag {w} {},{} {},{}", a.x, a.y, b.x, b.y)),
             Event::Touch((w, Touch::DragEnd((a, b)))) => self.log.push(format!("end {w} {},{} {},{}", a.x, a.y, b.x, b.y)),

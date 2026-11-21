@@ -12,6 +12,12 @@ const SK_NO: u32 = 4;
 const SK_EXIT: u32 = 5;
 const SK_BACK: u32 = 6;
 
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_BACK])
+}
+
 #[derive(Default)]
 enum Screen {
     #[default]
@@ -39,27 +45,27 @@ impl HotDesk {
                     ("Extension", InputMode::Numeric, ""),
                     ("PIN", InputMode::Pin, ""),
                 ],
-                &[
+                &keys(&[
                     Softkey::new(SK_LOGIN, "Log In"),
                     Softkey::new(SK_EXIT, "Cancel"),
-                ],
+                ]),
             );
             self.screen = Screen::Login(form);
         } else {
             Message::show(
                 "Hot Desking",
                 &format!("Logged in as {user}."),
-                &[
+                &keys(&[
                     Softkey::new(SK_LOGOUT, "Log Out"),
                     Softkey::new(SK_EXIT, "Exit"),
-                ],
+                ]),
             );
             self.screen = Screen::LoggedIn;
         }
     }
 
     fn fail(&mut self, text: &str) {
-        Message::show("Hot Desking", text, &[Softkey::new(SK_BACK, "Back")]);
+        Message::show("Hot Desking", text, &keys(&[Softkey::new(SK_BACK, "Back")]));
         self.screen = Screen::Failed;
     }
 
@@ -79,7 +85,7 @@ impl HotDesk {
 
     /// Shows what the phone is doing until `Event::HotdeskDone` comes.
     fn wait(&mut self, text: &str) {
-        Message::show("Hot Desking", text, &[Softkey::new(SK_EXIT, "Exit")]);
+        Message::show("Hot Desking", text, &keys(&[Softkey::new(SK_EXIT, "Exit")]));
         self.screen = Screen::Working;
     }
 
@@ -116,7 +122,7 @@ impl App for HotDesk {
                 Message::show(
                     "Log Out",
                     &format!("Log {} out of this phone?", hotdesk::current_user()),
-                    &[Softkey::new(SK_YES, "Yes"), Softkey::new(SK_NO, "No")],
+                    &keys(&[Softkey::new(SK_YES, "Yes"), Softkey::new(SK_NO, "No")]),
                 );
                 self.screen = Screen::Confirm;
             }

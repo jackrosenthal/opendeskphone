@@ -92,7 +92,9 @@
 //! (the input is submitted), and the back button, or a tap beside the
 //! input, puts it away for the softkeys.  A widget (or the
 //! window) that *takes touches* ([`AppView::set_touch_claim`]) gets
-//! [`AppEvent::Touch`] instead, with places relative to itself.  A touch
+//! [`AppEvent::Touch`] instead, with places relative to itself: the
+//! finger coming down ([`Touch::Down`], at once), and then the tap, or
+//! the drag and its end, that the touch becomes.  A touch
 //! goes to the topmost widget under the finger that takes touches or is a
 //! `List`, an `Input`, or a `Scroll`; the window is under them all.  The
 //! softkeys are buttons below the content area, and the toolkit draws a
@@ -438,7 +440,11 @@ impl KeyClaims {
 /// widget is at a place outside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Touch {
-    /// Down and up again in one place.
+    /// The finger came down.  The first of every touch: a `Tap` follows,
+    /// or `Drag`s and a `DragEnd`, or (a touch that was canceled) nothing.
+    Down { x: i16, y: i16 },
+    /// Up again in the place it came down, or still there after
+    /// [`crate::touch::LONG_PRESS_MS`].
     Tap { x: i16, y: i16 },
     /// The finger, having come down at (`x0`, `y0`), is now at (`x`,
     /// `y`).  Sent for every movement.
@@ -1239,6 +1245,13 @@ impl AppView {
     /// [`crate::Ui`].
     pub fn dispatch_tap(&self, x: i32, y: i32) {
         crate::appview_impl::tap(self, x, y);
+    }
+
+    /// Feeds a finger that came down at (`x`, `y`) of the view, as
+    /// [`AppView::dispatch_tap`]: the UI does before the tap or the drag
+    /// the touch becomes.
+    pub fn dispatch_down(&self, x: i32, y: i32) {
+        crate::appview_impl::down(self, x, y);
     }
 
     /// Feeds one movement of a drag: the finger came down at (`x0`, `y0`)

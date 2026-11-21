@@ -9,6 +9,12 @@
 //! does) and puts the keyboard away; so do the back button and a touch
 //! on the view beside the input, without submitting.  A touch on the
 //! input brings the keyboard back.
+//!
+//! Touch: the back button is an arrow over the corner the app keeps free
+//! for it.  Where what is under the arrow is not known to be the view's
+//! ground (a full-screen view, in which the app draws what it likes, and
+//! a view drawn farther up for the keyboard), the arrow is on a round
+//! button of its own, which shows on anything.
 
 use super::*;
 use crate::appview::{AppEvent, AppView, WidgetId};
@@ -20,6 +26,20 @@ const VIEW: u32 = 0;
 /// Touch: the region of the back button while the keyboard is up, which
 /// puts the keyboard away.
 const KEYBOARD_AWAY: u32 = 1;
+
+/// Touch: the back button's arrow in `back`; with `own_ground`, on a round
+/// button in the colors of the softkey buttons.
+fn back_arrow(c: &mut Canvas, th: &Theme, back: IRect, own_ground: bool) {
+    if own_ground {
+        let d = back.w.min(back.h) - 2 * th.px(6);
+        let disc = IRect::new(back.x + (back.w - d) / 2, back.y + (back.h - d) / 2, d, d);
+        c.fill_round_aa(disc, d / 2, th.sk_edge);
+        c.fill_round_aa(disc.inset(2), d / 2 - 2, th.sk_bg);
+    }
+    if let Some(icon) = th.icon("left") {
+        c.icon_in(icon, back, if own_ground { th.sk_fg } else { th.fg });
+    }
+}
 
 pub(crate) struct AppScreen {
     pub view: AppView,
@@ -150,6 +170,12 @@ impl Screen for AppScreen {
         }
         Nav::Stay
     }
+    fn touch_down(&mut self, _cx: &Cx, hit: Hit, x: i32, y: i32) {
+        // (Not on the keyboard, or on the button that puts it away.)
+        if hit != Hit::Custom(KEYBOARD_AWAY) && !Keyboard::owns(hit) {
+            appview_impl::down(&self.view, x - self.area.x, y - self.area.y);
+        }
+    }
     fn drag_at(&mut self, _cx: &Cx, from: Option<Hit>, x: i32, y: i32, dx: i32, dy: i32) -> Nav {
         // A finger that slides on the keyboard types nothing and moves
         // nothing.
@@ -200,7 +226,9 @@ impl Screen for AppScreen {
                 // corner of the view that `Metrics::back_width` tells the
                 // app to keep free.  It is the `Cancel` key, the app's if
                 // claimed.
-                widgets::back_button(c, th, IRect::new(area.x, area.y, th.back_w, th.title_h), th.fg);
+                let back = IRect::new(area.x, area.y, th.back_w, th.title_h);
+                back_arrow(c, th, back, tree.full_screen);
+                c.hit(back, Hit::Key(Key::Cancel));
             }
             return;
         };
@@ -224,14 +252,9 @@ impl Screen for AppScreen {
         c.hit(self.area, Hit::Custom(VIEW));
         // The back button, where it always is, puts the keyboard away.
         // (Over a view drawn farther up it is not over the corner the
-        // app keeps free: on a ground of its own.)
+        // app keeps free.)
         let back = IRect::new(area.x, area.y, th.back_w, th.title_h);
-        if self.area.y != area.y {
-            c.fill(back, th.bg);
-        }
-        if let Some(icon) = th.icon("left") {
-            c.icon_in(icon, back, th.fg);
-        }
+        back_arrow(c, th, back, self.area.y != area.y || self.full_screen());
         c.hit(back, Hit::Custom(KEYBOARD_AWAY));
         // (Between the keys nothing is touched: not the view under them.)
         c.hit(keys, Hit::Nothing);

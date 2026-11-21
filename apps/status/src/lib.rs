@@ -11,6 +11,17 @@ const SK_OK: u32 = 4;
 const SK_BACK: u32 = 5;
 const SK_RETRY: u32 = 6;
 
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out, and a touch selects a row.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_BACK, SK_SELECT])
+}
+
+/// Sets the window's softkeys: of `all`, those the phone needs.
+fn set_keys(all: &[Softkey]) {
+    ui::set_softkeys(ROOT, &keys(all));
+}
+
 #[derive(Clone)]
 struct Choice {
     id: u32,
@@ -89,7 +100,7 @@ impl Default for Status {
 
 impl Status {
     fn load(&mut self) {
-        Message::show("Status", "Loading...", &[Softkey::new(SK_EXIT, "Exit")]);
+        Message::show("Status", "Loading...", &keys(&[Softkey::new(SK_EXIT, "Exit")]));
         self.screen = Screen::Loading;
         self.list_req = Some(pbx::presence_options());
         self.info_req = Some(pbx::presence_info());
@@ -107,14 +118,11 @@ impl Status {
         if let Some(i) = self.options.iter().position(|o| o.active) {
             ui::set_selected(list, i as u32);
         }
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_SELECT, "Select"),
-                Softkey::new(SK_MESSAGE, "Message"),
-                Softkey::new(SK_EXIT, "Exit"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_SELECT, "Select"),
+            Softkey::new(SK_MESSAGE, "Message"),
+            Softkey::new(SK_EXIT, "Exit"),
+        ]);
         ui::set_focus(list);
         self.screen = Screen::List { list };
     }
@@ -123,10 +131,10 @@ impl Status {
         Message::show(
             "Status",
             text,
-            &[
+            &keys(&[
                 Softkey::new(SK_RETRY, "Retry"),
                 Softkey::new(SK_EXIT, "Exit"),
-            ],
+            ]),
         );
         self.screen = Screen::Error;
     }
@@ -224,7 +232,7 @@ impl App for Status {
                 let form = Form::show(
                     "Status Message",
                     &[("Message", InputMode::Text, &self.message)],
-                    &[Softkey::new(SK_OK, "OK"), Softkey::new(SK_BACK, "Back")],
+                    &keys(&[Softkey::new(SK_OK, "OK"), Softkey::new(SK_BACK, "Back")]),
                 );
                 self.screen = Screen::Message { form };
             }

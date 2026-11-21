@@ -6,7 +6,7 @@
 /// at once and deliver their result later as an event, so an app never
 /// blocks the phone.  An app is given the interfaces its component
 /// imports, and no others.
-package opendeskphone:app@3.0.0;
+package opendeskphone:app@3.1.0;
 
 interface types {
   /// A widget handle.  Handle 0 is the app's root window (the app content
@@ -163,9 +163,18 @@ interface types {
   record point { x: s16, y: s16 }
 
   /// What a finger did on a widget that takes touches
-  /// (`ui.claim-touch`).
+  /// (`ui.claim-touch`).  Every touch begins with `down`.  A tap is
+  /// `down`, then `tap`.  A drag is `down`, then a `drag` for every
+  /// movement, then `drag-end`.  A touch may also end after `down`
+  /// with nothing more (another screen came over the window while the
+  /// finger was down).
   variant touch {
-    /// It came down and went up again in one place: that place.
+    /// It came down: that place.  Arrives when the finger lands, before
+    /// it is known whether the touch becomes a tap or a drag.
+    down(point),
+    /// It went up again in the place it came down: that place.  A
+    /// finger that stays in one place for 0.6 seconds has tapped then,
+    /// and nothing more comes of that touch.
     tap(point),
     /// It moves, having come down: where it came down, and where it is
     /// now.  Arrives for every movement.

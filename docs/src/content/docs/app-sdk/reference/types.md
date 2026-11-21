@@ -107,6 +107,7 @@ See [`ui`](ui.md).
 
 ```rust
 pub enum Touch {
+    Down(Point),
     Tap(Point),
     Drag((Point, Point)),
     DragEnd((Point, Point)),
@@ -117,11 +118,21 @@ What a finger did on a widget that takes touches ([`ui::claim_touch`](ui.md#clai
 
 | Variant | Meaning |
 | --- | --- |
-| `Tap(at)` | The finger came down and went up again at `at`. |
+| `Down(at)` | The finger came down at `at`.  Arrives the moment the finger lands, before the phone knows whether the touch becomes a tap or a drag. |
+| `Tap(at)` | The finger went up again at `at`, the place where it came down. |
 | `Drag((from, to))` | The finger came down at `from` and has moved to `to`.  One event arrives for every movement. |
 | `DragEnd((from, to))` | The finger of a drag was lifted at `to`. |
 
-A finger that moves less than 18 pixels taps; a finger that moves farther drags, and doesn't tap.  A finger held in one place is a tap.  During a drag, `to` can lie outside the widget, with negative coordinates to the left of the widget or above.
+Every touch begins with `Down`, and the events of one touch arrive in this order:
+
+| The finger | Events |
+| --- | --- |
+| Taps | `Down`, `Tap` |
+| Drags | `Down`, a `Drag` for every movement, `DragEnd` |
+
+Use `Down` for what can't wait until the finger is lifted, such as the flap or the jump of a game, and `Tap` for a button, which the user can still leave by sliding off.  An app that acts on `Down` shouldn't act again on the `Tap` that follows.
+
+A finger that moves less than 18 pixels taps; a finger that moves farther drags, and doesn't tap.  A finger held in one place for 0.6 seconds taps then, and nothing more arrives when the finger is lifted.  A touch can also end after `Down` with no other event, when another screen (e.g., an incoming call) covers the window while the finger is down.  During a drag, `to` can lie outside the widget, with negative coordinates to the left of the widget or above.
 
 ## Keys
 

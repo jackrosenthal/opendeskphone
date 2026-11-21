@@ -6,12 +6,14 @@
 //! is on screen (and rejects it otherwise), and sends `*`, `#`, and `0` as
 //! DTMF for rewind, skip, and pause.
 //!
-//! On the touchscreen, which has no keys, touching a message highlights
-//! it, for the softkeys to act on ("Play" plays it), and rewind, pause,
-//! and skip are softkeys while a message plays.
+//! On the touchscreen, which has no keys, touching a message plays it, on
+//! a screen of its own that stays when the message has played: rewind,
+//! pause, and skip are softkeys there while it plays, and so is what else
+//! is done with the message (play it again, delete it, call back, move
+//! it, mark it unread).  The phone's back button goes back to the list.
 
 use opendeskphone_app_sdk::prelude::*;
-use opendeskphone_app_sdk::{VoicemailMessage, VoicemailSort};
+use opendeskphone_app_sdk::{VoicemailMessage, VoicemailSort, nav};
 
 const SK_PLAY: u32 = 1;
 const SK_DELETE: u32 = 2;
@@ -29,6 +31,12 @@ const SK_REFRESH: u32 = 13;
 const SK_REWIND: u32 = 14;
 const SK_PAUSE: u32 = 15;
 const SK_SKIP: u32 = 16;
+
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out (and stops a message), and a touch opens a row.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    nav::softkeys(keys, &[SK_EXIT, SK_BACK, SK_STOP, SK_OPEN])
+}
 
 const PLAYBACK_EVENT: &str = "digium.incomingCall.voicemail";
 const PAGE: u32 = 30;
@@ -81,6 +89,8 @@ enum Screen {
     MoveTo,
     ConfirmDelete,
     Playing,
+    /// Touch: the message that was played, with what is done with it.
+    Message,
     Error,
 }
 
@@ -145,7 +155,7 @@ impl Voicemail {
     }
 
     fn loading(&mut self) {
-        Message::show("Voicemail", "Loading...", &[Softkey::new(SK_EXIT, "Exit")]);
+        Message::show("Voicemail", "Loading...", &keys(&[Softkey::new(SK_EXIT, "Exit")]));
         self.screen = Screen::Loading;
     }
 
@@ -165,7 +175,21 @@ impl Voicemail {
         self.messages.get(ui::selected(self.list)? as usize).cloned()
     }
 
+    /// The message a softkey is for: the one on the screen, or else the
+    /// one highlighted in the list.
+    fn subject(&self) -> Option<Msg> {
+        match self.screen {
+            Screen::Playing | Screen::Message => self.current.clone(),
+            _ => self.selected(),
+        }
+    }
+
     fn list_keys(&self) -> Vec<Softkey> {
+        // Touch: no message is the highlighted one; a message's softkeys
+        // are on its own screen.
+        if !has_keys() {
+            return vec![Softkey::new(SK_FOLDERS, "Folders")];
+        }
         let mark = match self.selected() {
             Some(m) if m.read => "Unread",
             _ => "Read",
@@ -187,11 +211,11 @@ impl Voicemail {
             opendeskphone_app_sdk::nav::note(r, "No messages.");
             ui::set_softkeys(
                 ROOT,
-                &[
+                &keys(&[
                     Softkey::new(SK_FOLDERS, "Folders"),
                     Softkey::new(SK_REFRESH, "Refresh"),
                     Softkey::new(SK_EXIT, "Exit"),
-                ],
+                ]),
             );
             self.screen = Screen::List;
             self.list = 0;
@@ -227,10 +251,10 @@ impl Voicemail {
         ui::set_items(list, &items);
         ui::set_softkeys(
             ROOT,
-            &[
+            &keys(&[
                 Softkey::new(SK_OPEN, if moving { "Move" } else { "Open" }),
                 Softkey::new(SK_BACK, "Back"),
-            ],
+            ]),
         );
         ui::set_focus(list);
         self.list = list;
@@ -241,29 +265,62 @@ impl Voicemail {
         };
     }
 
-    fn play(&mut self) {
-        let Some(m) = self.selected() else { return };
+    fn play(&mut self, m: Msg) {
         self.ask(Want::Play, pbx::voicemail_play(&self.folder, &m.id));
+        self.current = Some(m);
+        self.draw_message(true);
+    }
+
+    /// The screen of the message in `current`: while it plays, and, on
+    /// the touchscreen, afterward.
+    fn draw_message(&mut self, playing: bool) {
+        let Some(m) = self.current.clone() else {
+            return self.draw_list();
+        };
         let text = format!(
-            "{}\n{}\n{}:{:02}\n\nConnecting...",
+            "{}\n{}\n{}:{:02}{}",
             m.who(),
             l10n::format_time(m.date, TimeStyle::DateAndTime),
             m.duration / 60,
-            m.duration % 60
+            m.duration % 60,
+            if playing { "\n\nConnecting..." } else { "" }
         );
-        let mut keys = vec![Softkey::new(SK_STOP, "Stop")];
-        if !has_keys() {
-            // What `*`, `0`, and `#` do on a phone that has them.
-            keys.extend([
-                Softkey::new(SK_REWIND, "Rewind"),
-                Softkey::new(SK_PAUSE, "Pause"),
-                Softkey::new(SK_SKIP, "Skip"),
+        let mut softkeys = Vec::new();
+        if has_keys() {
+            softkeys.push(Softkey::new(SK_STOP, "Stop"));
+        } else {
+            if playing {
+                // What `*`, `0`, and `#` do on a phone that has them.
+                softkeys.extend([
+                    Softkey::new(SK_REWIND, "Rewind"),
+                    Softkey::new(SK_PAUSE, "Pause"),
+                    Softkey::new(SK_SKIP, "Skip"),
+                ]);
+            } else {
+                softkeys.push(Softkey::new(SK_PLAY, "Play"));
+            }
+            softkeys.extend([
+                Softkey::new(SK_DELETE, "Delete"),
+                Softkey::new(SK_CALL, "Call Back"),
+                Softkey::new(SK_MOVE, "Move"),
             ]);
+            if !playing {
+                softkeys.push(Softkey::new(SK_MARK, if m.read { "Unread" } else { "Read" }));
+            }
         }
-        Message::show("Playing", &text, &keys);
-        ui::claim_keys(ROOT, &[Key::Cancel, Key::Star, Key::Pound, Key::Digit(0)]);
-        self.current = Some(m);
-        self.screen = Screen::Playing;
+        Message::show(if playing { "Playing" } else { "Message" }, &text, &softkeys);
+        if playing {
+            ui::claim_keys(ROOT, &[Key::Cancel, Key::Star, Key::Pound, Key::Digit(0)]);
+        }
+        self.screen = if playing { Screen::Playing } else { Screen::Message };
+    }
+
+    /// Ends the playback call, if there is one, for a softkey that does
+    /// something else with the message.
+    fn hang_up(&mut self) {
+        if let Some(call) = self.call.take() {
+            let _ = calls::hangup(call);
+        }
     }
 
     /// Sends the PBX's playback a digit: `*` rewinds, `#` skips, and `0`
@@ -276,21 +333,32 @@ impl Voicemail {
         }
     }
 
+    /// Stops the message and goes back to the list.
     fn stop_playing(&mut self) {
-        if let Some(call) = self.call.take() {
-            let _ = calls::hangup(call);
-        }
-        self.after_playing();
+        self.hang_up();
+        self.after_playing(false);
     }
 
-    fn after_playing(&mut self) {
+    /// The message was listened to, to its end or until it was stopped:
+    /// it is read, as with the stock app.  With `stay` (the touchscreen,
+    /// when the message has played to its end) the message's screen stays;
+    /// otherwise the list is shown.
+    fn after_playing(&mut self, stay: bool) {
         self.call = None;
         if self.screen != Screen::Playing {
             return;
         }
-        // Listening marks the message read, as the stock app does.
+        let unread = self.current.as_ref().is_some_and(|m| !m.read);
+        if stay {
+            if let Some(m) = self.current.as_mut().filter(|_| unread) {
+                m.read = true;
+                let id = pbx::voicemail_mark_read(&self.folder, std::slice::from_ref(&m.id));
+                self.ask(Want::Change, id);
+            }
+            return self.draw_message(false);
+        }
         match self.current.take() {
-            Some(m) if !m.read => {
+            Some(m) if unread => {
                 self.loading();
                 let id = pbx::voicemail_mark_read(&self.folder, &[m.id]);
                 self.ask(Want::Change, id);
@@ -299,10 +367,23 @@ impl Voicemail {
         }
     }
 
+    /// Back from a question about a message or from the folders: to the
+    /// message's screen, on the touchscreen, where the question was
+    /// asked; otherwise to the list.
+    fn back(&mut self) {
+        if !has_keys() && self.current.is_some() {
+            self.draw_message(false);
+        } else {
+            self.current = None;
+            self.draw_list();
+        }
+    }
+
     fn change(&mut self, change: Change) {
         let Some(m) = self.current.take().or_else(|| self.selected()) else {
             return;
         };
+        self.hang_up();
         let ids = [m.id];
         self.loading();
         let id = match change {
@@ -318,10 +399,10 @@ impl Voicemail {
         Message::show(
             "Voicemail",
             &e.to_string(),
-            &[
+            &keys(&[
                 Softkey::new(SK_REFRESH, "Retry"),
                 Softkey::new(SK_EXIT, "Exit"),
-            ],
+            ]),
         );
         self.screen = Screen::Error;
     }
@@ -386,6 +467,7 @@ impl App for Voicemail {
         match event {
             Event::Foreground => {
                 self.shown = true;
+                self.current = None;
                 self.folder = "INBOX".into();
                 self.loading();
                 self.load_list();
@@ -414,7 +496,7 @@ impl App for Voicemail {
             }
             Event::Call(c) => {
                 if self.call == Some(c.id) && c.state == opendeskphone_app_sdk::CallState::Ended {
-                    self.after_playing();
+                    self.after_playing(!has_keys());
                 }
             }
             Event::Mwi(_) => {
@@ -428,7 +510,8 @@ impl App for Voicemail {
                 (Key::Pound, Screen::Playing) => self.control("#"),
                 (Key::Digit(0), Screen::Playing) => self.control("0"),
                 (Key::Cancel, Screen::Playing) => self.stop_playing(),
-                (Key::Cancel, Screen::Folders | Screen::MoveTo | Screen::ConfirmDelete) => {
+                (Key::Cancel, Screen::Folders | Screen::MoveTo | Screen::ConfirmDelete) => self.back(),
+                (Key::Cancel, Screen::Message) => {
                     self.current = None;
                     self.draw_list()
                 }
@@ -441,11 +524,12 @@ impl App for Voicemail {
                 }
             }
             Event::Widget((_, WidgetEvent::Activated(i))) => match self.screen {
-                // Touch: the touch that activates a message is the one
-                // that highlights it, and the softkeys are for the
-                // highlighted one.  "Play" plays it.
-                Screen::List if !has_keys() => {}
-                Screen::List => self.play(),
+                // (Touch: the message that was touched.)
+                Screen::List => {
+                    if let Some(m) = self.messages.get(i as usize).cloned() {
+                        self.play(m);
+                    }
+                }
                 Screen::Folders => {
                     if let Some(f) = self.folders.get(i as usize) {
                         self.folder = f.name.clone();
@@ -460,13 +544,18 @@ impl App for Voicemail {
                 }
                 _ => {}
             },
-            Event::Softkey(SK_PLAY) => self.play(),
+            Event::Softkey(SK_PLAY) => {
+                if let Some(m) = self.subject() {
+                    self.play(m);
+                }
+            }
             Event::Softkey(SK_STOP) => self.stop_playing(),
             Event::Softkey(SK_REWIND) => self.control("*"),
             Event::Softkey(SK_PAUSE) => self.control("0"),
             Event::Softkey(SK_SKIP) => self.control("#"),
             Event::Softkey(SK_DELETE) => {
-                if let Some(m) = self.selected() {
+                if let Some(m) = self.subject() {
+                    self.hang_up();
                     Message::show(
                         "Delete",
                         &format!("Delete the message from {}?", m.who()),
@@ -477,17 +566,15 @@ impl App for Voicemail {
                 }
             }
             Event::Softkey(SK_YES) => self.change(Change::Remove),
-            Event::Softkey(SK_NO | SK_BACK) => {
-                self.current = None;
-                self.draw_list();
-            }
+            Event::Softkey(SK_NO | SK_BACK) => self.back(),
             Event::Softkey(SK_MARK) => {
-                if let Some(m) = self.selected() {
+                if let Some(m) = self.subject() {
                     self.change(Change::Mark(!m.read));
                 }
             }
             Event::Softkey(SK_MOVE) => {
-                if let Some(m) = self.selected() {
+                if let Some(m) = self.subject() {
+                    self.hang_up();
                     self.current = Some(m);
                     self.draw_folders(true);
                 }
@@ -499,11 +586,13 @@ impl App for Voicemail {
                 }
             }
             Event::Softkey(SK_CALL) => {
-                if let Some(m) = self.selected()
+                if let Some(m) = self.subject()
                     && !m.number.is_empty()
-                    && calls::dial(&m.number, None, &[]).is_ok()
                 {
-                    runtime::background();
+                    self.hang_up();
+                    if calls::dial(&m.number, None, &[]).is_ok() {
+                        runtime::background();
+                    }
                 }
             }
             Event::Softkey(SK_REFRESH) => {

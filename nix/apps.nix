@@ -24,7 +24,7 @@ let
   # One cargo workspace of apps (`dir`, relative to the repository root):
   # its source, and its dependencies as its own Cargo.lock pins them.
   workspaceOf = dir: {
-    version = "3.0.0";
+    version = "3.1.0";
     src = lib.fileset.toSource {
       inherit root;
       fileset = lib.fileset.unions [
@@ -102,7 +102,7 @@ let
   # hands them this directory as test-inputs/apps-staged.
   guests = "crates/opendeskphone-apps/tests/guests";
   testFixture =
-    runCommand "opendeskphone-apps-test-fixture-3.0.0" { nativeBuildInputs = [ opendeskphone-apps-build ]; }
+    runCommand "opendeskphone-apps-test-fixture-3.1.0" { nativeBuildInputs = [ opendeskphone-apps-build ]; }
       ''
         opendeskphone-apps-build stage \
           --wasm-dir ${modules} \
@@ -119,7 +119,7 @@ let
           --target pulley64
       '';
 in
-runCommand "opendeskphone-apps-3.0.0"
+runCommand "opendeskphone-apps-3.1.0"
   {
     nativeBuildInputs = [ opendeskphone-apps-build ];
     passthru = {

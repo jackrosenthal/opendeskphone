@@ -1,8 +1,12 @@
 //! Queues: the user's call queues with their login state; log in and out,
 //! pause and resume, and view a queue's numbers for today.
+//!
+//! On the touchscreen, which has no keys, touching a queue shows its
+//! numbers, and the softkeys that log in and out and pause and resume are
+//! there, for that queue.  The phone's back button goes back to the list.
 
 use opendeskphone_app_sdk::prelude::*;
-use opendeskphone_app_sdk::{InputMode, QueueMembership, QueueStatus};
+use opendeskphone_app_sdk::{InputMode, QueueMembership, QueueStatus, nav};
 
 const SK_LOGIN: u32 = 1;
 const SK_LOGOUT: u32 = 2;
@@ -14,6 +18,12 @@ const SK_BACK: u32 = 7;
 const SK_OK: u32 = 8;
 const SK_REFRESH: u32 = 9;
 const REFRESH_MS: u32 = 15_000;
+
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    nav::softkeys(keys, &[SK_EXIT, SK_BACK])
+}
 
 #[derive(Clone)]
 struct Queue {
@@ -54,6 +64,8 @@ enum Screen {
     List,
     Details,
     Reason(Form),
+    /// The user has no queues.
+    Empty,
     Error,
 }
 
@@ -78,7 +90,8 @@ impl Queues {
         self.queues.get(self.selected)
     }
 
-    fn softkeys(&self) -> Vec<Softkey> {
+    /// The softkeys that change the user's state in the queue.
+    fn state_keys(&self) -> Vec<Softkey> {
         let mut keys = Vec::new();
         if let Some(q) = self.current() {
             match q.status {
@@ -93,9 +106,34 @@ impl Queues {
                     Softkey::new(SK_PAUSE, "Pause")
                 });
             }
+        }
+        keys
+    }
+
+    /// The list's softkeys: for the highlighted queue.  Touch: none (no
+    /// queue is the highlighted one; a queue's softkeys are with its
+    /// numbers).
+    fn softkeys(&self) -> Vec<Softkey> {
+        if !has_keys() {
+            return Vec::new();
+        }
+        let mut keys = self.state_keys();
+        if self.current().is_some() {
             keys.push(Softkey::new(SK_DETAILS, "Details"));
         }
         keys.push(Softkey::new(SK_EXIT, "Exit"));
+        keys
+    }
+
+    /// The softkeys of a queue's numbers, loaded or not.
+    fn detail_keys(&self, loaded: bool) -> Vec<Softkey> {
+        let mut keys = if has_keys() { Vec::new() } else { self.state_keys() };
+        if loaded {
+            keys.push(Softkey::new(SK_REFRESH, "Refresh"));
+        }
+        if has_keys() {
+            keys.push(Softkey::new(SK_BACK, "Back"));
+        }
         keys
     }
 
@@ -103,8 +141,8 @@ impl Queues {
         let r = screen("Queues");
         if self.queues.is_empty() {
             opendeskphone_app_sdk::nav::note(r, "You are not a member of any queue.");
-            ui::set_softkeys(ROOT, &[Softkey::new(SK_EXIT, "Exit")]);
-            self.screen = Screen::Error;
+            ui::set_softkeys(ROOT, &keys(&[Softkey::new(SK_EXIT, "Exit")]));
+            self.screen = Screen::Empty;
             return;
         }
         self.selected = self.selected.min(self.queues.len() - 1);
@@ -136,7 +174,7 @@ impl Queues {
         let Some(q) = self.current().cloned() else {
             return;
         };
-        Message::show(&q.name, "Loading...", &[Softkey::new(SK_BACK, "Back")]);
+        Message::show(&q.name, "Loading...", &self.detail_keys(false));
         self.screen = Screen::Details;
         self.stats_req = Some(pbx::queue_status(&q.id));
     }
@@ -155,14 +193,7 @@ impl Queues {
             s.completed_calls,
             s.abandoned_calls,
         );
-        Message::show(
-            &q.name,
-            &text,
-            &[
-                Softkey::new(SK_REFRESH, "Refresh"),
-                Softkey::new(SK_BACK, "Back"),
-            ],
-        );
+        Message::show(&q.name, &text, &self.detail_keys(true));
         self.screen = Screen::Details;
     }
 
@@ -170,9 +201,23 @@ impl Queues {
         Message::show(
             "Queues",
             &e.to_string(),
-            &[Softkey::new(SK_BACK, "Back")],
+            &keys(&[Softkey::new(SK_BACK, "Back")]),
         );
         self.screen = Screen::Error;
+    }
+
+    /// Cancel: one screen back, or out of the app.
+    fn back(&mut self) {
+        match self.screen {
+            Screen::Details => self.draw_list(),
+            // Touch: the pause was asked for with the queue's numbers.
+            Screen::Reason(_) if !has_keys() => self.show_details(),
+            Screen::Reason(_) => self.draw_list(),
+            // Touch: the back button is what the "Back" softkey is on
+            // the other phones.
+            Screen::Error if !has_keys() => self.draw_list(),
+            _ => runtime::background(),
+        }
     }
 
     fn on_pbx(&mut self, id: u32, outcome: Result<PbxResult, PbxError>) {
@@ -194,7 +239,7 @@ impl Queues {
                         })
                         .collect();
                     // Do not pull the user out of a detail or input screen.
-                    if matches!(self.screen, Screen::Loading | Screen::List | Screen::Error) {
+                    if matches!(self.screen, Screen::Loading | Screen::List | Screen::Empty | Screen::Error) {
                         self.draw_list();
                     }
                 }
@@ -234,7 +279,7 @@ impl App for Queues {
             Event::Foreground => {
                 self.shown = true;
                 if self.queues.is_empty() {
-                    Message::show("Queues", "Loading...", &[Softkey::new(SK_EXIT, "Exit")]);
+                    Message::show("Queues", "Loading...", &keys(&[Softkey::new(SK_EXIT, "Exit")]));
                     self.screen = Screen::Loading;
                 } else {
                     self.draw_list();
@@ -258,10 +303,6 @@ impl App for Queues {
                 self.selected = i as usize;
                 ui::set_softkeys(ROOT, &self.softkeys());
             }
-            // Touch: the touch that activates a queue is the one that
-            // highlights it, and the softkeys are for the highlighted
-            // one.  "Details" shows it.
-            Event::Widget((_, WidgetEvent::Activated(_))) if !has_keys() => {}
             Event::Widget((_, WidgetEvent::Activated(i))) => {
                 self.selected = i as usize;
                 self.show_details();
@@ -273,7 +314,7 @@ impl App for Queues {
                 let form = Form::show(
                     "Pause",
                     &[("Reason", InputMode::Text, "")],
-                    &[Softkey::new(SK_OK, "Pause"), Softkey::new(SK_BACK, "Back")],
+                    &keys(&[Softkey::new(SK_OK, "Pause"), Softkey::new(SK_BACK, "Back")]),
                 );
                 self.screen = Screen::Reason(form);
             }
@@ -286,10 +327,7 @@ impl App for Queues {
             Event::Softkey(SK_DETAILS | SK_REFRESH) => self.show_details(),
             Event::Softkey(SK_BACK) => self.draw_list(),
             Event::Softkey(SK_EXIT) => runtime::background(),
-            Event::Key(Key::Cancel) => match self.screen {
-                Screen::Details | Screen::Reason(_) => self.draw_list(),
-                _ => runtime::background(),
-            },
+            Event::Key(Key::Cancel) => self.back(),
             _ => {}
         }
     }

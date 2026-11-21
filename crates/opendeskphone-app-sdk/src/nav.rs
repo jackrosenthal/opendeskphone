@@ -52,6 +52,24 @@ pub fn note(area: Rect, text: &str) -> Widget {
     w
 }
 
+/// The softkeys a screen shows of `keys`: all of them on a phone with
+/// keys, and on the touchscreen those whose `id` is not in `for_keys`.
+/// The touchscreen does without two kinds of softkey: one that does what
+/// `cancel` does on the screen ("Back", "Exit"), because the phone's back
+/// button is `cancel`, and one that acts on the highlighted row of a list
+/// ("Open", "Select"), because a touch on the row does that.
+///
+/// ```ignore
+/// ui::set_softkeys(ROOT, &nav::softkeys(
+///     &[Softkey::new(SK_REFRESH, "Refresh"), Softkey::new(SK_EXIT, "Exit")],
+///     &[SK_EXIT],
+/// ));
+/// ```
+pub fn softkeys(keys: &[Softkey], for_keys: &[u32]) -> Vec<Softkey> {
+    let has_keys = ui::get_metrics().keys;
+    keys.iter().filter(|k| has_keys || !for_keys.contains(&k.id)).cloned().collect()
+}
+
 /// A full-screen wrapped message (loading, error, confirmation text).
 pub struct Message {
     pub text: Widget,

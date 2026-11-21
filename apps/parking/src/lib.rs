@@ -6,6 +6,17 @@ use opendeskphone_app_sdk::prelude::*;
 const SK_RETRIEVE: u32 = 1;
 const SK_REFRESH: u32 = 2;
 const SK_EXIT: u32 = 3;
+
+/// The softkeys the touchscreen does without: the back button is the way
+/// out, and a touch retrieves a call.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_RETRIEVE])
+}
+
+/// Sets the window's softkeys: of `all`, those the phone needs.
+fn set_keys(all: &[Softkey]) {
+    ui::set_softkeys(ROOT, &keys(all));
+}
 const REFRESH_MS: u32 = 10_000;
 /// Push the PBX sends to the parker's phone when a call is parked.
 const PARKED_EVENT: &str = "digium.parkingLot.parked";
@@ -39,13 +50,10 @@ impl Parking {
         let r = screen("Parked Calls");
         if self.calls.is_empty() {
             opendeskphone_app_sdk::nav::note(r, "No calls are parked.");
-            ui::set_softkeys(
-                ROOT,
-                &[
-                    Softkey::new(SK_REFRESH, "Refresh"),
-                    Softkey::new(SK_EXIT, "Exit"),
-                ],
-            );
+            set_keys(&[
+                Softkey::new(SK_REFRESH, "Refresh"),
+                Softkey::new(SK_EXIT, "Exit"),
+            ]);
             self.list = None;
             return;
         }
@@ -65,14 +73,11 @@ impl Parking {
             .collect();
         ui::set_items(list, &items);
         ui::set_selected(list, keep.min(items.len() as u32 - 1));
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_RETRIEVE, "Retrieve"),
-                Softkey::new(SK_REFRESH, "Refresh"),
-                Softkey::new(SK_EXIT, "Exit"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_RETRIEVE, "Retrieve"),
+            Softkey::new(SK_REFRESH, "Refresh"),
+            Softkey::new(SK_EXIT, "Exit"),
+        ]);
         ui::set_focus(list);
         self.list = Some(list);
     }
@@ -108,10 +113,10 @@ impl Parking {
                 Message::show(
                     "Parked Calls",
                     &e.to_string(),
-                    &[
+                    &keys(&[
                         Softkey::new(SK_REFRESH, "Retry"),
                         Softkey::new(SK_EXIT, "Exit"),
-                    ],
+                    ]),
                 );
             }
         }
@@ -133,7 +138,7 @@ impl App for Parking {
                 Message::show(
                     "Parked Calls",
                     "Loading...",
-                    &[Softkey::new(SK_EXIT, "Exit")],
+                    &keys(&[Softkey::new(SK_EXIT, "Exit")]),
                 );
                 self.refresh();
                 self.timer = timers::set(REFRESH_MS, true).ok();

@@ -15,6 +15,17 @@ const SK_TODAY: u32 = 2;
 const SK_NEXT: u32 = 3;
 const SK_EXIT: u32 = 4;
 
+/// The softkeys the touchscreen does without: the back button is the way
+/// out.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT])
+}
+
+/// Sets the window's softkeys: of `all`, those the phone needs.
+fn set_keys(all: &[Softkey]) {
+    ui::set_softkeys(ROOT, &keys(all));
+}
+
 /// A wall clock at or before this (September 2020) has not been set; the
 /// idle screen's clock uses the same test.
 const CLOCK_UNSET_UNTIL: u64 = 1_600_000_000;
@@ -125,18 +136,34 @@ impl Calendar {
         ui::set_align(title, Align::Center);
 
         let top = m.title_height;
-        let row_h = m.height.saturating_sub(top) / 7;
         let col_w = m.width / 7;
         let left = (m.width - col_w * 7) / 2;
-        // The mark on today is as wide as two digits need, not the column.
-        let cell_w = col_w.min(row_h * 2);
-        let inset = (col_w - cell_w) / 2;
+        // The weekdays' row and the six rows of days share the height
+        // under the title.  Touch: the upright screen has more height
+        // than a month wants; the weekdays have a low row, and a row of
+        // days is at most a quarter higher than a day is wide.
+        let below = m.height.saturating_sub(top);
+        let (head_h, row_h) = if m.keys {
+            (below / 7, below / 7)
+        } else {
+            let head_h = m.line_height * 3 / 2;
+            (head_h, ((below - head_h) / 6).min(col_w * 5 / 4))
+        };
+        // The mark on today is as wide as two digits need, not the
+        // column.  Touch: a square in the middle of the day's place.
+        let (cell_w, cell_h) = if m.keys {
+            (col_w.min(row_h * 2), row_h)
+        } else {
+            let side = col_w.min(row_h) * 5 / 6;
+            (side, side)
+        };
+        let (inset_x, inset_y) = ((col_w - cell_w) / 2, (row_h - cell_h) / 2);
         for (i, name) in WEEKDAYS.iter().enumerate() {
             let x = (left + col_w * i as u16) as i16;
             let w = ui::create(
                 WidgetKind::Text,
                 ROOT,
-                Rect::new(x, top as i16, col_w, row_h),
+                Rect::new(x, top as i16, col_w, head_h),
             );
             ui::set_font(w, Font::Small);
             ui::set_align(w, Align::Center);
@@ -144,9 +171,9 @@ impl Calendar {
         }
         let mut cells = Vec::with_capacity(42);
         for i in 0..42u16 {
-            let x = (left + col_w * (i % 7) + inset) as i16;
-            let y = (top + row_h * (1 + i / 7)) as i16;
-            let w = ui::create(WidgetKind::Text, ROOT, Rect::new(x, y, cell_w, row_h));
+            let x = (left + col_w * (i % 7) + inset_x) as i16;
+            let y = (top + head_h + row_h * (i / 7) + inset_y) as i16;
+            let w = ui::create(WidgetKind::Text, ROOT, Rect::new(x, y, cell_w, cell_h));
             ui::set_align(w, Align::Center);
             cells.push(w);
         }
@@ -159,7 +186,7 @@ impl Calendar {
         if m.keys {
             keys.push(Softkey::new(SK_EXIT, "Exit"));
         }
-        ui::set_softkeys(ROOT, &keys);
+        set_keys(&keys);
         Grid {
             title,
             cells,
@@ -175,7 +202,7 @@ impl Calendar {
             Message::show(
                 "Calendar",
                 "The date is not set.",
-                &[Softkey::new(SK_EXIT, "Exit")],
+                &keys(&[Softkey::new(SK_EXIT, "Exit")]),
             );
             return;
         }

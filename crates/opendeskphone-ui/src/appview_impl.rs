@@ -514,6 +514,15 @@ fn clamp16(v: i32) -> i16 {
     v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
+/// A finger came down at (`x`, `y`) of the view: a widget that takes
+/// touches is told at once.  (The stock widgets wait for what the touch
+/// becomes.)
+pub(crate) fn down(view: &AppView, x: i32, y: i32) {
+    // (Without marking the view as changed when nobody is told.)
+    let Some(Target::Claim { widget, x: wx, y: wy }) = locate(&view.batch_quiet(), x, y) else { return };
+    view.push_event(AppEvent::Touch { widget, touch: Touch::Down { x: clamp16(x - wx), y: clamp16(y - wy) } });
+}
+
 /// A tap at (`x`, `y`) of the view.
 pub(crate) fn tap(view: &AppView, x: i32, y: i32) {
     with_tree(view, |tree, events| match locate(tree, x, y) {

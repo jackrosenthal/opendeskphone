@@ -483,7 +483,8 @@ fn on_the_touchscreen_an_alarm_is_set_by_touch() {
     // The back button leaves: no "Exit".
     assert_eq!(r.ui.softkeys(APP), ["New"]);
     r.softkey(APP, "New");
-    assert_eq!(r.ui.softkeys(APP), ["Save", "Cancel"]);
+    // (The back button is Cancel.)
+    assert_eq!(r.ui.softkeys(APP), ["Save"]);
 
     // The time: touching the field opens the dialog, in which the hours
     // and the minutes are two lists; nothing is typed, and nothing says
@@ -492,7 +493,7 @@ fn on_the_touchscreen_an_alarm_is_set_by_touch() {
     let texts = r.ui.texts(APP);
     assert_eq!(texts[..2], ["New Alarm", "Time"]);
     assert!(!texts.iter().any(|t| t.contains("Type")), "{texts:?}");
-    assert_eq!(r.ui.softkeys(APP), ["OK", "AM/PM", "Cancel"]);
+    assert_eq!(r.ui.softkeys(APP), ["OK", "AM/PM"]);
     assert_eq!(rows(&r).len(), 12, "the hours of half a day");
     assert_eq!(rows(&r)[0], row("12", ""));
     // What is under the dialog is not touched while it is open.
@@ -532,7 +533,7 @@ fn on_the_touchscreen_an_alarm_is_set_by_touch() {
     touch_row(&mut r, 1);
     touch_row(&mut r, 2);
     assert_eq!(r.ui.texts(APP), ["New Alarm", "Tone"], "the dialog stays open");
-    assert_eq!(r.ui.softkeys(APP), ["OK", "Cancel"]);
+    assert_eq!(r.ui.softkeys(APP), ["OK"]);
     r.softkey(APP, "OK");
     assert_eq!(rows(&r)[2], row("Tone", "Osmium"));
     assert_eq!(
@@ -547,11 +548,12 @@ fn on_the_touchscreen_an_alarm_is_set_by_touch() {
     r.softkey(APP, "Save");
     assert_eq!(*log.lock().unwrap(), [Command::SetAlarm { alarm: alarm(19, 30, 0b0100010, "Osmium") }]);
     assert_eq!(rows(&r), [row("7:30 PM", "Mon Fri")]);
-    assert_eq!(r.ui.softkeys(APP), ["New", "Edit", "Disable", "Delete"]);
+    // The list's softkeys are not for an alarm: none is highlighted.
+    assert_eq!(r.ui.softkeys(APP), ["New"]);
 }
 
 #[test]
-fn on_the_touchscreen_a_touched_alarm_is_the_one_the_buttons_are_for() {
+fn on_the_touchscreen_a_touched_alarm_is_opened_and_its_buttons_are_with_it() {
     let (mut r, log) = touch_rig();
     for a in [alarm(8, 0, 0b0000010, "Beep"), alarm(13, 15, 0, "Buzzer")] {
         r.store.send(Command::SetAlarm { alarm: a }).wait().unwrap();
@@ -559,20 +561,33 @@ fn on_the_touchscreen_a_touched_alarm_is_the_one_the_buttons_are_for() {
     log.lock().unwrap().clear();
     r.launch(APP);
     assert_eq!(rows(&r), [row("8:00 AM", "Mon"), row("1:15 PM", "Once")]);
-    // The second alarm: chosen, not opened.
+    assert_eq!(r.ui.softkeys(APP), ["New"]);
+    // Touching the second alarm opens it, with the buttons that switch
+    // and delete it.
     touch_field(&mut r, 1);
-    assert_eq!(r.ui.texts(APP), ["Alarms"]);
-    r.softkey(APP, "Disable");
-    assert_eq!(rows(&r), [row("8:00 AM", "Mon"), row("1:15 PM", "Disabled")]);
-    assert_eq!(r.ui.softkeys(APP), ["New", "Edit", "Enable", "Delete"]);
-    // Touched again, it is still only chosen; "Edit" opens it.
-    touch_field(&mut r, 1);
-    assert_eq!(r.ui.texts(APP), ["Alarms"]);
-    r.softkey(APP, "Edit");
     assert_eq!(r.ui.texts(APP), ["Edit Alarm"]);
     assert_eq!(rows(&r)[0], row("Time", "1:15 PM"));
+    assert_eq!(r.ui.softkeys(APP), ["Save", "Disable", "Delete"]);
+    r.softkey(APP, "Disable");
+    assert_eq!(r.ui.texts(APP), ["Alarms"]);
+    assert_eq!(rows(&r), [row("8:00 AM", "Mon"), row("1:15 PM", "Disabled")]);
+    // It is switched on again as its fields then are: with another tone.
+    touch_field(&mut r, 1);
+    assert_eq!(r.ui.softkeys(APP), ["Save", "Enable", "Delete"]);
+    touch_field(&mut r, 2);
+    touch_row(&mut r, 2);
+    r.softkey(APP, "OK");
+    log.lock().unwrap().clear();
+    r.softkey(APP, "Enable");
+    let set = log.lock().unwrap().clone();
+    assert!(
+        matches!(&set[..], [Command::SetAlarm { alarm }] if alarm.enabled && alarm.tone == "Osmium" && (alarm.hour, alarm.minute) == (13, 15)),
+        "{set:?}"
+    );
+    assert_eq!(rows(&r), [row("8:00 AM", "Mon"), row("1:15 PM", "Once")]);
     // The time's dialog opens on the alarm's time; the back button (the
     // key `cancel`) closes the dialog, then the alarm, then the app.
+    touch_field(&mut r, 1);
     touch_field(&mut r, 0);
     assert!(r.ui.shows(APP, "1:15 PM"));
     assert_eq!(r.ui.softkeys(APP)[0], "OK");
@@ -580,9 +595,11 @@ fn on_the_touchscreen_a_touched_alarm_is_the_one_the_buttons_are_for() {
     assert_eq!(r.ui.texts(APP), ["Edit Alarm"]);
     r.key(APP, Key::Cancel);
     assert_eq!(r.ui.texts(APP), ["Alarms"]);
+    // The first alarm is deleted from its own screen.
     touch_field(&mut r, 0);
+    assert_eq!(rows(&r)[0], row("Time", "8:00 AM"));
     r.softkey(APP, "Delete");
-    assert_eq!(rows(&r), [row("1:15 PM", "Disabled")]);
+    assert_eq!(rows(&r), [row("1:15 PM", "Once")]);
     r.key(APP, Key::Cancel);
     assert_ne!(r.ui.top().as_deref(), Some(APP));
 }
@@ -595,10 +612,8 @@ fn the_screens_on_the_touchscreen() {
         p.settle();
     };
     let list = p.shot("1-list");
-    // The first alarm, and "Edit", the second button under the window.
+    // The first alarm, touched, is opened.
     touch(&mut p, 400, 96 + 48);
-    assert!(p.shot("1-list-touched") == list, "the first alarm was the chosen one already");
-    touch(&mut p, 12 + 197 + 90, 1172 + 48);
     let edit = p.shot("2-edit");
     assert!(edit != list);
     let width = p.sim.frame(Screen::Main).unwrap().info.stride;

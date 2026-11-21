@@ -51,6 +51,17 @@ const SK_AGAIN: u32 = 6;
 const SK_PLAY: u32 = 7;
 const SK_BACK: u32 = 8;
 
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out, and a touch plays a level.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_BACK, SK_PLAY])
+}
+
+/// Sets the window's softkeys: of `all`, those the phone needs.
+fn set_keys(all: &[Softkey]) {
+    ui::set_softkeys(ROOT, &keys(all));
+}
+
 /// The key that holds the progress (the level being played, how many
 /// levels are solved, and the steps taken in the level so far), in the
 /// app's storage on the phone and among the user's keys on the PBX.
@@ -465,15 +476,12 @@ impl BoxPusher {
                 pushes: text(line(2), Font::Normal, Align::Left, ""),
             }
         };
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_UNDO, "Undo"),
-                Softkey::new(SK_RESTART, "Restart"),
-                Softkey::new(SK_LEVELS, "Levels"),
-                Softkey::new(SK_EXIT, "Exit"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_UNDO, "Undo"),
+            Softkey::new(SK_RESTART, "Restart"),
+            Softkey::new(SK_LEVELS, "Levels"),
+            Softkey::new(SK_EXIT, "Exit"),
+        ]);
         self.board = Some(board);
         self.update(true);
     }
@@ -556,7 +564,7 @@ impl BoxPusher {
         if !last {
             keys.insert(0, Softkey::new(SK_NEXT, "Next"));
         }
-        ui::set_softkeys(ROOT, &keys);
+        set_keys(&keys);
 
         // The next level is open, and it is where the game goes on.
         self.finished = self.level;
@@ -590,10 +598,7 @@ impl BoxPusher {
             .collect();
         ui::set_items(list, &items);
         ui::set_selected(list, self.level.min(open - 1) as u32);
-        ui::set_softkeys(
-            ROOT,
-            &[Softkey::new(SK_PLAY, "Play"), Softkey::new(SK_BACK, "Back")],
-        );
+        set_keys(&[Softkey::new(SK_PLAY, "Play"), Softkey::new(SK_BACK, "Back")]);
         ui::set_focus(list);
         self.list = Some(list);
     }

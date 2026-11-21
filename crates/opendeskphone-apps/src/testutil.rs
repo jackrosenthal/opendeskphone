@@ -466,6 +466,19 @@ impl FakeUi {
         })
     }
 
+    /// Touch: a finger comes down on the window at (`x`, `y`), and stays
+    /// (nothing is told of what the touch becomes).  Only a widget that
+    /// takes touches hears of it.
+    pub fn finger_down(&self, app: &str, x: i32, y: i32) {
+        self.with(app, |w| {
+            if let Some((id, ox, oy)) = w.touched(x, y)
+                && w.takes_touches(id)
+            {
+                w.push(WindowEvent::Touch { widget: id, touch: Touch::Down(point(x - ox, y - oy)) });
+            }
+        })
+    }
+
     /// Touch: a finger taps the window at (`x`, `y`), with the toolkit's
     /// built-in behavior on a widget that does not take touches: a row of
     /// a list is highlighted and activated (the fake's lists do not
@@ -476,6 +489,7 @@ impl FakeUi {
         self.with(app, |w| {
             let Some((id, ox, oy)) = w.touched(x, y) else { return };
             if w.takes_touches(id) {
+                w.push(WindowEvent::Touch { widget: id, touch: Touch::Down(point(x - ox, y - oy)) });
                 w.push(WindowEvent::Touch { widget: id, touch: Touch::Tap(point(x - ox, y - oy)) });
                 return;
             }
@@ -507,8 +521,8 @@ impl FakeUi {
     }
 
     /// Touch: a finger comes down at `from` of the window, moves to `to`,
-    /// and is lifted.  A widget that takes touches gets the drag and its
-    /// end; nothing else does anything with it here (the fake's lists do
+    /// and is lifted.  A widget that takes touches gets the finger coming
+    /// down, the drag, and its end; nothing else does anything with it here (the fake's lists do
     /// not scroll).
     pub fn drag(&self, app: &str, from: (i32, i32), to: (i32, i32)) {
         self.with(app, |w| {
@@ -517,6 +531,7 @@ impl FakeUi {
                 return;
             }
             let ends = (point(from.0 - ox, from.1 - oy), point(to.0 - ox, to.1 - oy));
+            w.push(WindowEvent::Touch { widget: id, touch: Touch::Down(ends.0) });
             w.push(WindowEvent::Touch { widget: id, touch: Touch::Drag(ends) });
             w.push(WindowEvent::Touch { widget: id, touch: Touch::DragEnd(ends) });
         })

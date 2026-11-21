@@ -34,7 +34,7 @@ export type SystemInfo = Message<"opendeskphone.v1.SystemInfo"> & {
   model: Model;
 
   /**
-   * "3.0.0"
+   * "3.1.0"
    *
    * @generated from field: string version = 2;
    */
