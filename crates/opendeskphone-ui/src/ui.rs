@@ -430,31 +430,12 @@ fn soft_slots(keys: &[Soft], page: u8) -> [(u32, String); 4] {
     out
 }
 
-/// The softkey buttons of a native screen on the touch skin: action id
-/// and label, by position ([`Theme::soft_button`]).  Up to four actions
-/// keep their positions (a screen puts "Back" at the right), blanks and
-/// all.  More are shown without their blanks, all of them when they fit
-/// in two rows; beyond that, seven at a time and "More", which pages.
-fn touch_soft_slots(keys: &[Soft], page: u8) -> Vec<Soft> {
-    if keys.len() <= 4 {
-        return keys.to_vec();
-    }
-    let keys: Vec<Soft> = keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).cloned().collect();
-    if keys.len() <= 8 {
-        return keys;
-    }
-    let page = page as usize % keys.len().div_ceil(7);
-    let mut out: Vec<Soft> = keys.into_iter().skip(page * 7).take(7).collect();
-    // "More" is the last button of the second row.
-    out.resize(7, (0, String::new()));
-    out.push((u32::MAX, tr::MORE.to_string()));
-    out
-}
-
-/// How many pages [`touch_soft_slots`] makes of these softkeys.
-fn touch_soft_pages(keys: &[Soft]) -> usize {
-    let n = keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).count();
-    if n <= 8 { 1 } else { n.div_ceil(7) }
+/// The softkey buttons of a native screen on the touch skin: the actions
+/// that have a label, in order, without the places the phones with keys
+/// leave empty (a screen puts "Back" at the fourth key), and all of them:
+/// they take as many rows as they need, and there is no "More".
+fn touch_soft_slots(keys: &[Soft]) -> Vec<Soft> {
+    keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).cloned().collect()
 }
 
 impl Stack {
@@ -1304,13 +1285,8 @@ impl Ui {
                 self.key(key, false, source);
             }
             Some(Hit::Soft(id)) => self.with_cx(|nav, cx| {
-                if id == u32::MAX {
-                    let pages = touch_soft_pages(&nav.top_ref().softkeys(cx));
-                    nav.soft_page = ((nav.soft_page as usize + 1) % pages) as u8;
-                } else if id != 0 {
-                    let r = nav.top().softkey(cx, id);
-                    nav.apply(cx, r);
-                }
+                let r = nav.top().softkey(cx, id);
+                nav.apply(cx, r);
             }),
             Some(hit @ (Hit::Row { .. } | Hit::Custom(_))) => {
                 let select = self.with_cx(|nav, cx| {
@@ -1563,18 +1539,24 @@ impl Ui {
                     Pass::Shown => c.clear(th.bg),
                 }
                 if top.softkey_bar(&cx) && th.touch() {
-                    // Buttons: an app's four softkeys are the four keys
-                    // (and its window keeps its size, whatever they are);
-                    // a native screen's are its actions, in as many rows
-                    // as they take, and in none when it has none.
+                    // Buttons: an app's softkeys are the four keys, those
+                    // that have a label (and its window keeps its size,
+                    // whatever they are); a native screen's are its
+                    // actions, in as many rows as they take, and in none
+                    // when it has none.
                     let (keys, rows): (Vec<(Hit, String)>, i32) = match top.raw_softkeys(&cx) {
                         Some(labels) => (
-                            labels.into_iter().enumerate().map(|(i, l)| (Hit::Key(Key::Soft(i as u8 + 1)), l)).collect(),
+                            labels
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(_, l)| !l.is_empty())
+                                .map(|(i, l)| (Hit::Key(Key::Soft(i as u8 + 1)), l))
+                                .collect(),
                             1,
                         ),
                         None => {
-                            let keys = touch_soft_slots(&top.softkeys(&cx), self.nav.soft_page);
-                            let rows = if keys.iter().all(|(_, l)| l.is_empty()) { 0 } else { th.soft_rows(keys.len()) };
+                            let keys = touch_soft_slots(&top.softkeys(&cx));
+                            let rows = th.soft_rows(keys.len());
                             (keys.into_iter().map(|(id, l)| (Hit::Soft(id), l)).collect(), rows)
                         }
                     };

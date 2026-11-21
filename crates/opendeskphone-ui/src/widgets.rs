@@ -214,22 +214,94 @@ pub fn button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, fill: Rgb, edge
     c.hit(r, hit);
 }
 
-/// The softkeys of the touch skin: buttons in rows of four above the
-/// bottom of the screen ([`Theme::soft_button`]), one for each entry that
-/// has a label, at the entry's position; each button's region is the
-/// entry's [`Hit`].  The colors are the softkeys' of the other skins
-/// ([`soft_style`]).  The background behind the buttons is the caller's.
+/// What a button of the touch skin is for, which is how it looks.  The
+/// same everywhere: a screen has at most one [`ButtonStyle::Primary`] (or
+/// [`ButtonStyle::Call`]) button, green is for calls alone, and red for
+/// what ends or destroys something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonStyle {
+    /// One of several things to do: an outline.
+    Secondary,
+    /// The main thing to do on the screen: filled.
+    Primary,
+    /// Starts or answers a call: green.
+    Call,
+    /// Ends a call, declines, erases, or deletes: red.
+    Destructive,
+    /// A mode that is on (mute, the speaker, Do Not Disturb): filled in
+    /// the text's color, with the label in the background's.
+    On,
+}
+
+impl ButtonStyle {
+    /// The fill, the outline (if it has one), and the label's color.
+    pub fn colors(self, th: &Theme) -> (Rgb, Option<Rgb>, Rgb) {
+        match self {
+            ButtonStyle::Secondary => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
+            ButtonStyle::Primary => (th.sel_bg, None, th.sel_fg),
+            ButtonStyle::Call => (th.sk_go, None, th.sk_fg),
+            ButtonStyle::Destructive => (th.sk_stop, None, th.sk_fg),
+            ButtonStyle::On => (th.fg, None, th.bg),
+        }
+    }
+}
+
+/// [`button`] in the colors of `style`.
+pub fn button_styled(c: &mut Canvas, th: &Theme, r: IRect, label: &str, style: ButtonStyle, hit: Hit) {
+    let (fill, edge, fg) = style.colors(th);
+    button(c, th, r, label, fill, edge, fg, hit);
+}
+
+/// The width and height of a [`switch`]: 80 by 48 pixels on the touch
+/// skin.
+pub fn switch_size(th: &Theme) -> (i32, i32) {
+    (th.px(40), th.px(24))
+}
+
+/// A switch, for a setting that is on or off (Do Not Disturb, forwarding,
+/// an alarm): a track with round ends and a knob at its right when `on`,
+/// at its left when not.  It is drawn at the right end of `r`, in the
+/// middle of its height, and the rectangle it takes is returned.  It
+/// registers no region: the row (or whatever `r` is) is what is touched,
+/// and the caller says what a touch does.  The label beside it names the
+/// setting, never the state.
+pub fn switch(c: &mut Canvas, th: &Theme, r: IRect, on: bool) -> IRect {
+    let (w, h) = switch_size(th);
+    let track = IRect::new(r.right() - w, r.y + (r.h - h) / 2, w, h);
+    let inset = th.px(3);
+    let knob = h - 2 * inset;
+    if th.gray {
+        // (No phone with a gray screen shows one: a frame and a block.)
+        c.frame(track, th.fg);
+        let x = if on { track.right() - inset - knob } else { track.x + inset };
+        c.fill(IRect::new(x, track.y + inset, knob, knob), th.fg);
+        return track;
+    }
+    if on {
+        // On is a fill in the text's color, as a button that is on.
+        c.fill_round_aa(track, h / 2, th.fg);
+        c.fill_round_aa(IRect::new(track.right() - inset - knob, track.y + inset, knob, knob), knob / 2, th.bg);
+    } else {
+        c.fill_round_aa(track, h / 2, th.sk_edge);
+        c.fill_round_aa(track.inset(th.scale), h / 2 - th.scale, th.sk_bg);
+        c.fill_round_aa(IRect::new(track.x + inset, track.y + inset, knob, knob), knob / 2, th.secondary);
+    }
+    track
+}
+
+/// The softkeys of the touch skin: buttons above the bottom of the screen
+/// ([`Theme::soft_button`]), one for each entry, side by side with no
+/// place left empty; each button's region is the entry's [`Hit`].  The
+/// colors are the softkeys' of the other skins ([`soft_style`]).  The
+/// background behind the buttons is the caller's.
 pub fn soft_buttons(c: &mut Canvas, th: &Theme, keys: &[(Hit, String)]) {
     for (i, (hit, label)) in keys.iter().enumerate() {
-        if label.is_empty() {
-            continue;
-        }
-        let (fill, edge) = match soft_style(label) {
-            SoftStyle::Normal => (th.sk_bg, Some(th.sk_edge)),
-            SoftStyle::Go => (th.sk_go, None),
-            SoftStyle::Stop => (th.sk_stop, None),
+        let style = match soft_style(label) {
+            SoftStyle::Normal => ButtonStyle::Secondary,
+            SoftStyle::Go => ButtonStyle::Call,
+            SoftStyle::Stop => ButtonStyle::Destructive,
         };
-        button(c, th, th.soft_button(i, keys.len()), label, fill, edge, th.sk_fg, *hit);
+        button_styled(c, th, th.soft_button(i, keys.len()), label, style, *hit);
     }
 }
 

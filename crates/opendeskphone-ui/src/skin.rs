@@ -759,24 +759,33 @@ impl Theme {
         if cfg!(feature = "touch") { color_px * self.scale } else { color_px }
     }
 
-    /// How many rows of buttons `n` softkeys take on the touch skin: four
-    /// to a row.
+    /// How many rows of buttons `n` softkeys take on the touch skin: up
+    /// to four to a row.
     pub const fn soft_rows(&self, n: usize) -> i32 {
         n.div_ceil(4) as i32
     }
 
-    /// Button `i` of `n` softkeys on the touch skin: rows of four,
-    /// the first row uppermost, the last row at the bottom of the screen.
-    /// With four or fewer it is [`Theme::softkey_rect`].
+    /// Button `i` of `n` softkeys on the touch skin.  The buttons are in
+    /// as few rows as hold them four to a row, the first row uppermost and
+    /// the last at the bottom of the screen, with as many to a row as
+    /// makes the rows alike (five are three and two).  The buttons of a
+    /// row share its width, with no place left empty: one button is as
+    /// wide as the screen.
     pub const fn soft_button(&self, i: usize, n: usize) -> IRect {
-        let rows = self.soft_rows(n);
-        let row = (i / 4) as i32;
-        IRect::new(
-            self.soft_x0 + (i % 4) as i32 * self.soft_pitch,
-            self.soft_y - (rows - 1 - row) * self.softkey_h,
-            self.soft_w,
-            self.soft_h,
-        )
+        let rows = self.soft_rows(n) as usize;
+        if rows == 0 {
+            return IRect::new(0, 0, 0, 0);
+        }
+        // The rows before the last have `per` each.
+        let per = n.div_ceil(rows);
+        let row = i / per;
+        let in_row = (if row + 1 == rows { n - per * (rows - 1) } else { per }) as i32;
+        let col = (i % per) as i32;
+        // The space at the sides and between the buttons is the same.
+        let gap = self.soft_x0;
+        let x0 = gap + col * (self.width - gap) / in_row;
+        let x1 = gap + (col + 1) * (self.width - gap) / in_row;
+        IRect::new(x0, self.soft_y - (rows - 1 - row) as i32 * self.softkey_h, x1 - x0 - gap, self.soft_h)
     }
 
     /// The app content area on the main screen.

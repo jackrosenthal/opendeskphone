@@ -227,11 +227,34 @@ pub(crate) struct Item {
     pub label: String,
     pub value: String,
     pub act: Action,
+    /// Touch: the item is a setting that is on or off, and shows it with
+    /// a switch at its right ([`Item::switch`]).
+    pub switch: Option<bool>,
+    /// The item destroys something ([`Item::destructive`]).
+    pub destructive: bool,
 }
 
 impl Item {
     pub fn new(label: impl Into<String>, act: impl Fn(&Cx) -> Nav + Send + 'static) -> Item {
-        Item { icon: None, label: label.into(), value: String::new(), act: Box::new(act) }
+        Item { icon: None, label: label.into(), value: String::new(), act: Box::new(act), switch: None, destructive: false }
+    }
+    /// A setting that is on or off.  On the touch skin the item has a
+    /// switch at its right ([`widgets::switch`]), after its value if it
+    /// has one, and a touch on the item does what the item does (which
+    /// should be to switch the setting).  The label names the setting,
+    /// not the state.  On the other skins the item is as it was: give it
+    /// a value that says the state there.
+    #[allow(dead_code)]
+    pub fn switch(mut self, on: bool) -> Item {
+        self.switch = Some(on);
+        self
+    }
+    /// An item that erases or deletes something: on the color and touch
+    /// skins its label is in the error color.
+    #[allow(dead_code)]
+    pub fn destructive(mut self) -> Item {
+        self.destructive = true;
+        self
     }
     pub fn value(mut self, v: impl Into<String>) -> Item {
         self.value = v.into();
@@ -350,11 +373,16 @@ impl Screen for Menu {
                 let n = if i == 9 { 0 } else { i + 1 };
                 c.text_in(f, num, &n.to_string(), if sel { fg } else { th.secondary }, HAlign::Center);
             }
-            let rest = IRect { w: rest.w - th.pad, ..rest };
+            let mut rest = IRect { w: rest.w - th.pad, ..rest };
+            if let (Some(on), true) = (it.switch, th.touch()) {
+                let sw = widgets::switch(c, th, IRect { w: rest.w - th.pad, ..rest }, on);
+                rest.w = sw.x - th.pad - rest.x;
+            }
+            let label_fg = if it.destructive && !th.gray && !sel { th.error } else { fg };
             if it.value.is_empty() {
-                c.text_in(f, rest, &it.label, fg, HAlign::Left);
+                c.text_in(f, rest, &it.label, label_fg, HAlign::Left);
             } else {
-                widgets::key_value(c, th, rest, &it.label, &it.value, fg, if sel { fg } else { th.secondary });
+                widgets::key_value(c, th, rest, &it.label, &it.value, label_fg, if sel { fg } else { th.secondary });
             }
         });
     }
@@ -603,15 +631,80 @@ impl Screen for Info {
 
 // --------------------------------------------------------------- confirm
 
-/// A yes/no question.
+/// A question before something is done.
+///
+/// With keys: the question, and the softkeys "Yes" and "No".
+///
+/// Touch: a card in the middle of the screen with a title (if it has
+/// one), the question (best a sentence that says what will happen), and
+/// two buttons side by side: Cancel at the left, and at the right the
+/// action, labeled with what it does ([`Confirm::action`]) and red when it
+/// erases or deletes something ([`Confirm::destructive`]).
 pub(crate) struct Confirm {
+    title: String,
     text: String,
+    action: String,
+    destructive: bool,
     yes: Box<dyn Fn(&Cx) -> Nav + Send>,
 }
 
 impl Confirm {
-    pub fn boxed(text: impl Into<String>, yes: impl Fn(&Cx) -> Nav + Send + 'static) -> Box<dyn Screen> {
-        Box::new(Confirm { text: text.into(), yes: Box::new(yes) })
+    /// A question with no title, whose action is labeled "OK" on the
+    /// touch skin.
+    pub fn boxed(text: impl Into<String>, yes: impl Fn(&Cx) -> Nav + Send + 'static) -> Box<Confirm> {
+        Box::new(Confirm { title: String::new(), text: text.into(), action: tr::OK.into(), destructive: false, yes: Box::new(yes) })
+    }
+    /// Touch: the title of the card ("Factory reset").
+    #[allow(dead_code)]
+    pub fn title(mut self: Box<Self>, title: impl Into<String>) -> Box<Confirm> {
+        self.title = title.into();
+        self
+    }
+    /// Touch: the label of the button that does it: a verb, or a verb and
+    /// its object ("Erase and restart", "Clear call log").
+    #[allow(dead_code)]
+    pub fn action(mut self: Box<Self>, label: impl Into<String>) -> Box<Confirm> {
+        self.action = label.into();
+        self
+    }
+    /// Touch: the action erases or deletes something: its button is red.
+    #[allow(dead_code)]
+    pub fn destructive(mut self: Box<Self>) -> Box<Confirm> {
+        self.destructive = true;
+        self
+    }
+
+    /// Touch: the card.
+    fn draw_touch(&self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        let f = th.font(Font::Normal);
+        let pad = th.pad * 2;
+        let w = area.w - 2 * th.px(20);
+        let inner_w = w - 2 * pad;
+        let title_h = if self.title.is_empty() { 0 } else { th.line_h + th.pad };
+        let lines = f.wrap(&self.text, inner_w).len().max(1) as i32;
+        let text_h = lines * th.line_h;
+        let button_h = th.row_h;
+        let h = pad + title_h + text_h + pad + button_h + pad;
+        let card = IRect::new(area.x + (area.w - w) / 2, area.y + ((area.h - h) / 2).max(0), w, h);
+        c.fill_round_aa(card.inset(-th.scale), th.px(9), th.sk_edge);
+        c.fill_round_aa(card, th.px(8), th.modal_bg);
+        let inner = card.inset(pad);
+        let mut y = inner.y;
+        if !self.title.is_empty() {
+            c.text_in(th.font(Font::Title), IRect::new(inner.x, y, inner.w, th.line_h), &self.title, th.fg, HAlign::Left);
+            y += title_h;
+        }
+        c.text_wrapped(f, IRect::new(inner.x, y, inner.w, text_h), &self.text, th.fg, HAlign::Left, th.line_h);
+        // Cancel at the left, the action at the right, and room between
+        // them for a finger to miss.  (The action's region is the first,
+        // as its softkey is on the other skins.)
+        let gap = th.px(12);
+        let bw = (inner.w - gap) / 2;
+        let row = IRect::new(inner.x, inner.bottom() - button_h, bw, button_h);
+        let style = if self.destructive { widgets::ButtonStyle::Destructive } else { widgets::ButtonStyle::Primary };
+        widgets::button_styled(c, th, IRect { x: inner.right() - bw, ..row }, &self.action, style, Hit::Soft(1));
+        widgets::button_styled(c, th, row, tr::CANCEL, widgets::ButtonStyle::Secondary, Hit::Soft(4));
     }
 }
 
@@ -619,7 +712,11 @@ impl Screen for Confirm {
     fn name(&self) -> String {
         "confirm".into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the buttons are in the card.
+        if cx.th.touch() {
+            return Vec::new();
+        }
         vec![soft(1, tr::YES), soft(0, ""), soft(0, ""), soft(4, tr::NO)]
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
@@ -635,6 +732,9 @@ impl Screen for Confirm {
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
         c.fill(area, th.bg);
+        if th.touch() {
+            return self.draw_touch(cx, c, area);
+        }
         let f = th.font(Font::Normal);
         let inner = area.inset(th.pad * 2);
         let lines = f.wrap(&self.text, inner.w).len() as i32;
