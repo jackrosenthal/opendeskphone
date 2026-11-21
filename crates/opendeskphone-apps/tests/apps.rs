@@ -1310,18 +1310,27 @@ fn the_calendar_on_the_touchscreen_in_a_picture() {
     p.settle();
     assert_eq!(p.ui.screen_name(), "app:calendar");
     p.shot("calendar");
-    // The mark on today (Friday the 13th: the sixth column, the second
-    // row of days) is a square in the middle of the day's place, and the
-    // six rows of days end well above the softkey buttons: the upright
-    // screen has more height than a month wants.
+    // Under the title, the month's name between two buttons; under that
+    // the weekdays (from 208, 66 high) and the five weeks of the month,
+    // 171 high each, nearly to the bottom of the window.
     let c = p.ui.canvas();
+    let ground = c.pixel(400, 1150);
+    assert_ne!(c.pixel(16 + 1, 104 + 48), ground, "the button to the month before");
+    assert_ne!(c.pixel(800 - 16 - 2, 104 + 48), ground, "the button to the month after");
+    // The mark on today (Friday the 13th: the sixth column, the second
+    // row of days) is a disc in the middle of the day's place: its middle
+    // is marked, and the corners of the place are not.
     let col = 800 / 7;
-    let (x0, y0) = (5 * col + col / 2, 374);
+    let (x0, y0) = (5 * col + col / 2, 274 + 171 + 85);
     let mark = c.pixel(x0, y0 - 30);
-    assert_ne!(mark, c.pixel(x0, 110), "today is marked");
-    let run = |dx: i32, dy: i32| (1..400).take_while(|i| c.pixel(x0 + dx * i, y0 - 30 + dy * i) == mark).count();
-    let (width, height) = (run(-1, 0) + run(1, 0) + 1, run(0, -1) + run(0, 1) + 1);
-    assert_eq!((width, height), (95, 95));
-    let ground = c.pixel(400, 1100);
-    assert!((0..800).all(|x| (1000..1160).all(|y| c.pixel(x, y) == ground)), "nothing under the sixth row");
+    assert_ne!(mark, ground, "today is marked");
+    assert_eq!(c.pixel(x0 - 40, y0 - 40), ground, "a disc, not a square");
+    let run = |dy: i32| (1..400).take_while(|i| c.pixel(x0 + 25, y0 + dy * i) == mark).count();
+    let height = run(-1) + run(1) + 1;
+    assert!((50..80).contains(&height), "{height}");
+    // The month after: "Today" is the way back.
+    p.sim.touch_tap(800 - 16 - 48, 104 + 48);
+    p.settle();
+    p.shot("calendar-next");
+    assert!(p.has(opendeskphone_ui::Hit::Key(Key::Soft(1))), "the Today button");
 }
