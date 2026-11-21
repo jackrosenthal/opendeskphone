@@ -346,6 +346,11 @@ impl Screen for Menu {
 // ------------------------------------------------------------ text entry
 
 /// A one-field form.
+///
+/// Touch: the field at the top, under the title bar (whose back button
+/// cancels), with Cancel and OK buttons below it, and the on-screen
+/// keyboard ([`crate::osk`]) at the bottom of the screen, whose done key
+/// is OK too.  A tap in the field puts the cursor there.
 pub(crate) struct EditScreen {
     name: &'static str,
     title: String,
@@ -355,7 +360,14 @@ pub(crate) struct EditScreen {
     max_len: usize,
     tap: MultiTap,
     done: Box<dyn Fn(&Cx, &str) -> Nav + Send>,
+    /// Touch: the keyboard.
+    kb: crate::osk::Keyboard,
+    /// Touch: where the field was drawn.
+    field: IRect,
 }
+
+/// Touch: the region of [`EditScreen`]'s field.
+const EDIT_FIELD: u32 = 1;
 
 impl EditScreen {
     pub fn boxed(
@@ -374,7 +386,27 @@ impl EditScreen {
             max_len: 127,
             tap: MultiTap::default(),
             done: Box::new(done),
+            kb: crate::osk::Keyboard::new(mode),
+            field: IRect::default(),
         })
+    }
+
+    /// Touch: the field, its buttons, and the keyboard.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, body: IRect) {
+        let th = cx.th;
+        let (top, keys) = body.split_bottom(crate::osk::Keyboard::height(th));
+        let inset = th.pad * 2;
+        self.field = IRect::new(top.x + inset, top.y + inset, top.w - 2 * inset, th.touch_min);
+        let pending = self.tap.pending(cx.now_ms);
+        widgets::text_field(c, th, self.field, &self.text, self.cursor as usize, self.mode, true, pending, "", Font::Normal);
+        c.hit(self.field, Hit::Custom(EDIT_FIELD));
+        // OK at the right, Cancel beside it: the softkeys' actions.
+        let y = self.field.bottom() + inset;
+        let ok = IRect::new(self.field.right() - th.soft_w, y, th.soft_w, th.touch_min);
+        let cancel = IRect { x: ok.x - th.soft_pitch, ..ok };
+        widgets::button(c, th, cancel, tr::CANCEL, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Soft(4));
+        widgets::button(c, th, ok, tr::OK, th.sel_bg, None, th.sel_fg, Hit::Soft(1));
+        self.kb.draw(c, th, keys);
     }
 }
 
@@ -382,8 +414,34 @@ impl Screen for EditScreen {
     fn name(&self) -> String {
         self.name.into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the buttons are by the field, and the keyboard deletes.
+        if cx.th.touch {
+            return Vec::new();
+        }
         vec![soft(1, tr::OK), soft(0, ""), soft(3, tr::DELETE), soft(4, tr::CANCEL)]
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, x: i32, _y: i32) -> Nav {
+        if hit == Hit::Custom(EDIT_FIELD) {
+            let pending = self.tap.pending(cx.now_ms);
+            self.tap.reset();
+            let at = widgets::text_field_cursor_at(cx.th, self.field, &self.text, self.cursor as usize, self.mode, pending, Font::Normal, x);
+            self.cursor = at as u16;
+            return Nav::Stay;
+        }
+        match self.kb.edit(hit, &mut self.text, &mut self.cursor, self.max_len) {
+            Some(crate::osk::Press::Done) => (self.done)(cx, &self.text),
+            Some(_) => {
+                self.tap.reset();
+                Nav::Stay
+            }
+            None => Nav::Ignored,
+        }
+    }
+    fn drag(&mut self, _cx: &Cx, _from: Option<Hit>, _dx: i32, _dy: i32) -> Nav {
+        // A finger that slides on the keyboard types nothing and moves
+        // nothing.
+        Nav::Stay
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         match id {
@@ -411,6 +469,9 @@ impl Screen for EditScreen {
         c.fill(area, th.bg);
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
+        if th.touch {
+            return self.draw_touch(cx, c, body);
+        }
         let h = if th.gray { th.line_h + 4 } else { th.px(40) };
         let r = IRect::new(body.x + th.pad * 2, body.y + (body.h - h) / 2, body.w - th.pad * 4, h);
         widgets::text_field(c, th, r, &self.text, self.cursor as usize, self.mode, true, self.tap.pending(cx.now_ms), "", Font::Normal);
@@ -568,6 +629,10 @@ impl Screen for Confirm {
 // ----------------------------------------------------------------- level
 
 /// A level adjuster (brightness, contrast, volume) with Left/Right.
+///
+/// Touch: the level in large digits over a slider, with a minus button at
+/// its left and a plus button at its right.  A tap on the slider sets the
+/// level there; a finger dragged along it moves the level with it.
 pub(crate) struct Level {
     title: String,
     max: u8,
@@ -576,7 +641,17 @@ pub(crate) struct Level {
     commit: Option<Box<dyn Fn(&Cx, u8) + Send>>,
     /// The level being shown, ahead of the state catching up.
     shown: Option<u8>,
+    /// Touch: where the slider was drawn (from no level at its left end
+    /// to the most at its right).
+    track: IRect,
+    /// Touch: how far a finger has dragged the slider, short of a step.
+    drag: i32,
 }
+
+/// Touch: the regions of [`Level`].
+const LEVEL_MINUS: u32 = 1;
+const LEVEL_PLUS: u32 = 2;
+const LEVEL_TRACK: u32 = 3;
 
 impl Level {
     pub fn boxed(
@@ -585,7 +660,16 @@ impl Level {
         get: impl Fn(&Cx) -> u8 + Send + 'static,
         set: impl Fn(&Cx, u8) + Send + 'static,
     ) -> Box<Level> {
-        Box::new(Level { title: title.into(), max, get: Box::new(get), set: Box::new(set), commit: None, shown: None })
+        Box::new(Level {
+            title: title.into(),
+            max,
+            get: Box::new(get),
+            set: Box::new(set),
+            commit: None,
+            shown: None,
+            track: IRect::default(),
+            drag: 0,
+        })
     }
     /// Runs once when the screen closes, with the final level (persist it).
     pub fn with_commit(mut self: Box<Self>, f: impl Fn(&Cx, u8) + Send + 'static) -> Box<Level> {
@@ -598,6 +682,47 @@ impl Level {
         self.shown = Some(new);
         (self.set)(cx, new);
     }
+
+    /// Touch: the level at `x` along the slider.
+    fn level_at(&self, x: i32) -> i32 {
+        let w = self.track.w.max(1);
+        ((x - self.track.x).clamp(0, w) * self.max as i32 + w / 2) / w
+    }
+
+    /// Touch: the level, the slider, and its buttons, in `body`.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, body: IRect, level: u8) {
+        let th = cx.th;
+        let b = th.touch_min;
+        let row = IRect::new(body.x + th.pad * 2, body.y + (body.h - b) / 2, body.w - th.pad * 4, b);
+        let (minus, rest) = row.split_left(b);
+        let (rest, plus) = rest.split_right(b);
+        widgets::button(c, th, minus, "\u{2013}", th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Custom(LEVEL_MINUS));
+        widgets::button(c, th, plus, "+", th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Custom(LEVEL_PLUS));
+        // The slider: a bar with round ends, filled to the level, and a
+        // round knob at the level; the knob's middle goes from one end of
+        // the track to the other.
+        let knob = th.px(22);
+        let slider = rest.inset_xy(th.pad * 2, 0);
+        self.track = slider.inset_xy(knob / 2, 0);
+        let bar_h = th.px(6);
+        let bar = IRect::new(slider.x, slider.y + (slider.h - bar_h) / 2, slider.w, bar_h);
+        let at = self.track.x + self.track.w * level as i32 / self.max.max(1) as i32;
+        c.fill_round_aa(bar, bar_h / 2, th.border);
+        c.fill_round_aa(IRect { w: at - bar.x, ..bar }, bar_h / 2, th.sel_bg);
+        let k = IRect::new(at - knob / 2, slider.y + (slider.h - knob) / 2, knob, knob);
+        c.fill_round_aa(k, knob / 2, th.accent);
+        c.hit(rest, Hit::Custom(LEVEL_TRACK));
+        // The level, large, above it.
+        let text = IRect::new(body.x, row.y - th.pad * 2 - th.px(40), body.w, th.px(40));
+        c.text_in(th.font(Font::Large), text, &level.to_string(), th.fg, HAlign::Center);
+        c.text_in(
+            th.font(Font::Normal),
+            IRect::new(body.x, row.bottom() + th.pad, body.w, th.line_h),
+            &format!("0 \u{2013} {}", self.max),
+            th.secondary,
+            HAlign::Center,
+        );
+    }
 }
 
 impl Screen for Level {
@@ -605,11 +730,38 @@ impl Screen for Level {
         "level".into()
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
-        // Touch: the title bar has the way back.
+        // Touch: the buttons are by the slider, and the title bar has the
+        // way back.
         if cx.th.touch {
-            return vec![soft(1, "\u{2013}"), soft(2, "+")];
+            return Vec::new();
         }
         vec![soft(1, "\u{2013}"), soft(2, "+"), soft(0, ""), soft(4, tr::BACK)]
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Custom(LEVEL_MINUS) => self.adjust(cx, -1),
+            Hit::Custom(LEVEL_PLUS) => self.adjust(cx, 1),
+            Hit::Custom(LEVEL_TRACK) => {
+                let cur = self.shown.unwrap_or_else(|| (self.get)(cx)) as i32;
+                self.adjust(cx, self.level_at(x) - cur);
+            }
+            _ => return Nav::Ignored,
+        }
+        Nav::Stay
+    }
+    fn drag(&mut self, cx: &Cx, from: Option<Hit>, dx: i32, _dy: i32) -> Nav {
+        if from != Some(Hit::Custom(LEVEL_TRACK)) {
+            return Nav::Stay;
+        }
+        // A step for each part of the track a level takes.
+        let step = (self.track.w / self.max.max(1) as i32).max(1);
+        self.drag += dx;
+        let steps = self.drag / step;
+        self.drag -= steps * step;
+        if steps != 0 {
+            self.adjust(cx, steps);
+        }
+        Nav::Stay
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         match id {
@@ -634,6 +786,9 @@ impl Screen for Level {
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
         let level = self.shown.unwrap_or_else(|| (self.get)(cx));
+        if th.touch {
+            return self.draw_touch(cx, c, body, level);
+        }
         let h = if th.gray { 10 } else { th.px(22) };
         let r = IRect::new(body.x + th.pad * 3, body.y + (body.h - h) / 2, body.w - th.pad * 6, h);
         widgets::progress(c, th, r, level as u32 * 100 / self.max.max(1) as u32);
