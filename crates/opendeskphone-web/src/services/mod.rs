@@ -9,6 +9,7 @@ mod auth;
 mod calls;
 mod config;
 mod devices;
+mod mirror;
 mod shell;
 mod ssh;
 mod status;

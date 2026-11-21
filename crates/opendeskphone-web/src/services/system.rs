@@ -1,6 +1,7 @@
 //! `AppsService`, `FirmwareService`, `LogsService`, `ScreenService`, and
 //! `SystemService`.
 
+use super::mirror::{Mirror, Picture};
 use super::ssh::{locked, setting_source};
 use super::{command, config_error, watch, with_config};
 use crate::rpc::{Code, ConnectError, Sink};
@@ -387,11 +388,30 @@ pub async fn watch_screen(
     let mut last_gen: Option<u64> = None;
     let mut last_meta: Option<(Vec<pb::Lamp>, bool, bool)> = None;
     let mut since_touch = std::time::Instant::now();
+    // What this watcher was last sent of the screen.
+    let mut mirror = Mirror::new(req.patches);
     loop {
         let meta = (lamps(&app), app.store.get::<st::Ui>().backlight_on, app.store.get::<st::Audio>().off_hook);
         let generation = app.screen.as_ref().map(|s| s.generation());
-        let picture_changed = generation.is_some() && generation != last_gen;
-        if picture_changed || last_meta.as_ref() != Some(&meta) || last_meta.is_none() {
+        let mut picture = None;
+        if generation.is_some() && generation != last_gen {
+            let source = app.screen.clone().expect("generation came from it");
+            // Capture, comparison, and compression are too slow for the
+            // reactor thread on the phone.
+            let mut m = std::mem::replace(&mut mirror, Mirror::new(req.patches));
+            (mirror, picture) = tokio::task::spawn_blocking(move || {
+                let picture = source.capture(which).and_then(|frame| {
+                    let size = (frame.width as u32, frame.height as u32);
+                    m.next(frame).map(|p| (size, p))
+                });
+                (m, picture)
+            })
+            .await
+            // A panic lost the mirror: the next picture is whole.
+            .unwrap_or_else(|_| (Mirror::new(req.patches), None));
+            last_gen = generation;
+        }
+        if picture.is_some() || last_meta.as_ref() != Some(&meta) {
             let mut msg = pb::WatchScreenResponse {
                 png: Vec::new(),
                 width: 0,
@@ -399,24 +419,19 @@ pub async fn watch_screen(
                 lamps: meta.0.clone(),
                 backlight_on: meta.1,
                 off_hook: meta.2,
+                patches: Vec::new(),
             };
-            if picture_changed {
-                let source = app.screen.clone().expect("generation came from it");
-                // Capture and compression are too slow for the reactor
-                // thread on the phone.
-                let encoded = tokio::task::spawn_blocking(move || {
-                    let frame = source.capture(which)?;
-                    Some((frame.width, frame.height, crate::png::encode(&frame)?))
-                })
-                .await
-                .ok()
-                .flatten();
-                if let Some((w, h, png)) = encoded {
-                    msg.png = png;
-                    msg.width = w as u32;
-                    msg.height = h as u32;
+            if let Some(((width, height), picture)) = picture {
+                (msg.width, msg.height) = (width, height);
+                match picture {
+                    Picture::Whole(png) => msg.png = png,
+                    Picture::Patches(patches) => {
+                        msg.patches = patches
+                            .into_iter()
+                            .map(|(r, png)| pb::ScreenPatch { x: r.x as u32, y: r.y as u32, width: r.w as u32, height: r.h as u32, png })
+                            .collect()
+                    }
                 }
-                last_gen = generation;
             }
             sink.send(&msg).await?;
             last_meta = Some(meta);
