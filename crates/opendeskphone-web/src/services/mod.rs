@@ -169,6 +169,7 @@ service!(ScreenService {
     unary get_screen_layout(GetScreenLayoutRequest) -> GetScreenLayoutResponse = system::get_screen_layout;
     stream watch_screen(WatchScreenRequest) -> WatchScreenResponse = system::watch_screen;
     unary press_key(PressKeyRequest) -> PressKeyResponse = system::press_key;
+    unary touch(TouchRequest) -> TouchResponse = system::touch;
     unary set_hook(SetHookRequest) -> SetHookResponse = system::set_hook;
 });
 

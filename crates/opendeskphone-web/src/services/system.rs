@@ -340,6 +340,7 @@ pub async fn get_screen_layout(
         keys: model_keys(model),
         softkey_bar_height: model.softkey_bar_height() as u32,
         mirror_available: ctx.app.screen.is_some(),
+        touch: model.is_touch(),
     })
 }
 
@@ -452,6 +453,36 @@ pub async fn press_key(ctx: Ctx, req: pb::PressKeyRequest) -> Result<pb::PressKe
         }
     }
     Ok(pb::PressKeyResponse {})
+}
+
+pub async fn touch(ctx: Ctx, req: pb::TouchRequest) -> Result<pb::TouchResponse, ConnectError> {
+    let model = ctx.app.store.model();
+    if !model.is_touch() {
+        return Err(ConnectError::new(Code::FailedPrecondition, format!("the {model} has no touchscreen")));
+    }
+    let size = model.main_screen();
+    if req.x >= u32::from(size.width) || req.y >= u32::from(size.height) {
+        return Err(ConnectError::invalid_argument(format!(
+            "({}, {}) is not on the {}x{} screen",
+            req.x, req.y, size.width, size.height
+        )));
+    }
+    let (x, y) = (req.x as u16, req.y as u16);
+    let store = &ctx.app.store;
+    let phase = match req.action.as_known().unwrap_or(pb::TouchAction::Tap) {
+        pb::TouchAction::Down => st::TouchPhase::Down,
+        pb::TouchAction::Move => st::TouchPhase::Move,
+        pb::TouchAction::Up => st::TouchPhase::Up,
+        pb::TouchAction::Cancel => st::TouchPhase::Cancel,
+        pb::TouchAction::Tap | pb::TouchAction::Unspecified => {
+            // Lifted well before a long press.
+            command(store, Command::InjectTouch { phase: st::TouchPhase::Down, x, y }).await?;
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            st::TouchPhase::Up
+        }
+    };
+    command(store, Command::InjectTouch { phase, x, y }).await?;
+    Ok(pb::TouchResponse {})
 }
 
 pub async fn set_hook(ctx: Ctx, req: pb::SetHookRequest) -> Result<pb::SetHookResponse, ConnectError> {

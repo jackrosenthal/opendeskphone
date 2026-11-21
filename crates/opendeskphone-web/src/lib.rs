@@ -119,8 +119,9 @@ pub struct MirrorFrame {
 
 /// Where the screen mirror gets its pictures.  On the phone the UI
 /// subsystem implements this over what it last flushed; in the simulator
-/// it wraps the HAL's `SimHandle`.  Key presses do not go through here:
-/// they are sent as [`opendeskphone_state::Command::InjectKey`].
+/// it wraps the HAL's `SimHandle`.  Key presses and touches do not go
+/// through here: they are sent as [`opendeskphone_state::Command::InjectKey`]
+/// and [`opendeskphone_state::Command::InjectTouch`].
 pub trait ScreenSource: Send + Sync {
     /// A counter that changes whenever any screen's picture changes.  The
     /// mirror polls it (cheaply) and captures only on change.
