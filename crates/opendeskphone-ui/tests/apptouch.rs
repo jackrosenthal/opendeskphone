@@ -473,3 +473,43 @@ fn the_phones_with_keys_are_as_they_were() {
         );
     }
 }
+
+/// A picture of an app view on the D80, for the eye:
+/// `<target dir>/tmp/ui-snapshots/D80/app-view.png`, beside the pictures
+/// of `tests/snapshots.rs`.
+#[test]
+fn a_picture_of_an_app_view() {
+    let mut r = Rig::new();
+    let m = r.m;
+    // As the SDK's `screen` lays a title out: after the back button.
+    let title = r.view.create(WidgetKind::Text, None, Rect::new(m.back_width as i16, 0, m.width - m.back_width, m.title_height));
+    r.view.set_font(title, opendeskphone_ui::appview::Font::Title);
+    r.view.set_text(title, "Voicemail");
+    let list = r.list(14);
+    r.view.set_rect(list, Rect::new(0, m.title_height as i16, m.width, 9 * m.row_height));
+    r.view.list_select(list, 2);
+    let input = r.view.create(WidgetKind::Input, None, Rect::new(16, 1000, m.width - 32, m.row_height));
+    r.view.set_text(input, "An input");
+    let labels = ["Play", "Delete", "Call", "Info", "Exit"];
+    r.view.set_softkeys(None, labels.iter().enumerate().map(|(i, l)| Softkey::new(i as u32, *l)).collect());
+    r.ui.pump();
+    let frame = r.sim.frame(opendeskphone_hal::Screen::Main).expect("the main screen");
+    let (w, h) = (frame.info.width as usize, frame.info.height as usize);
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * frame.info.stride + x * 4;
+            rgb.extend_from_slice(&[frame.pixels[i + 2], frame.pixels[i + 1], frame.pixels[i]]);
+        }
+    }
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ui-snapshots").join("D80");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = std::io::BufWriter::new(std::fs::File::create(dir.join("app-view.png")).unwrap());
+    let mut enc = png::Encoder::new(file, w as u32, h as u32);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header().unwrap().write_image_data(&rgb).unwrap();
+    // The back button's arrow is drawn: its corner is not one flat color.
+    let corner: Vec<u32> = (0..96 * 96).map(|i| r.ui.canvas().pixel(i % 96, i / 96)).collect();
+    assert!(corner.iter().any(|p| *p != corner[0]));
+}
