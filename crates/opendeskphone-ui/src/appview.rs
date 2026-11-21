@@ -25,8 +25,8 @@
 //! **Geometry.**  Widget rectangles are in pixels, relative to the parent
 //! widget; top-level widgets (`parent == None`) are relative to the app
 //! content area, whose size and stock text metrics are in
-//! [`AppView::metrics`] (240x102, 320x140, or 480x243).  The softkey bar
-//! below the content area belongs to the toolkit.
+//! [`AppView::metrics`] (240x102, 320x140, 480x243, or 800x1160).  The
+//! softkey bar below the content area belongs to the toolkit.
 //!
 //! **Widgets** mirror the stock set: [`WidgetKind::Group`], `Text`, `List`,
 //! `Scroll`, `Input`, `Image`, and add `Canvas`, which shows a list of
@@ -80,6 +80,23 @@
 //! main screen: no softkey bar is drawn, [`AppView::metrics`] reports the
 //! screen's size, and the softkey keys go the way of every other key (to
 //! a claimant, or nowhere).
+//!
+//! **Touch** (the touch skin, which has no keys).  The toolkit handles a
+//! finger for the stock widgets: a tap on a list's row focuses the list,
+//! selects the row ([`AppEvent::ListSelected`], if it was not selected),
+//! and activates it ([`AppEvent::ListActivated`]); a drag scrolls a list
+//! or a `Scroll`; a tap on an `Input` focuses it.  A widget (or the
+//! window) that *takes touches* ([`AppView::set_touch_claim`]) gets
+//! [`AppEvent::Touch`] instead, with places relative to itself.  A touch
+//! goes to the topmost widget under the finger that takes touches or is a
+//! `List`, an `Input`, or a `Scroll`; the window is under them all.  The
+//! softkeys are buttons below the content area, and the toolkit draws a
+//! back button over the top-left corner of the view
+//! ([`Metrics::back_width`] wide, the title's height), which is the
+//! `Cancel` key: claimed, it is the app's; unclaimed, it sends
+//! [`AppEvent::CloseRequested`].  Lists have rows of the height a finger
+//! needs, and a list scrolls to its selection only when the host selects
+//! a row ([`AppView::list_select`]).
 //!
 //! **Lifecycle.**  [`AppEvent::Foreground`] / [`AppEvent::Background`]
 //! report when the view becomes or stops being the top screen.  Changes to
@@ -160,17 +177,25 @@ pub struct Metrics {
     /// True for the color skin (theme colors and RGB are honored; gray
     /// skins map every color to one of four levels).
     pub color: bool,
+    /// The phone has keys.  False on the touch skin: the view is used by
+    /// touch alone.
+    pub keys: bool,
+    /// The width of the back button the toolkit draws over the top-left
+    /// corner of the view on the touch skin (`title_height` high); 0 on
+    /// the skins of phones with keys.
+    pub back_width: u16,
 }
 
 impl Metrics {
     pub const fn for_model(model: Model) -> Metrics {
         let area = model.app_content_area();
         let skin = model.skin();
-        let (line, title, off, row, sb, color) = match skin {
-            Skin::SmallGray => (15, 15, 1, 15, 4, false),
-            Skin::LargeGray => (17, 17, 1, 17, 4, false),
-            Skin::Color => (25, 40, 4, 32, 8, true),
-            Skin::Touch => (44, 96, 8, 96, 12, true),
+        let (line, title, off, row, sb, color, back) = match skin {
+            Skin::SmallGray => (15, 15, 1, 15, 4, false, 0),
+            Skin::LargeGray => (17, 17, 1, 17, 4, false, 0),
+            Skin::Color => (25, 40, 4, 32, 8, true, 0),
+            // (`Theme::back_w`, and the touch skin's other sizes.)
+            Skin::Touch => (44, 96, 8, 96, 12, true, 96),
         };
         Metrics {
             skin,
@@ -182,6 +207,8 @@ impl Metrics {
             row_height: row,
             scroll_bar_width: sb,
             color,
+            keys: !model.is_touch(),
+            back_width: back,
         }
     }
 }
@@ -400,6 +427,21 @@ impl KeyClaims {
     }
 }
 
+/// What a finger did on a widget that takes touches
+/// ([`AppView::set_touch_claim`]).  Places are in pixels from the widget's
+/// top-left corner (the view's, for the window); a finger that left the
+/// widget is at a place outside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Touch {
+    /// Down and up again in one place.
+    Tap { x: i16, y: i16 },
+    /// The finger, having come down at (`x0`, `y0`), is now at (`x`,
+    /// `y`).  Sent for every movement.
+    Drag { x0: i16, y0: i16, x: i16, y: i16 },
+    /// The finger of a drag was lifted at (`x`, `y`).
+    DragEnd { x0: i16, y0: i16, x: i16, y: i16 },
+}
+
 /// What the toolkit tells the app.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppEvent {
@@ -425,6 +467,8 @@ pub enum AppEvent {
     InputSubmitted { widget: WidgetId, value: String },
     /// Focus moved (by the user) to this widget.
     Focused { widget: WidgetId },
+    /// A finger on a widget that takes touches (`None`: the window).
+    Touch { widget: Option<WidgetId>, touch: Touch },
     /// Unclaimed `Cancel`.
     CloseRequested,
 }
@@ -443,6 +487,8 @@ pub(crate) struct Node {
     pub bg: Color,
     pub border: bool,
     pub claims: KeyClaims,
+    /// The widget takes touches.
+    pub touch: bool,
     pub softkeys: Option<Vec<Softkey>>,
     // Text / Input
     pub text: String,
@@ -455,6 +501,8 @@ pub(crate) struct Node {
     pub rows: Vec<Vec<Cell>>,
     pub selected: u32,
     pub top_row: u32,
+    /// Touch: how far a finger has dragged the list, short of a row.
+    pub drag: i32,
     pub row_height: u16,
     pub shortcuts: bool,
     pub wrap_selection: bool,
@@ -485,6 +533,7 @@ impl Node {
             bg: Color::Default,
             border: false,
             claims: KeyClaims::default(),
+            touch: false,
             softkeys: None,
             text: String::new(),
             font: Font::Normal,
@@ -495,6 +544,7 @@ impl Node {
             rows: Vec::new(),
             selected: 0,
             top_row: 0,
+            drag: 0,
             row_height: 0,
             shortcuts: false,
             wrap_selection: true,
@@ -533,6 +583,13 @@ pub struct Tree {
     pub(crate) lamps: Vec<(Lamp, LampColor)>,
     /// Multi-tap state of the focused input (see `crate::input`).
     pub(crate) multitap: crate::multitap::MultiTap,
+    /// The window takes the touches no widget takes.
+    pub(crate) window_touch: bool,
+    /// Touch: the drag under way (`crate::appview_impl`).
+    pub(crate) dragging: Option<crate::appview_impl::Dragging>,
+    /// Touch: the focus moved, and a `Scroll` has yet to bring the
+    /// focused widget into view (on the other skins it always does).
+    pub(crate) follow_focus: bool,
 }
 
 impl Tree {
@@ -553,6 +610,9 @@ impl Tree {
             cancels: 0,
             lamps: Vec::new(),
             multitap: Default::default(),
+            window_touch: false,
+            dragging: None,
+            follow_focus: false,
         }
     }
 
@@ -619,13 +679,15 @@ impl Tree {
         }
     }
 
-    /// Destroys every widget and clears the window softkeys and key claims.
+    /// Destroys every widget and clears the window softkeys, key claims,
+    /// and touch claim.
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.roots.clear();
         self.focus = None;
         self.window_softkeys.clear();
         self.window_claims = KeyClaims::default();
+        self.window_touch = false;
         self.softkey_page = 0;
     }
 
@@ -780,9 +842,22 @@ impl Tree {
     pub fn list_len(&self, id: WidgetId) -> Option<u32> {
         self.node(id).map(|n| n.rows.len() as u32)
     }
+    /// Selects a row.  (On the touch skin, where a list does not follow
+    /// its selection as it is drawn, this scrolls the row into view.)
     pub fn list_select(&mut self, id: WidgetId, row: u32) {
+        let touch = self.model.is_touch();
         if let Some(n) = self.node_mut(id) {
             n.selected = row.min(n.rows.len().saturating_sub(1) as u32);
+            if touch {
+                let visible = (n.rect.h / n.row_height.max(1)).max(1) as u32;
+                if n.selected < n.top_row {
+                    n.top_row = n.selected;
+                    n.drag = 0;
+                } else if n.selected >= n.top_row + visible {
+                    n.top_row = n.selected + 1 - visible;
+                    n.drag = 0;
+                }
+            }
         }
     }
     pub fn list_selected(&self, id: WidgetId) -> Option<u32> {
@@ -857,6 +932,7 @@ impl Tree {
             self.focus = id;
             self.softkey_page = 0;
             self.multitap.reset();
+            self.follow_focus = true;
         }
     }
     pub fn focused(&self) -> Option<WidgetId> {
@@ -886,6 +962,31 @@ impl Tree {
     /// Keys the window claims when no widget on the focus path does.
     pub fn set_window_key_claims(&mut self, claims: KeyClaims) {
         self.window_claims = claims;
+    }
+
+    /// Whether a widget (`None`: the window) takes touches: what a finger
+    /// does on it is sent as [`AppEvent::Touch`] in place of the built-in
+    /// behavior (see the module docs).
+    pub fn set_touch_claim(&mut self, owner: Option<WidgetId>, on: bool) {
+        match owner {
+            None => self.window_touch = on,
+            Some(id) => {
+                if let Some(n) = self.node_mut(id) {
+                    n.touch = on;
+                }
+            }
+        }
+    }
+
+    /// The focused `Input` and its mode, on the touch skin: the widget an
+    /// on-screen keyboard types into ([`AppView::type_text`],
+    /// [`AppView::backspace`]).
+    pub fn keyboard_input(&self) -> Option<(WidgetId, InputMode)> {
+        if !self.model.is_touch() {
+            return None;
+        }
+        let n = self.node(self.focus?)?;
+        (n.kind == WidgetKind::Input && n.visible).then_some((n.id, n.mode))
     }
 }
 
@@ -1039,6 +1140,12 @@ impl AppView {
         fn set_softkeys(&self, owner: Option<WidgetId>, keys: Vec<Softkey>);
         fn set_key_claims(&self, id: WidgetId, claims: KeyClaims);
         fn set_window_key_claims(&self, claims: KeyClaims);
+        fn set_touch_claim(&self, owner: Option<WidgetId>, on: bool);
+    }
+
+    /// See [`Tree::keyboard_input`].
+    pub fn keyboard_input(&self) -> Option<(WidgetId, InputMode)> {
+        self.batch_quiet().keyboard_input()
     }
 
     /// The width and height of what `text` paints in a font of this skin:
@@ -1119,6 +1226,41 @@ impl AppView {
     /// hosts without a running [`crate::Ui`].
     pub fn dispatch_key(&self, key: Key) -> bool {
         crate::appview_impl::dispatch_key(self, key)
+    }
+
+    /// Feeds a tap at (`x`, `y`) of the view (pixels from the top-left
+    /// corner of the content area) as the UI would on the touch skin when
+    /// the view is the top screen.  For tests and hosts without a running
+    /// [`crate::Ui`].
+    pub fn dispatch_tap(&self, x: i32, y: i32) {
+        crate::appview_impl::tap(self, x, y);
+    }
+
+    /// Feeds one movement of a drag: the finger came down at (`x0`, `y0`)
+    /// of the view and has moved `dx` and `dy` pixels more.  See
+    /// [`AppView::dispatch_tap`].
+    pub fn dispatch_drag(&self, x0: i32, y0: i32, dx: i32, dy: i32) {
+        crate::appview_impl::drag(self, x0, y0, dx, dy);
+    }
+
+    /// The finger of the drag was lifted.
+    pub fn dispatch_drag_end(&self) {
+        crate::appview_impl::drag_end(self);
+    }
+
+    /// Types `text` at the cursor of the focused `Input`, as far as its
+    /// mode and its length allow, and sends [`AppEvent::InputChanged`] if
+    /// that changed it.  For an on-screen keyboard.  Returns whether an
+    /// input has the focus.
+    pub fn type_text(&self, text: &str) -> bool {
+        crate::appview_impl::type_text(self, text)
+    }
+
+    /// Deletes the character before the cursor of the focused `Input`
+    /// (as its "Delete" softkey does).  Returns whether an input has the
+    /// focus.
+    pub fn backspace(&self) -> bool {
+        crate::appview_impl::backspace(self)
     }
 }
 

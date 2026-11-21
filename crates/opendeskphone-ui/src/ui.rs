@@ -1256,15 +1256,21 @@ impl Ui {
             Gesture::LongPress { x, y } => self.tapped(hit, x, y, true, source),
             // A drag is the top screen's, unless the finger came down on
             // something that is not the screen's (a softkey, a dialog).
-            Gesture::Drag { dx, dy, .. } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
+            Gesture::Drag { x, y, dx, dy } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
                 self.with_cx(|nav, cx| {
-                    let mut r = nav.top().drag(cx, hit, dx, dy);
+                    let mut r = nav.top().drag_at(cx, hit, x, y, dx, dy);
                     if matches!(r, Nav::Ignored)
                         && let Some((list, len)) = nav.top().list_state(cx)
                     {
                         list.drag(dy, cx.th.row_h, len);
                         r = Nav::Stay;
                     }
+                    nav.apply(cx, r);
+                });
+            }
+            Gesture::DragEnd { .. } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
+                self.with_cx(|nav, cx| {
+                    let r = nav.top().drag_end(cx, hit);
                     nav.apply(cx, r);
                 });
             }
