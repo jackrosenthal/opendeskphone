@@ -1090,8 +1090,9 @@ pub async fn start(ctx: &Context, hal: Option<SharedHal>) -> AudioService {
     let family = match ctx.model.family() {
         crate::model::Family::Old => opendeskphone_vpm::Family::Old,
         crate::model::Family::New => opendeskphone_vpm::Family::New,
-        // The D80 has no such voice processor; its audio is still to be
-        // done.  The simulator gives it the new family's.
+        // The D80 has no such voice processor (its own is a ZL38040, at
+        // 16 kHz); its audio is still to be done.  The simulator gives it
+        // the new family's.
         crate::model::Family::Touch => opendeskphone_vpm::Family::New,
     };
     let service = AudioService::new(ctx.store.clone(), family);

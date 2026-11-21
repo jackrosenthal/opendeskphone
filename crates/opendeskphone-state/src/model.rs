@@ -19,7 +19,7 @@ pub enum Model {
 
 /// Hardware family.  Old: grayscale, 16 kHz audio.  New: color, 32 kHz audio.
 /// Touch: the D80, which has a touchscreen and no keys, and is not built on
-/// the processors of the other two.
+/// the processors of the other two: color, 16 kHz audio.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Family {
     Old,
@@ -61,9 +61,9 @@ pub enum Soc {
     Bcm11109,
     Bcm11189,
     Bcm11188,
-    /// The D80's processor, which is not of the BCMRING family.  Which it
-    /// is, is to be settled when the hardware is brought up.
-    D80,
+    /// NXP i.MX 6DualLite, two Cortex-A9 cores: the D80's, by the marking
+    /// on its processor (`MCIMX6U5DVM10AC`) and the JTAG ID of its SJC.
+    Imx6DualLite,
 }
 
 /// Error from parsing a model name.
@@ -143,7 +143,7 @@ impl Model {
             Model::D45 | Model::D70 => Soc::Bcm11109,
             Model::D60 => Soc::Bcm11189,
             Model::D62 | Model::D65 => Soc::Bcm11188,
-            Model::D80 => Soc::D80,
+            Model::D80 => Soc::Imx6DualLite,
         }
     }
 
@@ -250,7 +250,9 @@ impl Model {
             Model::D70 => 6,
             // The D6x table lists six; a D60 has fewer fitted.
             Model::D60 | Model::D62 | Model::D65 => 6,
-            // Not established: the D80 is taken to have no lamps.
+            // The D80 has no line keys, so no line lamps.  Its lamps are a
+            // red and a green LED (by the stock kernel's board file),
+            // whose functions are not yet known.
             Model::D80 => 0,
         }
     }
@@ -265,11 +267,16 @@ impl Model {
     }
 
     pub const fn gigabit(self) -> bool {
+        // The D80: its switch is a gigabit one (an RTL8363NB), and it
+        // links at 1000/Full on its LAN port, under stock 1_12_13 and
+        // under a mainline kernel.
         matches!(self, Model::D45 | Model::D70 | Model::D62 | Model::D65 | Model::D80)
     }
 
     pub const fn bluetooth(self) -> bool {
-        // The D80: by its data sheet; not yet seen on the hardware.
+        // The D80: an AP6212 Wi-Fi and Bluetooth module is on its board
+        // (HCI on UART4), and on the hardware a scan with it finds
+        // devices.
         matches!(self, Model::D65 | Model::D80)
     }
 
@@ -283,10 +290,13 @@ impl Model {
         match self.family() {
             Family::Old => 16_000,
             Family::New => 32_000,
-            // Not the hardware's: the new family's, whose voice processor
-            // the simulator stands in for.  To be settled with the D80's
-            // audio.
-            Family::Touch => 32_000,
+            // The D80's voice processor, a ZL38040, exchanges a call's
+            // audio with the SoC at 16 kHz on every path: the stock
+            // 1_12_13 kernel's codec tables set that rate, whatever rate
+            // is asked for.  So it was heard on the hardware: a tone at
+            // 16 kHz played on the speaker and was recorded by its
+            // microphone.  (8 kHz is untried.)
+            Family::Touch => 16_000,
         }
     }
 
@@ -295,9 +305,9 @@ impl Model {
         match self.family() {
             Family::Old => 31,
             Family::New => 32,
-            // A guess (the range of an Android backlight), to be settled
-            // with the hardware.
-            Family::Touch => 255,
+            // The D80's PWM backlight: `max_brightness` is 248 in the
+            // stock kernel's platform data.
+            Family::Touch => 248,
         }
     }
 
@@ -306,7 +316,8 @@ impl Model {
         match self {
             Model::D40 | Model::D45 | Model::D50 | Model::D60 => 128,
             Model::D62 | Model::D65 | Model::D70 => 256,
-            // A guess, to be settled with the hardware.
+            // The D80: two 4 Gbit DDR3 packages on its board, and stock
+            // U-Boot reports `DRAM: 1 GB`.
             Model::D80 => 1024,
         }
     }
@@ -355,6 +366,9 @@ mod tests {
         assert_eq!(Model::D50.max_accounts(), 4);
         assert_eq!(Model::D65.audio_rate(), 32_000);
         assert!(Model::D45.gigabit() && !Model::D40.gigabit());
+        let d80 = Model::D80;
+        assert_eq!((d80.soc(), d80.ram_mib(), d80.audio_rate(), d80.backlight_max()), (Soc::Imx6DualLite, 1024, 16_000, 248));
+        assert!(d80.gigabit() && d80.bluetooth());
         for m in Model::ALL {
             assert_eq!(m.name().parse::<Model>().unwrap(), m);
         }

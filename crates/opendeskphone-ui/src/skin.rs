@@ -21,8 +21,9 @@
 //! Colors of the color skin are the stock values by measurement; the
 //! wallpaper and every bitmap are our own.
 //!
-//! The touch skin (D80: 800x1280, upright, about 216 pixels to the inch)
-//! is measured from nothing: the D80 has no keys for a label to sit
+//! The touch skin (D80: 800x1280, upright, about 216 pixels to the inch if
+//! its panel is 7 inches across, as is taken but not yet measured) is
+//! measured from nothing: the D80 has no keys for a label to sit
 //! beside.  It has the color skin's colors, fonts and icons of about twice
 //! the color skin's pixels (the same size to the eye), and everything
 //! that is touched is at least [`Theme::touch_min`] pixels each way.  Its
