@@ -379,7 +379,12 @@ fn contacts_groups() {
 }
 
 fn voicemail_pbx(r: &Rig) {
-    r.pbx.on("switchvox.users.voicemail.getList", |p| {
+    voicemail_pbx_of(&r.pbx);
+}
+
+/// A PBX with two messages in the inbox, and an empty folder "Old".
+fn voicemail_pbx_of(pbx: &opendeskphone_apps::testutil::FakePbx) {
+    pbx.on("switchvox.users.voicemail.getList", |p| {
         assert_eq!(p["sort_field"], "date");
         if p["folder"] != "INBOX" {
             return Ok(json!({"messages": {"folder": p["folder"], "message": []}}));
@@ -393,11 +398,11 @@ fn voicemail_pbx(r: &Rig) {
              "caller_id_name": "", "date": "1794500000", "duration": "9", "read": "1"}]}}),
         )
     });
-    r.pbx.on("switchvox.users.voicemail.getFolderList", |_| {
+    pbx.on("switchvox.users.voicemail.getFolderList", |_| {
         Ok(json!({"folders": {"folder": [{"name": "INBOX", "count": "2"}, {"name": "Old", "count": "0"}]}}))
     });
     for m in ["play", "markRead", "markUnread", "remove", "move"] {
-        r.pbx.on(&format!("switchvox.users.voicemail.{m}"), |_| {
+        pbx.on(&format!("switchvox.users.voicemail.{m}"), |_| {
             Ok(json!({"success": {}}))
         });
     }
@@ -936,44 +941,59 @@ fn parking_by_touch() {
     assert_eq!(r.ui.top(), None);
 }
 
-#[test]
-fn queues_by_touch() {
-    let mut r = touch_rig(FakeConfig::dasp());
-    r.pbx.on("switchvox.users.callQueues.getList", |_| {
+/// A PBX with two queues: "Sales", which the user is always in, and
+/// "Support", which the user is logged out of.
+fn queues_pbx_of(pbx: &opendeskphone_apps::testutil::FakePbx) {
+    pbx.on("switchvox.users.callQueues.getList", |_| {
         Ok(json!({"callQueues": {"callQueue": [
             {"name": "Sales", "account_id": "600", "loggedin_status": "permanent"},
             {"name": "Support", "account_id": "601", "loggedin_status": "logged_out"}]}}))
     });
-    r.pbx.on("switchvox.users.callQueues.login", |_| Ok(json!({"success": {}})));
-    r.pbx.on("switchvox.users.callQueues.getTodaysStatus", |_| {
+    pbx.on("switchvox.users.callQueues.login", |_| Ok(json!({"success": {}})));
+    pbx.on("switchvox.users.callQueues.getTodaysStatus", |_| {
         Ok(
             json!({"callQueue": {"overview": {"total_members": "4", "logged_in_count": "2",
             "members_on_call": "1", "callers_waiting": "3", "total_calls": "40",
             "completed_calls_today": "35", "abandoned_calls": "5"}}}),
         )
     });
+}
+
+#[test]
+fn queues_by_touch() {
+    let mut r = touch_rig(FakeConfig::dasp());
+    queues_pbx_of(&r.pbx);
     r.launch("queues");
     // The list has no softkeys: no queue is the highlighted one.
     assert_eq!(r.ui.softkeys("queues"), [] as [&str; 0]);
-    // Touching a queue shows its numbers, with the softkeys for it.
+    // Touching a queue opens its screen: where the user stands in it, its
+    // figures, and the buttons for it.
     tap_list_row(&mut r, "queues", 1);
-    assert!(r.ui.shows("queues", "Waiting: 3"));
+    assert!(r.ui.shows("queues", "You are logged out of this queue."));
+    assert!(r.ui.shows("queues", "Callers waiting") && r.ui.shows("queues", "2 of 4"));
     assert_eq!(
         r.pbx.last("switchvox.users.callQueues.getTodaysStatus").unwrap()["call_queue_account_id"],
         "601"
     );
-    assert_eq!(r.ui.softkeys("queues"), ["Log In", "Refresh"]);
-    r.softkey("queues", "Log In");
+    assert_eq!(r.ui.softkeys("queues"), [] as [&str; 0]);
+    assert_eq!(common::labels(&r, "queues"), ["Refresh", "Log in"]);
+    assert_eq!(common::button(&r, "queues", "Log in").fill, common::highlight());
+    common::press(&mut r, "queues", "Log in");
     assert_eq!(r.pbx.last("switchvox.users.callQueues.login").unwrap()["call_queue_account_id"], "601");
     assert_eq!(r.ui.items("queues").len(), 2, "the list again, as it now is");
-    // The first queue, which the user is always in: it can be paused, and
-    // the back button leaves the question for the queue's numbers.
+    // Touching a figure does nothing.
     tap_list_row(&mut r, "queues", 0);
-    assert_eq!(r.ui.softkeys("queues"), ["Pause", "Refresh"]);
-    r.softkey("queues", "Pause");
+    assert!(r.ui.shows("queues", "You are always in this queue."));
+    let asked = r.pbx.count("switchvox.users.callQueues.getTodaysStatus");
+    tap_list_row(&mut r, "queues", 1);
+    assert_eq!(r.pbx.count("switchvox.users.callQueues.getTodaysStatus"), asked);
+    // The first queue, which the user is always in: it can be paused, and
+    // the back button leaves the question for the queue's screen.
+    assert_eq!(common::labels(&r, "queues"), ["Refresh", "Pause"]);
+    common::press(&mut r, "queues", "Pause");
     assert_eq!(r.ui.softkeys("queues"), ["Pause"]);
     back(&mut r, "queues");
-    assert!(r.ui.shows("queues", "Waiting: 3"));
+    assert!(r.ui.shows("queues", "Callers waiting"));
     assert_eq!(
         r.pbx.last("switchvox.users.callQueues.getTodaysStatus").unwrap()["call_queue_account_id"],
         "600"
@@ -983,6 +1003,7 @@ fn queues_by_touch() {
     back(&mut r, "queues");
     assert_eq!(r.ui.top(), None);
 }
+
 
 #[test]
 fn hotdesking_by_touch() {
@@ -1059,27 +1080,60 @@ fn contacts_by_touch() {
     assert_eq!(r.ui.items("contacts")[0].0, "Internal Extensions");
 }
 
+/// A finger on the button labeled `label` in a list's scroll widget,
+/// which is under the title (the buttons are where they are in it).
+fn press_in_list(r: &mut Rig, app: &str, label: &str) {
+    let at = common::button(r, app, label).at;
+    r.ui.tap(app, at.x as i32 + at.width as i32 / 2, 96 + at.y as i32 + at.height as i32 / 2);
+    r.settle();
+}
+
+/// The PBX's playback call for the voicemail app rings, and is answered.
+fn playback_call(r: &mut Rig, id: u32) -> Call {
+    let mut call = Call::new(CallId(id), AccountId(0), Direction::Incoming, Party::default());
+    call.state = CallState::Ringing;
+    r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.push(call.clone()));
+    r.store.emit(Event::Push { name: "digium.incomingCall.voicemail".into(), body: String::new() });
+    r.settle();
+    call
+}
+
 #[test]
 fn voicemail_by_touch() {
     let mut r = touch_rig(FakeConfig::dasp());
     voicemail_pbx(&r);
     r.launch("voicemail");
-    // The list's softkeys are not for a message: none is highlighted.
+    // The list's softkeys are not for a message, and no row is open.  A
+    // new message has the voicemail icon instead of "* ".
     assert_eq!(r.ui.softkeys("voicemail"), ["Folders"]);
-    // Touching a message plays it, on its own screen: what `*`, `0`, and
-    // `#` do on the other phones are softkeys, and so is what else is done
-    // with the message.
+    assert_eq!(r.ui.items("voicemail")[0].0, "Alice");
+    assert!(common::labels(&r, "voicemail").is_empty());
+    // Touching a message opens its row, with Play, Call back (green), and
+    // Delete (red) under it; nothing plays yet.
     tap_list_row(&mut r, "voicemail", 0);
+    assert_eq!(common::labels(&r, "voicemail"), ["Play", "Call back", "Delete"]);
+    assert_eq!(common::button(&r, "voicemail", "Call back").fill, common::green());
+    assert_eq!(common::button(&r, "voicemail", "Delete").fill, common::red());
+    assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 0);
+    // Touched again, it closes.
+    tap_list_row(&mut r, "voicemail", 0);
+    assert!(common::labels(&r, "voicemail").is_empty());
+    tap_list_row(&mut r, "voicemail", 0);
+
+    // Play: the message's screen, with what `*`, `0`, and `#` do on the
+    // other phones as buttons while it plays.
+    press_in_list(&mut r, "voicemail", "Play");
     assert_eq!(r.pbx.last("switchvox.users.voicemail.play").unwrap()["message_id"], "msg0001");
     assert!(r.ui.shows("voicemail", "Connecting"));
-    assert_eq!(r.ui.softkeys("voicemail"), ["Rewind", "Pause", "Skip", "Delete", "Call Back", "Move"]);
-    let mut call = Call::new(CallId(9), AccountId(0), Direction::Incoming, Party::default());
-    call.state = CallState::Ringing;
-    r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.push(call.clone()));
-    r.store.emit(Event::Push { name: "digium.incomingCall.voicemail".into(), body: String::new() });
-    r.settle();
+    assert_eq!(
+        common::labels(&r, "voicemail"),
+        ["Rewind", "Pause", "Skip", "Call back", "Move", "Mark read", "Delete"]
+    );
+    assert_eq!(r.ui.softkeys("voicemail"), [] as [&str; 0]);
+    let mut call = playback_call(&mut r, 9);
+    assert!(r.ui.shows("voicemail", "Playing"));
     for (key, digit) in [("Rewind", '*'), ("Pause", '0'), ("Skip", '#')] {
-        r.softkey("voicemail", key);
+        common::press(&mut r, "voicemail", key);
         assert!(
             r.commands().iter().any(|c| matches!(c, Command::Dtmf { call, digit: d } if call.0 == 9 && *d == digit)),
             "{key}"
@@ -1093,56 +1147,71 @@ fn voicemail_by_touch() {
     r.settle();
     assert_eq!(r.pbx.last("switchvox.users.voicemail.markRead").unwrap()["message_ids"], json!(["msg0001"]));
     assert!(r.ui.shows("voicemail", "Alice") && !r.ui.shows("voicemail", "Connecting"));
-    assert_eq!(r.ui.softkeys("voicemail"), ["Play", "Delete", "Call Back", "Move", "Unread"]);
-    // It is played again, and the back button stops it: the list.
-    r.softkey("voicemail", "Play");
+    assert_eq!(common::labels(&r, "voicemail"), ["Play", "Call back", "Move", "Mark unread", "Delete"]);
+    // It is played again, and the back button stops it: the list, with
+    // the message's row still open.
+    common::press(&mut r, "voicemail", "Play");
     assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 2);
-    let mut call = Call::new(CallId(10), AccountId(0), Direction::Incoming, Party::default());
-    call.state = CallState::Ringing;
-    r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.push(call.clone()));
-    r.store.emit(Event::Push { name: "digium.incomingCall.voicemail".into(), body: String::new() });
-    r.settle();
+    playback_call(&mut r, 10);
     back(&mut r, "voicemail");
     assert!(r.commands().iter().any(|c| matches!(c, Command::Hangup { call } if call.0 == 10)));
-    assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
+    assert_eq!(common::labels(&r, "voicemail"), ["Play", "Call back", "Delete"], "back on the list");
 
-    // The other message: "Delete" stops it and asks; "No" leaves the
-    // message on its screen, and "Yes" deletes it.
+    // The other message, from its row: "Delete" asks, on a screen with
+    // "Cancel" and a red "Delete"; "Cancel" goes back to the list.
+    tap_list_row(&mut r, "voicemail", 0);
     tap_list_row(&mut r, "voicemail", 1);
-    assert_eq!(r.pbx.last("switchvox.users.voicemail.play").unwrap()["message_id"], "msg0000");
-    r.softkey("voicemail", "Delete");
+    press_in_list(&mut r, "voicemail", "Delete");
     assert!(r.ui.shows("voicemail", "Delete the message from 5551234?"));
-    r.softkey("voicemail", "No");
-    assert_eq!(r.ui.softkeys("voicemail"), ["Play", "Delete", "Call Back", "Move", "Unread"]);
-    // It is moved by touching a folder, which has no softkeys.
-    r.softkey("voicemail", "Move");
+    assert_eq!(common::labels(&r, "voicemail"), ["Cancel", "Delete"]);
+    assert_eq!(common::button(&r, "voicemail", "Delete").fill, common::red());
+    common::press(&mut r, "voicemail", "Cancel");
+    assert_eq!(common::labels(&r, "voicemail"), ["Play", "Call back", "Delete"], "back on the list");
+    assert_eq!(r.pbx.count("switchvox.users.voicemail.remove"), 0);
+    // From its screen, it is moved by touching a folder; the back button
+    // leaves the folders for the message.
+    press_in_list(&mut r, "voicemail", "Play");
+    common::press(&mut r, "voicemail", "Move");
     assert_eq!(r.ui.softkeys("voicemail"), [] as [&str; 0]);
     back(&mut r, "voicemail");
-    assert_eq!(r.ui.softkeys("voicemail"), ["Play", "Delete", "Call Back", "Move", "Unread"]);
-    r.softkey("voicemail", "Move");
+    assert!(common::labels(&r, "voicemail").contains(&"Move".to_string()));
+    common::press(&mut r, "voicemail", "Move");
     tap_list_row(&mut r, "voicemail", 1);
     let mv = r.pbx.last("switchvox.users.voicemail.move").unwrap();
     assert_eq!((mv["folder_to"].as_str(), &mv["message_ids"]), (Some("Old"), &json!(["msg0000"])));
-    assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
-    tap_list_row(&mut r, "voicemail", 1);
-    r.softkey("voicemail", "Delete");
-    r.softkey("voicemail", "Yes");
+    // Back on the list, its row is still open.  Deleted from its screen;
+    // "Cancel" there goes back to the message.
+    press_in_list(&mut r, "voicemail", "Play");
+    common::press(&mut r, "voicemail", "Delete");
+    common::press(&mut r, "voicemail", "Cancel");
+    assert!(common::labels(&r, "voicemail").contains(&"Mark unread".to_string()), "back on the message");
+    common::press(&mut r, "voicemail", "Delete");
+    common::press(&mut r, "voicemail", "Delete");
     assert_eq!(r.pbx.last("switchvox.users.voicemail.remove").unwrap()["message_ids"], json!(["msg0000"]));
-    // From a message's screen, the back button goes to the list.
-    tap_list_row(&mut r, "voicemail", 1);
-    r.softkey("voicemail", "Delete");
-    r.softkey("voicemail", "No");
-    back(&mut r, "voicemail");
-    assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
 
-    // A folder is opened by touching it.
+    // A folder is opened by touching it; an empty one says so.
     r.softkey("voicemail", "Folders");
     assert_eq!(r.ui.softkeys("voicemail"), [] as [&str; 0]);
     tap_list_row(&mut r, "voicemail", 1);
-    assert!(r.ui.shows("voicemail", "No messages."));
+    assert!(r.ui.shows("voicemail", "There are no messages in Old."));
     assert_eq!(r.ui.softkeys("voicemail"), ["Folders", "Refresh"]);
     assert_eq!(r.pbx.last("switchvox.users.voicemail.getList").unwrap()["folder"], "Old");
 }
+
+#[test]
+fn voicemail_without_an_application_account_offers_to_call_voicemail_on_the_touchscreen() {
+    let mut r = touch_rig(FakeConfig::default());
+    r.launch("voicemail");
+    // No error and no "Retry": what there is instead.
+    assert!(r.ui.shows("voicemail", "Call voicemail to listen to them."), "{:?}", r.ui.texts("voicemail"));
+    assert_eq!(r.pbx.requests().len(), 0, "the PBX is not asked");
+    assert_eq!(common::labels(&r, "voicemail"), ["Call voicemail"]);
+    assert_eq!(common::button(&r, "voicemail", "Call voicemail").fill, common::green());
+    common::press(&mut r, "voicemail", "Call voicemail");
+    assert!(r.commands().iter().any(|c| matches!(c, Command::DialVoicemail { account: None })));
+    assert_eq!(r.ui.top(), None);
+}
+
 
 #[test]
 fn a_playing_message_has_one_softkey_on_a_phone_with_keys() {
@@ -1163,6 +1232,7 @@ struct TouchPhone {
     sim: opendeskphone_hal::sim::SimHandle,
     mgr: opendeskphone_apps::AppManager,
     commands: std::sync::Arc<std::sync::Mutex<Vec<Command>>>,
+    pbx: opendeskphone_apps::testutil::FakePbx,
     _dir: common::TempDir,
 }
 
@@ -1188,14 +1258,16 @@ impl TouchPhone {
         });
         let commands = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         common::answer_commands(&store, Domain::Provisioning, commands.clone(), |_| Ok(Reply::Done));
+        common::answer_commands(&store, Domain::Calls, commands.clone(), |_| Ok(Reply::Done));
         let shell = opendeskphone_apps::uishell::UiShell::new(ui.handle(), model);
         let mut cfg = opendeskphone_apps::ManagerConfig::rooted(common::staged(), &dir.0.join("nvdata"));
         cfg.target = opendeskphone_apps::engine::Target::Pulley64;
-        let services = services_with_store(&FakePbx::default(), fake, &FakeStore::default());
+        let pbx = FakePbx::default();
+        let services = services_with_store(&pbx, fake, &FakeStore::default());
         let mut mgr =
             opendeskphone_apps::AppManager::new(cfg, store.clone(), Box::new(shell), services).expect("engine");
         mgr.scan();
-        let mut phone = TouchPhone { ui, sim, mgr, commands, _dir: dir };
+        let mut phone = TouchPhone { ui, sim, mgr, commands, pbx, _dir: dir };
         phone.settle();
         phone
     }
@@ -1333,4 +1405,70 @@ fn the_calendar_on_the_touchscreen_in_a_picture() {
     p.settle();
     p.shot("calendar-next");
     assert!(p.has(opendeskphone_ui::Hit::Key(Key::Soft(1))), "the Today button");
+}
+
+impl TouchPhone {
+    /// A finger touches (`x`, `y`) of the screen.
+    fn tap(&mut self, x: u16, y: u16) {
+        self.sim.touch_tap(x, y);
+        self.settle();
+    }
+}
+
+#[test]
+fn the_voicemail_screens_on_the_touchscreen_in_pictures() {
+    let mut p = TouchPhone::new();
+    voicemail_pbx_of(&p.pbx);
+    p.mgr.launch("voicemail").unwrap();
+    p.settle();
+    assert_eq!(p.ui.screen_name(), "app:voicemail");
+    p.shot("voicemail-1-list");
+    // The first message's row, opened: Play, Call back, and Delete under
+    // it (from 96 + 96 + 8, 96 high).
+    p.tap(400, 96 + 48);
+    p.shot("voicemail-2-row-open");
+    // Play: the message's screen, while the PBX calls back to play it.
+    p.tap(16 + 120, 200 + 48);
+    p.shot("voicemail-3-playing");
+    assert!(p.pbx.count("switchvox.users.voicemail.play") == 1);
+    // "Move" (the third row of buttons, at the left), and back: the
+    // message's screen when it is not playing.
+    p.tap(200, 572 + 48);
+    p.tap(48, 48);
+    p.shot("voicemail-4-message");
+    // "Delete", across the bottom: the question.
+    p.tap(400, 1048 + 48);
+    p.shot("voicemail-5-delete");
+    let c = p.ui.canvas();
+    assert_ne!(c.pixel(600, 1048 + 10), c.pixel(200, 1048 + 10), "Cancel and Delete look unlike");
+}
+
+#[test]
+fn voicemail_without_an_application_account_in_a_picture() {
+    let mut p = TouchPhone::with(FakeConfig::default());
+    p.mgr.launch("voicemail").unwrap();
+    p.settle();
+    p.shot("voicemail-no-account");
+    p.tap(400, 1048 + 48);
+    assert!(p.commands.lock().unwrap().iter().any(|c| matches!(c, Command::DialVoicemail { account: None })));
+    assert_ne!(p.ui.screen_name(), "app:voicemail", "the app gives the screen to the call");
+}
+
+#[test]
+fn a_queue_s_screen_on_the_touchscreen_in_pictures() {
+    let mut p = TouchPhone::new();
+    queues_pbx_of(&p.pbx);
+    p.mgr.launch("queues").unwrap();
+    p.settle();
+    assert_eq!(p.ui.screen_name(), "app:queues");
+    p.shot("queues-1-list");
+    // "Support", which the user is logged out of; and "Sales", which the
+    // user is always in.
+    p.tap(400, 96 + 96 + 48);
+    p.shot("queues-2-logged-out");
+    p.tap(48, 48);
+    p.tap(400, 96 + 48);
+    p.shot("queues-3-always");
+    let c = p.ui.canvas();
+    assert_ne!(c.pixel(200, 1048 + 10), c.pixel(200, 1000), "the buttons across the bottom");
 }

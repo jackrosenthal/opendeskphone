@@ -191,6 +191,18 @@ impl Button {
         }
     }
 
+    /// Moves the button to `bounds` (of the widget it is in).
+    pub fn place(&mut self, bounds: Rect) {
+        ui::set_bounds(self.widget, bounds);
+        if let Some(icon) = self.icon {
+            ui::set_bounds(icon, bounds);
+        }
+        if (bounds.width, bounds.height) != (self.width, self.height) {
+            (self.width, self.height) = (bounds.width, bounds.height);
+            self.draw();
+        }
+    }
+
     /// What a finger did on `w`: `true` when it touched this button.
     pub fn touched(&mut self, w: Widget, t: &Touch) -> bool {
         if w != self.widget {
@@ -216,8 +228,18 @@ impl Button {
                 None if canvas::text_size(Font::Bold, &self.label).width > inner => Font::Small,
                 None => Font::Bold,
             };
+            // A text is put in the middle of its box by what its glyphs
+            // paint: one that goes below the line ("Play") is put lower by
+            // half of that, so that the labels of buttons side by side
+            // stand on one line.
+            let below = if self.label.contains(['g', 'j', 'p', 'q', 'y', ',', ';']) {
+                let tall = canvas::text_size(font, "Hd").height;
+                canvas::text_size(font, &self.label).height.saturating_sub(tall) / 2
+            } else {
+                0
+            };
             ops.push(Op::Text(Text {
-                box_: Rect::new(GAP as i16, 0, inner, self.height),
+                box_: Rect::new(GAP as i16, below as i16, inner, self.height),
                 font,
                 color: ink,
                 text: self.label.clone(),
