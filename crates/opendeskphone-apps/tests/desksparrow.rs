@@ -1085,6 +1085,10 @@ fn drawn_on_the_touchscreen() {
     let model = Model::D80;
     let m = measures(model);
     let mut p = Phone::new(model);
+    // Pipes that are the same every time, for pictures that are.
+    let data = p._dir.0.join("nvdata").join("appdata").join(APP);
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(data.join("seed"), "2").unwrap();
     p.mgr.launch(APP).unwrap();
     p.settle();
     assert_eq!(p.ui.screen_name(), "app:desksparrow");
@@ -1133,6 +1137,8 @@ fn drawn_on_the_touchscreen() {
         ahead_before = ahead;
         if !shot && score == 1 && ahead.is_some_and(|x| x <= m.bird_x + m.bird_w / 2) {
             p.shot("2-flying");
+            // (In flight: where the game ends, the plate may hide it.)
+            assert!(p.count(0xBC_864E) > 400, "a brown sparrow, twice the size");
             shot = true;
         }
     }
@@ -1143,7 +1149,6 @@ fn drawn_on_the_touchscreen() {
     p.settle();
     p.shot("3-game-over");
     assert!(p.cut().is_empty(), "{:?}", p.cut());
-    assert!(p.count(0xBC_864E) > 400, "a brown sparrow, twice the size");
 
     // The back button leaves the game: the app has stopped.
     touch(&mut p, 48, 48);
