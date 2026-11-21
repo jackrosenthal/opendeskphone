@@ -1240,6 +1240,15 @@ impl Ui {
             self.touched = self.main.hit_at(x, y);
         }
         let gesture = self.finger.touch(phase, x, y, self.now().0);
+        // The top screen hears of a finger that came down on a region of
+        // its own, before the gesture the touch becomes.
+        if phase == TouchPhase::Down
+            && !self.touch_wakes
+            && self.nav.kind != BaseKind::Update
+            && let Some(hit @ (Hit::Row { .. } | Hit::Custom(_))) = self.touched
+        {
+            self.with_cx(|nav, cx| nav.top().touch_down(cx, hit, x, y));
+        }
         if let Some(g) = gesture {
             self.gesture(g, source);
         }

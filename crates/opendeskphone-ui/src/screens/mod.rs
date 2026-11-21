@@ -111,6 +111,11 @@ pub(crate) trait Screen: Send {
     fn tap(&mut self, _cx: &Cx, _hit: Hit, _x: i32, _y: i32) -> Nav {
         Nav::Ignored
     }
+    /// Touch: a finger came down on a [`Hit::Custom`] or [`Hit::Row`]
+    /// region, at pixel (`x`, `y`) of the screen.  What the touch becomes
+    /// (a tap, a long press, or a drag) comes afterward, as ever; this
+    /// is for what cannot wait for the finger to be lifted.
+    fn touch_down(&mut self, _cx: &Cx, _hit: Hit, _x: i32, _y: i32) {}
     /// Touch: a finger stayed on a [`Hit::Custom`] or [`Hit::Row`] region.
     /// [`Nav::Ignored`] makes it a tap.
     fn long_press(&mut self, _cx: &Cx, _hit: Hit, _x: i32, _y: i32) -> Nav {

@@ -354,6 +354,7 @@ ui::claim_touch(board, true);
 
 // In `handle`:
 Event::Touch((w, Touch::Tap(at))) if w == board => self.tap(at.x, at.y),
+// (A game that reacts when the finger lands matches `Touch::Down(at)`.)
 Event::Touch((w, Touch::DragEnd((from, to)))) if w == board => {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     if dx.abs() > dy.abs() {

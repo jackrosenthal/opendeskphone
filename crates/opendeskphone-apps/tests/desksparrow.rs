@@ -1019,9 +1019,15 @@ fn it_is_played_by_touch_where_there_are_no_keys() {
     r.settle();
     assert_eq!(r.ui.texts(APP), TOUCH_START);
 
-    // A touch anywhere else starts a game with a flap; the sparrow is as
-    // large as a finger, in the middle of the high field.
-    r.ui.tap(APP, 700, 1200);
+    // A finger that slides off the button does nothing.
+    r.ui.drag(APP, on_button, (on_button.0, on_button.1 + 400));
+    r.settle();
+    assert_eq!(r.ui.texts(APP), TOUCH_START);
+
+    // A finger that comes down anywhere else starts a game with a flap,
+    // before it is lifted; the sparrow is as large as a finger, in the
+    // middle of the high field.
+    r.ui.finger_down(APP, 700, 1200);
     r.settle();
     assert!(r.ui.texts(APP).is_empty());
     let ops = drawing(&r);
@@ -1029,8 +1035,9 @@ fn it_is_played_by_touch_where_there_are_no_keys() {
     let y0 = bird_y(&ops);
     assert_eq!(y0, (m.field_h - m.bird_h) / 2);
     assert!(r.mgr.pump().expect("the game's timer") <= Duration::from_millis(m.tick_ms));
-    // It rises, and falls; a touch where the button was is a flap now,
-    // and so is a finger that slips as it touches, once.
+    // It rises, and falls; a finger that comes down where the button was
+    // flaps now, and lifting it does nothing more; so does a finger that
+    // slips as it touches, once.
     let rises = |r: &mut Rig| {
         for _ in 0..12 {
             next_tick(r);
@@ -1042,11 +1049,16 @@ fn it_is_played_by_touch_where_there_are_no_keys() {
         bird_y(&drawing(r))
     };
     let falling = rises(&mut r);
-    r.ui.tap(APP, on_button.0, on_button.1);
+    r.ui.finger_down(APP, on_button.0, on_button.1);
     r.settle();
     next_tick(&mut r);
     assert!(bird_y(&drawing(&r)) < falling, "a flap");
     assert!(r.ui.texts(APP).is_empty(), "no leaderboard in a game");
+    let falling = rises(&mut r);
+    r.ui.tap(APP, on_button.0, on_button.1);
+    r.settle();
+    next_tick(&mut r);
+    assert!(bird_y(&drawing(&r)) < falling, "a flap");
     let falling = rises(&mut r);
     r.ui.drag(APP, (400, 600), (430, 640));
     r.settle();

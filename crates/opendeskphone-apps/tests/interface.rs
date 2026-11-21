@@ -431,7 +431,8 @@ fn a_touch_comes_to_the_widget_that_takes_touches() {
     assert_eq!(
         seen(&r),
         format!(
-            "tap {canvas} 10,20; drag {canvas} 50,50 350,-50; end {canvas} 50,50 350,-50; \
+            "down {canvas} 10,20; tap {canvas} 10,20; \
+             down {canvas} 50,50; drag {canvas} 50,50 350,-50; end {canvas} 50,50 350,-50; \
              highlighted {list} 1; activated {list} 1"
         )
     );
@@ -445,5 +446,5 @@ fn a_touch_comes_to_the_widget_that_takes_touches() {
     r.ui.tap("checks", 50, 220);
     r.ui.tap("checks", 399, 499);
     r.settle();
-    assert_eq!(seen(&r), format!("tap 0 50,220; tap {canvas} 299,299"));
+    assert_eq!(seen(&r), format!("down 0 50,220; tap 0 50,220; down {canvas} 299,299; tap {canvas} 299,299"));
 }

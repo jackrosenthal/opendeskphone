@@ -150,6 +150,12 @@ impl Screen for AppScreen {
         }
         Nav::Stay
     }
+    fn touch_down(&mut self, _cx: &Cx, hit: Hit, x: i32, y: i32) {
+        // (Not on the keyboard, or on the button that puts it away.)
+        if hit != Hit::Custom(KEYBOARD_AWAY) && !Keyboard::owns(hit) {
+            appview_impl::down(&self.view, x - self.area.x, y - self.area.y);
+        }
+    }
     fn drag_at(&mut self, _cx: &Cx, from: Option<Hit>, x: i32, y: i32, dx: i32, dy: i32) -> Nav {
         // A finger that slides on the keyboard types nothing and moves
         // nothing.

@@ -352,6 +352,7 @@ impl AppWindow for UiWindow {
                 AppEvent::Touch { widget, touch } => WindowEvent::Touch {
                     widget: widget.map_or(0, |w| w.0),
                     touch: match touch {
+                        tk::Touch::Down { x, y } => Touch::Down(point(x, y)),
                         tk::Touch::Tap { x, y } => Touch::Tap(point(x, y)),
                         tk::Touch::Drag { x0, y0, x, y } => Touch::Drag((point(x0, y0), point(x, y))),
                         tk::Touch::DragEnd { x0, y0, x, y } => Touch::DragEnd((point(x0, y0), point(x, y))),

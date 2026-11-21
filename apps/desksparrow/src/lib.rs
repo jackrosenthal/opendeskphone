@@ -7,9 +7,10 @@
 //! The game has the whole display: there are no softkeys.  Cancel, which
 //! the app leaves to the phone, closes it, as does line key 1.
 //!
-//! The touchscreen has no keys: a touch anywhere starts a game and flaps
-//! (the phone's back button, in the corner, leaves), and between games a
-//! button under the plate shows the leaderboard and takes it away.
+//! The touchscreen has no keys: a finger that comes down anywhere starts
+//! a game and flaps, at once and not when it is lifted (the phone's back
+//! button, in the corner, leaves), and between games a button under the
+//! plate, tapped, shows the leaderboard and takes it away.
 //!
 //! The leaderboard is the best scores of the PBX's users, each with the
 //! date and time it was set, the same on every phone: Down or Up shows it
@@ -756,8 +757,8 @@ struct Sparrow {
     waiting: Vec<Row>,
     /// The request to the PBX's store that is under way.
     asked: Option<u32>,
-    /// A finger is being dragged: its touch has been taken.
-    dragging: bool,
+    /// The finger that is down came down on the leaderboard's button.
+    on_button: bool,
 }
 
 impl Default for Sparrow {
@@ -774,7 +775,7 @@ impl Default for Sparrow {
             version: 0,
             waiting: Vec::new(),
             asked: None,
-            dragging: false,
+            on_button: false,
         }
     }
 }
@@ -858,19 +859,26 @@ impl Sparrow {
     }
 
     /// A finger came down at a place of the display (the touchscreen):
-    /// on the leaderboard's button between games, the button; anywhere
-    /// else, what a key of the keypad is.
-    fn touched(&mut self, at: Point) {
+    /// anywhere but on the leaderboard's button between games, it is
+    /// what a key of the keypad is.
+    fn finger_down(&mut self, at: Point) {
         let viewing = self.viewing && self.state != State::Flying;
         let button = self.screen.as_ref().and_then(|s| s.button_rect(viewing));
-        let on_button = button.is_some_and(|b| {
-            let (x, y) = (i32::from(at.x) - i32::from(b.x), i32::from(at.y) - i32::from(b.y));
-            x >= 0 && y >= 0 && x < i32::from(b.width) && y < i32::from(b.height)
-        });
-        if on_button && self.state != State::Flying {
-            self.turn();
-        } else {
+        self.on_button = self.state != State::Flying
+            && button.is_some_and(|b| {
+                let (x, y) = (i32::from(at.x) - i32::from(b.x), i32::from(at.y) - i32::from(b.y));
+                x >= 0 && y >= 0 && x < i32::from(b.width) && y < i32::from(b.height)
+            });
+        if !self.on_button {
             self.play();
+        }
+    }
+
+    /// The finger tapped: the leaderboard's button, if it came down on
+    /// it.  (A finger that slides off the button does nothing.)
+    fn tapped(&mut self) {
+        if std::mem::take(&mut self.on_button) && self.state != State::Flying {
+            self.turn();
         }
     }
 
@@ -1051,15 +1059,10 @@ impl App for Sparrow {
             Event::Timer(id) if self.timer == Some(id) => self.tick(),
             Event::Key(k) if PLAY_KEYS.contains(&k) => self.play(),
             Event::Key(k) if BOARD_KEYS.contains(&k) => self.turn(),
-            Event::Touch((_, Touch::Tap(at))) => self.touched(at),
-            // A finger that slips as it touches flaps all the same, once.
-            Event::Touch((_, Touch::Drag((from, _)))) => {
-                if !self.dragging {
-                    self.dragging = true;
-                    self.touched(from);
-                }
-            }
-            Event::Touch((_, Touch::DragEnd(_))) => self.dragging = false,
+            // The flap is the finger coming down: a game cannot wait for
+            // it to be lifted.
+            Event::Touch((_, Touch::Down(at))) => self.finger_down(at),
+            Event::Touch((_, Touch::Tap(_))) => self.tapped(),
             Event::Storage((id, outcome)) if self.asked == Some(id) => {
                 self.asked = None;
                 self.answered(outcome);

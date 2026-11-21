@@ -153,9 +153,12 @@ The widgets work by touch without the app's help.  Touching a row of a list high
 
 What is left to the app is what it did with a key that has no softkey: the keys an app claims with `ui::claim_keys` never come where there are no keys (`cancel` apart).  There, a widget takes touches instead: after `ui::claim_touch(widget, true)`, what a finger does on the widget (`ROOT`: on the window, where no widget takes it) comes as `Event::Touch((widget, touch))`, with places counted in pixels from the widget's top-left corner:
 
-- `Touch::Tap(at)`: the finger came down and went up again at `at`.
+- `Touch::Down(at)`: the finger came down at `at`.  The first event of every touch, when the finger lands: for a game's flap or jump, which cannot wait for the finger to be lifted.
+- `Touch::Tap(at)`: the finger went up again at `at`, where it came down (after `Down`).
 - `Touch::Drag((from, to))`: the finger came down at `from` and is now at `to`; for every movement.
 - `Touch::DragEnd((from, to))`: the finger was lifted at `to`.
+
+A tap is `Down`, then `Tap`; a drag is `Down`, then `Drag`s, then `DragEnd`.
 
 ```rust,ignore
 fn show(&mut self) {

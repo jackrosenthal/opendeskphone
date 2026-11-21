@@ -548,17 +548,28 @@ fn a_widget_that_takes_touches_gets_them_with_its_own_places() {
     r.view.set_touch_claim(Some(canvas), true);
     r.ui.pump();
 
-    r.tap(80 + 10, 240 + 20);
+    // A tap: the finger coming down, when it does, and then the tap.
+    r.sim.touch(opendeskphone_state::TouchPhase::Down, 80 + 10, 240 + 20);
+    r.ui.pump();
+    assert_eq!(r.events(), [AppEvent::Touch { widget: Some(canvas), touch: Touch::Down { x: 10, y: 20 } }]);
+    r.sim.touch(opendeskphone_state::TouchPhase::Up, 80 + 10, 240 + 20);
+    r.ui.pump();
     assert_eq!(r.events(), [AppEvent::Touch { widget: Some(canvas), touch: Touch::Tap { x: 10, y: 20 } }]);
     r.tap(80 + 399, 240 + 299);
-    assert_eq!(r.events(), [AppEvent::Touch { widget: Some(canvas), touch: Touch::Tap { x: 399, y: 299 } }]);
+    assert_eq!(
+        r.events(),
+        [
+            AppEvent::Touch { widget: Some(canvas), touch: Touch::Down { x: 399, y: 299 } },
+            AppEvent::Touch { widget: Some(canvas), touch: Touch::Tap { x: 399, y: 299 } },
+        ]
+    );
     // Beside it, nothing takes the touch.
     r.tap(80 + 400, 240 + 20);
     r.tap(80 + 10, 240 - 1);
     assert_eq!(r.events(), []);
 
-    // A drag: every movement, from where the finger came down, and the
-    // end; the finger may leave the widget.
+    // A drag: the finger coming down, every movement, from where it came
+    // down, and the end; the finger may leave the widget.
     r.drag((80 + 100, 240 + 100), (80 + 500, 240 - 60));
     let events = r.events();
     let drags: Vec<(i16, i16)> = events
@@ -573,7 +584,8 @@ fn a_widget_that_takes_touches_gets_them_with_its_own_places() {
         events.last(),
         Some(&AppEvent::Touch { widget: Some(canvas), touch: Touch::DragEnd { x0: 100, y0: 100, x: 500, y: -60 } })
     );
-    assert_eq!(events.len(), 5);
+    assert_eq!(events.first(), Some(&AppEvent::Touch { widget: Some(canvas), touch: Touch::Down { x: 100, y: 100 } }));
+    assert_eq!(events.len(), 6);
     // The next drag is a new one.
     r.drag((80 + 5, 240 + 5), (80 + 105, 240 + 5));
     assert_eq!(r.events().last(), Some(&AppEvent::Touch { widget: Some(canvas), touch: Touch::DragEnd { x0: 5, y0: 5, x: 105, y: 5 } }));
@@ -590,8 +602,11 @@ fn a_widget_that_takes_touches_gets_them_with_its_own_places() {
     assert_eq!(
         r.events(),
         [
+            AppEvent::Touch { widget: None, touch: Touch::Down { x: 300, y: 150 } },
             AppEvent::Touch { widget: None, touch: Touch::Tap { x: 300, y: 150 } },
+            AppEvent::Touch { widget: Some(canvas), touch: Touch::Down { x: 1, y: 1 } },
             AppEvent::Touch { widget: Some(canvas), touch: Touch::Tap { x: 1, y: 1 } },
+            // (A list hears nothing of a finger until it has tapped.)
             AppEvent::Focused { widget: list },
             AppEvent::ListActivated { widget: list, row: 0 },
         ]
@@ -606,7 +621,9 @@ fn a_widget_that_takes_touches_gets_them_with_its_own_places() {
     assert_eq!(
         r.events(),
         [
+            AppEvent::Touch { widget: Some(list), touch: Touch::Down { x: 300, y: 10 } },
             AppEvent::Touch { widget: Some(list), touch: Touch::Tap { x: 300, y: 10 } },
+            AppEvent::Touch { widget: None, touch: Touch::Down { x: 81, y: 241 } },
             AppEvent::Touch { widget: None, touch: Touch::Tap { x: 81, y: 241 } },
         ]
     );
@@ -624,7 +641,13 @@ fn a_drag_ends_when_the_view_leaves_the_screen() {
     r.sim.touch(opendeskphone_state::TouchPhase::Down, 100, 300);
     r.sim.touch(opendeskphone_state::TouchPhase::Move, 100, 400);
     r.ui.pump();
-    assert_eq!(r.events(), [AppEvent::Touch { widget: None, touch: Touch::Drag { x0: 100, y0: 300, x: 100, y: 400 } }]);
+    assert_eq!(
+        r.events(),
+        [
+            AppEvent::Touch { widget: None, touch: Touch::Down { x: 100, y: 300 } },
+            AppEvent::Touch { widget: None, touch: Touch::Drag { x0: 100, y0: 300, x: 100, y: 400 } },
+        ]
+    );
     r.ui.handle().close_app("demo");
     r.ui.pump();
     assert_eq!(
