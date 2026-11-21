@@ -43,7 +43,7 @@ use crate::mainrole::subsystems::{
     liveness::CrashlogCommand,
     net::NetCommand,
     paging::PageCommand,
-    remote::{AppCommand, CallCommand, HookCommand, KeyCommand, ScreenshotCommand},
+    remote::{AppCommand, CallCommand, HookCommand, KeyCommand, ScreenshotCommand, TouchCommand},
 };
 
 /// What the binary was called as: `dphone`, or the name of one of the
@@ -120,6 +120,7 @@ pub enum Remote {
     Restart(RestartCommand),
     Screenshot(ScreenshotCommand),
     State(StateCommand),
+    Touch(TouchCommand),
     Version(VersionCommand),
 }
 
@@ -351,6 +352,7 @@ mod tests {
             RestartCommand::command(),
             ScreenshotCommand::command(),
             StateCommand::command(),
+            TouchCommand::command(),
             VersionCommand::command(),
         ];
         let own_names: Vec<&str> = own.iter().map(|c| c.get_name()).collect();
@@ -358,7 +360,7 @@ mod tests {
     }
 
     /// The keys and lamps of the main role's commands are named as the
-    /// phone names them.
+    /// phone names them, and a touch is a place.
     #[test]
     fn keys_and_lamps_by_name() {
         let ok = |words: &[&str]| {
@@ -374,6 +376,12 @@ mod tests {
         ok(&["key", "1", "2", "3", "sk1", "#", "*"]);
         ok(&["key", "line6", "vup"]);
         bad(&["key", "1", "nope"]);
+        ok(&["touch", "400", "640"]);
+        ok(&["touch", "400", "1000", "--to", "400", "300", "--steps", "4"]);
+        bad(&["touch", "400"]);
+        bad(&["touch", "-1", "5"]);
+        bad(&["touch", "1", "2", "--to", "3"]);
+        bad(&["touch", "1", "2", "--to", "3", "4", "--steps", "0"]);
         ok(&["hal", "lamp", "line3", "green"]);
         ok(&["hal", "lamp", "all", "off"]);
         bad(&["hal", "lamp", "line0", "green"]);

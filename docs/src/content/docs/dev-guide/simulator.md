@@ -14,9 +14,11 @@ cargo run -p opendeskphone -- main --sim --model d60 --nvdata /tmp/opendeskphone
 
 `--nvdata` names the directory that serves as nvdata.  `--model` accepts any of the seven models, and `d80`, whose touchscreen user interface is under development (the simulator is the only place it runs); the default is `d60`.  The main role logs to the terminal.
 
+The D80 has no keys: operate it by touch, either on the web interface's **Screen** page, where a click on the mirrored screen is a tap and a drag is a finger's drag, or with `dphone touch` (see below).  The Screen page draws the D80 schematically, since no references for its look have been gathered yet.
+
 | Interface | Details |
 | --- | --- |
-| Web interface | `http://127.0.0.1:8080/`, or the port given by `--web-port`.  A new nvdata directory has the default login: user `admin`, password `789`.  The **Screen** page mirrors the simulated display and takes key presses. |
+| Web interface | `http://127.0.0.1:8080/`, or the port given by `--web-port`.  A new nvdata directory has the default login: user `admin`, password `789`.  The **Screen** page mirrors the simulated display and takes key presses, or on the D80, touches. |
 | SIP | Binds port 5060 on the workstation.  As with an empty nvdata on a phone, the simulator starts at the menu that asks for a server.  Provision the simulator from a DPMA server, or add SIP accounts in the web interface. |
 | SSH | Only with `--ssh-listen <address>`, e.g., `--ssh-listen 127.0.0.1:2222`, and only while the [SSH setting](ssh-and-serial-console.md#ssh) is on. |
 | Apps | The built-in apps are missing unless `--apps-root` (or the environment variable `DPHONE_APPS_ROOT`) names a directory of staged apps.  For staging, see `crates/opendeskphone-apps/README.md`.  `--ringtones` and `--alarm-tones` (`DPHONE_RINGTONES`, `DPHONE_ALARM_TONES`) name the tones, e.g., `assets/ringtones` and `assets/alarm-tones`. |
@@ -29,6 +31,7 @@ Commands that the main role answers reach the simulator through a socket in the 
 export DPHONE_DIAG_SOCKET=/tmp/opendeskphone-sim/.run/diag.sock
 cargo run -q -p opendeskphone -- ping
 cargo run -q -p opendeskphone -- key 1 2 3
+cargo run -q -p opendeskphone -- touch 400 640   # the D80
 cargo run -q -p opendeskphone -- screenshot /tmp/screen.ppm
 cargo run -q -p opendeskphone -- log -f
 ```
@@ -47,7 +50,7 @@ An example program in `crates/opendeskphone-web` runs the web server on a state 
 cargo run -p opendeskphone-web --example sim -- --model d60 --port 8480
 ```
 
-The interface is at `http://127.0.0.1:8480/`; the login is `admin`, password `789`.
+The interface is at `http://127.0.0.1:8480/`; the login is `admin`, password `789`.  The example's display shows the keys that are pressed, not the phone's user interface; with `--model d80`, it marks where the screen is touched with a cross.
 
 For live reload, run the Vite development server, which proxies API requests to the example program on port 8480:
 
