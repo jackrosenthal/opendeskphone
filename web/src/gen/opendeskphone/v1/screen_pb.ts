@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file opendeskphone/v1/screen.proto.
  */
 export const file_opendeskphone_v1_screen: GenFile = /*@__PURE__*/
-  fileDesc("Ch1vcGVuZGVza3Bob25lL3YxL3NjcmVlbi5wcm90bxIQb3BlbmRlc2twaG9uZS52MSJiCgpTY3JlZW5JbmZvEiYKAmlkGAEgASgOMhoub3BlbmRlc2twaG9uZS52MS5TY3JlZW5JZBINCgV3aWR0aBgCIAEoDRIOCgZoZWlnaHQYAyABKA0SDQoFY29sb3IYBCABKAgiggEKBExhbXASIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKgoFY29sb3IYAiABKA4yGy5vcGVuZGVza3Bob25lLnYxLkxhbXBDb2xvchIqCgVibGluaxgDIAEoDjIbLm9wZW5kZXNrcGhvbmUudjEuTGFtcEJsaW5rIoEFCgNLZXkSKAoEa2luZBgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuS2V5LktpbmQSDQoFaW5kZXgYAiABKA0SDgoGbW9kdWxlGAMgASgNIrAECgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIOCgpLSU5EX0RJR0lUEAESDQoJS0lORF9TVEFSEAISDgoKS0lORF9QT1VORBADEgsKB0tJTkRfVVAQBBINCglLSU5EX0RPV04QBRINCglLSU5EX0xFRlQQBhIOCgpLSU5EX1JJR0hUEAcSDwoLS0lORF9TRUxFQ1QQCBIPCgtLSU5EX0NBTkNFTBAJEhIKDktJTkRfVk9MVU1FX1VQEAoSFAoQS0lORF9WT0xVTUVfRE9XThALEg0KCUtJTkRfU09GVBAMEg0KCUtJTkRfTElORRANEgwKCEtJTkRfQkxGEA4SDQoJS0lORF9NVVRFEA8SEAoMS0lORF9TUEVBS0VSEBASEAoMS0lORF9IRUFEU0VUEBESDQoJS0lORF9IT0xEEBISEQoNS0lORF9UUkFOU0ZFUhATEg8KC0tJTkRfUkVESUFMEBQSEQoNS0lORF9NRVNTQUdFUxAVEhMKD0tJTkRfQ09ORkVSRU5DRRAWEg0KCUtJTkRfSU5GTxAXEhYKEktJTkRfQkxGX1BBR0VfTEVGVBAYEhcKE0tJTkRfQkxGX1BBR0VfUklHSFQQGRIPCgtLSU5EX1NUQVRVUxAaEhEKDUtJTkRfQ09OVEFDVFMQGxINCglLSU5EX0FQUFMQHBINCglLSU5EX01FTlUQHRISCg5LSU5EX0VYUEFOU0lPThAeEgwKCEtJTkRfUkFXEB8iGAoWR2V0U2NyZWVuTGF5b3V0UmVxdWVzdCLxAQoXR2V0U2NyZWVuTGF5b3V0UmVzcG9uc2USJgoFbW9kZWwYASABKA4yFy5vcGVuZGVza3Bob25lLnYxLk1vZGVsEiQKBHNraW4YAiABKA4yFi5vcGVuZGVza3Bob25lLnYxLlNraW4SLQoHc2NyZWVucxgDIAMoCzIcLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSW5mbxIjCgRrZXlzGAQgAygLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSGgoSc29mdGtleV9iYXJfaGVpZ2h0GAUgASgNEhgKEG1pcnJvcl9hdmFpbGFibGUYBiABKAgiUQoSV2F0Y2hTY3JlZW5SZXF1ZXN0EioKBnNjcmVlbhgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSWQSDwoHbWF4X2ZwcxgCIAEoDSKQAQoTV2F0Y2hTY3JlZW5SZXNwb25zZRILCgNwbmcYASABKAwSDQoFd2lkdGgYAiABKA0SDgoGaGVpZ2h0GAMgASgNEiUKBWxhbXBzGAQgAygLMhYub3BlbmRlc2twaG9uZS52MS5MYW1wEhQKDGJhY2tsaWdodF9vbhgFIAEoCBIQCghvZmZfaG9vaxgGIAEoCCJiCg9QcmVzc0tleVJlcXVlc3QSIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKwoGYWN0aW9uGAIgASgOMhsub3BlbmRlc2twaG9uZS52MS5LZXlBY3Rpb24iEgoQUHJlc3NLZXlSZXNwb25zZSIiCg5TZXRIb29rUmVxdWVzdBIQCghvZmZfaG9vaxgBIAEoCCIRCg9TZXRIb29rUmVzcG9uc2UqTQoIU2NyZWVuSWQSGQoVU0NSRUVOX0lEX1VOU1BFQ0lGSUVEEAASEgoOU0NSRUVOX0lEX01BSU4QARISCg5TQ1JFRU5fSURfU0lERRACKmMKCUtleUFjdGlvbhIaChZLRVlfQUNUSU9OX1VOU1BFQ0lGSUVEEAASEgoOS0VZX0FDVElPTl9UQVAQARITCg9LRVlfQUNUSU9OX0RPV04QAhIRCg1LRVlfQUNUSU9OX1VQEAMqewoJTGFtcENvbG9yEhoKFkxBTVBfQ09MT1JfVU5TUEVDSUZJRUQQABISCg5MQU1QX0NPTE9SX09GRhABEhIKDkxBTVBfQ09MT1JfUkVEEAISFAoQTEFNUF9DT0xPUl9HUkVFThADEhQKEExBTVBfQ09MT1JfQU1CRVIQBCp8CglMYW1wQmxpbmsSGgoWTEFNUF9CTElOS19VTlNQRUNJRklFRBAAEhQKEExBTVBfQkxJTktfU09MSUQQARITCg9MQU1QX0JMSU5LX1NMT1cQAhITCg9MQU1QX0JMSU5LX0ZBU1QQAxITCg9MQU1QX0JMSU5LX1dJTksQBDL4AgoNU2NyZWVuU2VydmljZRJmCg9HZXRTY3JlZW5MYXlvdXQSKC5vcGVuZGVza3Bob25lLnYxLkdldFNjcmVlbkxheW91dFJlcXVlc3QaKS5vcGVuZGVza3Bob25lLnYxLkdldFNjcmVlbkxheW91dFJlc3BvbnNlElwKC1dhdGNoU2NyZWVuEiQub3BlbmRlc2twaG9uZS52MS5XYXRjaFNjcmVlblJlcXVlc3QaJS5vcGVuZGVza3Bob25lLnYxLldhdGNoU2NyZWVuUmVzcG9uc2UwARJRCghQcmVzc0tleRIhLm9wZW5kZXNrcGhvbmUudjEuUHJlc3NLZXlSZXF1ZXN0GiIub3BlbmRlc2twaG9uZS52MS5QcmVzc0tleVJlc3BvbnNlEk4KB1NldEhvb2sSIC5vcGVuZGVza3Bob25lLnYxLlNldEhvb2tSZXF1ZXN0GiEub3BlbmRlc2twaG9uZS52MS5TZXRIb29rUmVzcG9uc2ViBnByb3RvMw", [file_opendeskphone_v1_model]);
+  fileDesc("Ch1vcGVuZGVza3Bob25lL3YxL3NjcmVlbi5wcm90bxIQb3BlbmRlc2twaG9uZS52MSJiCgpTY3JlZW5JbmZvEiYKAmlkGAEgASgOMhoub3BlbmRlc2twaG9uZS52MS5TY3JlZW5JZBINCgV3aWR0aBgCIAEoDRIOCgZoZWlnaHQYAyABKA0SDQoFY29sb3IYBCABKAgiggEKBExhbXASIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKgoFY29sb3IYAiABKA4yGy5vcGVuZGVza3Bob25lLnYxLkxhbXBDb2xvchIqCgVibGluaxgDIAEoDjIbLm9wZW5kZXNrcGhvbmUudjEuTGFtcEJsaW5rIoEFCgNLZXkSKAoEa2luZBgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuS2V5LktpbmQSDQoFaW5kZXgYAiABKA0SDgoGbW9kdWxlGAMgASgNIrAECgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIOCgpLSU5EX0RJR0lUEAESDQoJS0lORF9TVEFSEAISDgoKS0lORF9QT1VORBADEgsKB0tJTkRfVVAQBBINCglLSU5EX0RPV04QBRINCglLSU5EX0xFRlQQBhIOCgpLSU5EX1JJR0hUEAcSDwoLS0lORF9TRUxFQ1QQCBIPCgtLSU5EX0NBTkNFTBAJEhIKDktJTkRfVk9MVU1FX1VQEAoSFAoQS0lORF9WT0xVTUVfRE9XThALEg0KCUtJTkRfU09GVBAMEg0KCUtJTkRfTElORRANEgwKCEtJTkRfQkxGEA4SDQoJS0lORF9NVVRFEA8SEAoMS0lORF9TUEVBS0VSEBASEAoMS0lORF9IRUFEU0VUEBESDQoJS0lORF9IT0xEEBISEQoNS0lORF9UUkFOU0ZFUhATEg8KC0tJTkRfUkVESUFMEBQSEQoNS0lORF9NRVNTQUdFUxAVEhMKD0tJTkRfQ09ORkVSRU5DRRAWEg0KCUtJTkRfSU5GTxAXEhYKEktJTkRfQkxGX1BBR0VfTEVGVBAYEhcKE0tJTkRfQkxGX1BBR0VfUklHSFQQGRIPCgtLSU5EX1NUQVRVUxAaEhEKDUtJTkRfQ09OVEFDVFMQGxINCglLSU5EX0FQUFMQHBINCglLSU5EX01FTlUQHRISCg5LSU5EX0VYUEFOU0lPThAeEgwKCEtJTkRfUkFXEB8iGAoWR2V0U2NyZWVuTGF5b3V0UmVxdWVzdCKAAgoXR2V0U2NyZWVuTGF5b3V0UmVzcG9uc2USJgoFbW9kZWwYASABKA4yFy5vcGVuZGVza3Bob25lLnYxLk1vZGVsEiQKBHNraW4YAiABKA4yFi5vcGVuZGVza3Bob25lLnYxLlNraW4SLQoHc2NyZWVucxgDIAMoCzIcLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSW5mbxIjCgRrZXlzGAQgAygLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSGgoSc29mdGtleV9iYXJfaGVpZ2h0GAUgASgNEhgKEG1pcnJvcl9hdmFpbGFibGUYBiABKAgSDQoFdG91Y2gYByABKAgiUQoSV2F0Y2hTY3JlZW5SZXF1ZXN0EioKBnNjcmVlbhgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSWQSDwoHbWF4X2ZwcxgCIAEoDSKQAQoTV2F0Y2hTY3JlZW5SZXNwb25zZRILCgNwbmcYASABKAwSDQoFd2lkdGgYAiABKA0SDgoGaGVpZ2h0GAMgASgNEiUKBWxhbXBzGAQgAygLMhYub3BlbmRlc2twaG9uZS52MS5MYW1wEhQKDGJhY2tsaWdodF9vbhgFIAEoCBIQCghvZmZfaG9vaxgGIAEoCCJiCg9QcmVzc0tleVJlcXVlc3QSIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKwoGYWN0aW9uGAIgASgOMhsub3BlbmRlc2twaG9uZS52MS5LZXlBY3Rpb24iEgoQUHJlc3NLZXlSZXNwb25zZSJTCgxUb3VjaFJlcXVlc3QSCQoBeBgBIAEoDRIJCgF5GAIgASgNEi0KBmFjdGlvbhgDIAEoDjIdLm9wZW5kZXNrcGhvbmUudjEuVG91Y2hBY3Rpb24iDwoNVG91Y2hSZXNwb25zZSIiCg5TZXRIb29rUmVxdWVzdBIQCghvZmZfaG9vaxgBIAEoCCIRCg9TZXRIb29rUmVzcG9uc2UqTQoIU2NyZWVuSWQSGQoVU0NSRUVOX0lEX1VOU1BFQ0lGSUVEEAASEgoOU0NSRUVOX0lEX01BSU4QARISCg5TQ1JFRU5fSURfU0lERRACKmMKCUtleUFjdGlvbhIaChZLRVlfQUNUSU9OX1VOU1BFQ0lGSUVEEAASEgoOS0VZX0FDVElPTl9UQVAQARITCg9LRVlfQUNUSU9OX0RPV04QAhIRCg1LRVlfQUNUSU9OX1VQEAMqnQEKC1RvdWNoQWN0aW9uEhwKGFRPVUNIX0FDVElPTl9VTlNQRUNJRklFRBAAEhQKEFRPVUNIX0FDVElPTl9UQVAQARIVChFUT1VDSF9BQ1RJT05fRE9XThACEhUKEVRPVUNIX0FDVElPTl9NT1ZFEAMSEwoPVE9VQ0hfQUNUSU9OX1VQEAQSFwoTVE9VQ0hfQUNUSU9OX0NBTkNFTBAFKnsKCUxhbXBDb2xvchIaChZMQU1QX0NPTE9SX1VOU1BFQ0lGSUVEEAASEgoOTEFNUF9DT0xPUl9PRkYQARISCg5MQU1QX0NPTE9SX1JFRBACEhQKEExBTVBfQ09MT1JfR1JFRU4QAxIUChBMQU1QX0NPTE9SX0FNQkVSEAQqfAoJTGFtcEJsaW5rEhoKFkxBTVBfQkxJTktfVU5TUEVDSUZJRUQQABIUChBMQU1QX0JMSU5LX1NPTElEEAESEwoPTEFNUF9CTElOS19TTE9XEAISEwoPTEFNUF9CTElOS19GQVNUEAMSEwoPTEFNUF9CTElOS19XSU5LEAQywgMKDVNjcmVlblNlcnZpY2USZgoPR2V0U2NyZWVuTGF5b3V0Eigub3BlbmRlc2twaG9uZS52MS5HZXRTY3JlZW5MYXlvdXRSZXF1ZXN0Gikub3BlbmRlc2twaG9uZS52MS5HZXRTY3JlZW5MYXlvdXRSZXNwb25zZRJcCgtXYXRjaFNjcmVlbhIkLm9wZW5kZXNrcGhvbmUudjEuV2F0Y2hTY3JlZW5SZXF1ZXN0GiUub3BlbmRlc2twaG9uZS52MS5XYXRjaFNjcmVlblJlc3BvbnNlMAESUQoIUHJlc3NLZXkSIS5vcGVuZGVza3Bob25lLnYxLlByZXNzS2V5UmVxdWVzdBoiLm9wZW5kZXNrcGhvbmUudjEuUHJlc3NLZXlSZXNwb25zZRJICgVUb3VjaBIeLm9wZW5kZXNrcGhvbmUudjEuVG91Y2hSZXF1ZXN0Gh8ub3BlbmRlc2twaG9uZS52MS5Ub3VjaFJlc3BvbnNlEk4KB1NldEhvb2sSIC5vcGVuZGVza3Bob25lLnYxLlNldEhvb2tSZXF1ZXN0GiEub3BlbmRlc2twaG9uZS52MS5TZXRIb29rUmVzcG9uc2ViBnByb3RvMw", [file_opendeskphone_v1_model]);
 
 /**
  * @generated from message opendeskphone.v1.ScreenInfo
@@ -362,6 +362,14 @@ export type GetScreenLayoutResponse = Message<"opendeskphone.v1.GetScreenLayoutR
    * @generated from field: bool mirror_available = 6;
    */
   mirrorAvailable: boolean;
+
+  /**
+   * The main screen is a touchscreen (D80), which takes `Touch`; such a
+   * model has no keys.
+   *
+   * @generated from field: bool touch = 7;
+   */
+  touch: boolean;
 };
 
 /**
@@ -475,6 +483,49 @@ export const PressKeyResponseSchema: GenMessage<PressKeyResponse> = /*@__PURE__*
   messageDesc(file_opendeskphone_v1_screen, 8);
 
 /**
+ * @generated from message opendeskphone.v1.TouchRequest
+ */
+export type TouchRequest = Message<"opendeskphone.v1.TouchRequest"> & {
+  /**
+   * The pixel of the main screen, from its top-left corner, within the
+   * size `GetScreenLayout` gives.
+   *
+   * @generated from field: uint32 x = 1;
+   */
+  x: number;
+
+  /**
+   * @generated from field: uint32 y = 2;
+   */
+  y: number;
+
+  /**
+   * @generated from field: opendeskphone.v1.TouchAction action = 3;
+   */
+  action: TouchAction;
+};
+
+/**
+ * Describes the message opendeskphone.v1.TouchRequest.
+ * Use `create(TouchRequestSchema)` to create a new message.
+ */
+export const TouchRequestSchema: GenMessage<TouchRequest> = /*@__PURE__*/
+  messageDesc(file_opendeskphone_v1_screen, 9);
+
+/**
+ * @generated from message opendeskphone.v1.TouchResponse
+ */
+export type TouchResponse = Message<"opendeskphone.v1.TouchResponse"> & {
+};
+
+/**
+ * Describes the message opendeskphone.v1.TouchResponse.
+ * Use `create(TouchResponseSchema)` to create a new message.
+ */
+export const TouchResponseSchema: GenMessage<TouchResponse> = /*@__PURE__*/
+  messageDesc(file_opendeskphone_v1_screen, 10);
+
+/**
  * @generated from message opendeskphone.v1.SetHookRequest
  */
 export type SetHookRequest = Message<"opendeskphone.v1.SetHookRequest"> & {
@@ -489,7 +540,7 @@ export type SetHookRequest = Message<"opendeskphone.v1.SetHookRequest"> & {
  * Use `create(SetHookRequestSchema)` to create a new message.
  */
 export const SetHookRequestSchema: GenMessage<SetHookRequest> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 9);
+  messageDesc(file_opendeskphone_v1_screen, 11);
 
 /**
  * @generated from message opendeskphone.v1.SetHookResponse
@@ -502,7 +553,7 @@ export type SetHookResponse = Message<"opendeskphone.v1.SetHookResponse"> & {
  * Use `create(SetHookResponseSchema)` to create a new message.
  */
 export const SetHookResponseSchema: GenMessage<SetHookResponse> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 10);
+  messageDesc(file_opendeskphone_v1_screen, 12);
 
 /**
  * @generated from enum opendeskphone.v1.ScreenId
@@ -566,6 +617,60 @@ export const KeyActionSchema: GenEnum<KeyAction> = /*@__PURE__*/
   enumDesc(file_opendeskphone_v1_screen, 1);
 
 /**
+ * What a finger does.  One finger is followed: a touch begins with DOWN,
+ * moves with any number of MOVEs, and ends with UP or CANCEL.
+ *
+ * @generated from enum opendeskphone.v1.TouchAction
+ */
+export enum TouchAction {
+  /**
+   * @generated from enum value: TOUCH_ACTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Down and up again at the one place.
+   *
+   * @generated from enum value: TOUCH_ACTION_TAP = 1;
+   */
+  TAP = 1,
+
+  /**
+   * The finger is put down.
+   *
+   * @generated from enum value: TOUCH_ACTION_DOWN = 2;
+   */
+  DOWN = 2,
+
+  /**
+   * The finger that is down moved here.
+   *
+   * @generated from enum value: TOUCH_ACTION_MOVE = 3;
+   */
+  MOVE = 3,
+
+  /**
+   * The finger is lifted here.
+   *
+   * @generated from enum value: TOUCH_ACTION_UP = 4;
+   */
+  UP = 4,
+
+  /**
+   * The touch is to be forgotten: nothing was touched.
+   *
+   * @generated from enum value: TOUCH_ACTION_CANCEL = 5;
+   */
+  CANCEL = 5,
+}
+
+/**
+ * Describes the enum opendeskphone.v1.TouchAction.
+ */
+export const TouchActionSchema: GenEnum<TouchAction> = /*@__PURE__*/
+  enumDesc(file_opendeskphone_v1_screen, 2);
+
+/**
  * @generated from enum opendeskphone.v1.LampColor
  */
 export enum LampColor {
@@ -601,7 +706,7 @@ export enum LampColor {
  * Describes the enum opendeskphone.v1.LampColor.
  */
 export const LampColorSchema: GenEnum<LampColor> = /*@__PURE__*/
-  enumDesc(file_opendeskphone_v1_screen, 2);
+  enumDesc(file_opendeskphone_v1_screen, 3);
 
 /**
  * @generated from enum opendeskphone.v1.LampBlink
@@ -645,10 +750,10 @@ export enum LampBlink {
  * Describes the enum opendeskphone.v1.LampBlink.
  */
 export const LampBlinkSchema: GenEnum<LampBlink> = /*@__PURE__*/
-  enumDesc(file_opendeskphone_v1_screen, 3);
+  enumDesc(file_opendeskphone_v1_screen, 4);
 
 /**
- * Screen mirror and key injection.
+ * Screen mirror, and key and touch injection.
  *
  * @generated from service opendeskphone.v1.ScreenService
  */
@@ -678,6 +783,17 @@ export const ScreenService: GenService<{
     methodKind: "unary";
     input: typeof PressKeyRequestSchema;
     output: typeof PressKeyResponseSchema;
+  },
+  /**
+   * A touch of the main screen, as if by a finger: only on a model whose
+   * screen is a touchscreen (`GetScreenLayoutResponse.touch`).
+   *
+   * @generated from rpc opendeskphone.v1.ScreenService.Touch
+   */
+  touch: {
+    methodKind: "unary";
+    input: typeof TouchRequestSchema;
+    output: typeof TouchResponseSchema;
   },
   /**
    * @generated from rpc opendeskphone.v1.ScreenService.SetHook

@@ -1,8 +1,8 @@
 import { useQuery } from "@connectrpc/connect-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { Alert, Card, PageHeader, Spinner } from "../components/ui";
 import { Model } from "../gen/opendeskphone/v1/model_pb";
-import { KeyAction, Key_Kind as K, LampBlink, LampColor, ScreenId, ScreenService, type Lamp } from "../gen/opendeskphone/v1/screen_pb";
+import { KeyAction, Key_Kind as K, LampBlink, LampColor, ScreenId, ScreenService, TouchAction, type Lamp } from "../gen/opendeskphone/v1/screen_pb";
 import { modelName } from "../lib/labels";
 import { PhoneIcon } from "../lib/phoneIcons";
 import { archedRect, key, panels, sameKey, type KeyId, type Panel, type PanelKey } from "../lib/phones";
@@ -86,6 +86,38 @@ function useMirror(screen: ScreenId, enabled: boolean, onMeta?: (m: Meta) => voi
   return [url, status];
 }
 
+type Touch = { action: TouchAction; x: number; y: number };
+
+/// Sends the touches of the mirrored screen one at a time, in order: the
+/// events of a finger must not overtake one another on the way.  Of the
+/// moves that wait to be sent, only the latest is (the phone follows the
+/// finger by where it is, so a move in between adds nothing).
+function useTouches(onResult: (error: string) => void): (t: Touch) => void {
+  const waiting = useRef<Touch[]>([]);
+  const sending = useRef(false);
+  return useCallback(
+    (t: Touch) => {
+      const q = waiting.current;
+      if (t.action === TouchAction.MOVE && q.length > 0 && q[q.length - 1].action === TouchAction.MOVE) q[q.length - 1] = t;
+      else q.push(t);
+      if (sending.current) return;
+      sending.current = true;
+      void (async () => {
+        for (let next = q.shift(); next; next = q.shift()) {
+          try {
+            await client(ScreenService).touch(next);
+            onResult("");
+          } catch (e) {
+            onResult(errorMessage(e));
+          }
+        }
+        sending.current = false;
+      })();
+    },
+    [onResult],
+  );
+}
+
 function Legend({ k }: { k: PanelKey }) {
   const ink = k.ink ?? "#f2f3f4";
   const l = k.legend;
@@ -119,12 +151,20 @@ function Legend({ k }: { k: PanelKey }) {
   );
 }
 
-function Phone({ panel, model, keys, sideSize }: { panel: Panel; model: Model; keys: KeyId[]; sideSize?: { width: number; height: number } }) {
+type Size = { width: number; height: number };
+
+/// The phone drawn as it is, its screens mirrored, and its keys and its
+/// handset working.  With `touch` (the main screen's size), the main
+/// screen is a touchscreen: a press and a drag on the picture touch it.
+function Phone({ panel, model, keys, sideSize, touch }: { panel: Panel; model: Model; keys: KeyId[]; sideSize?: Size; touch?: Size }) {
   const [meta, setMeta] = useState<Meta>({ lamps: [], backlight: true, offHook: false });
   const [error, setError] = useState("");
   const held = useRef<KeyId>(undefined);
   const [mainUrl, mainStatus] = useMirror(ScreenId.MAIN, true, setMeta);
   const [sideUrl] = useMirror(ScreenId.SIDE, !!panel.side && !!sideSize);
+  const sendTouch = useTouches(setError);
+  // The pointer that is touching the screen, and the place last sent.
+  const finger = useRef<{ id: number; x: number; y: number }>(undefined);
 
   const press = (key: KeyId, action: KeyAction) =>
     client(ScreenService)
@@ -141,7 +181,43 @@ function Phone({ panel, model, keys, sideSize }: { panel: Panel; model: Model; k
   const [vx, vy, vw, vh] = panel.viewBox;
   const d = panel.display;
   const hs = panel.handset;
+  const grille = panel.grille;
   const mwi = lamp(key(K.MESSAGES));
+
+  /// The screen's pixel under the pointer, from the picture's place and
+  /// size on the page (whatever it is scaled to), kept on the screen.
+  const pixel = (e: PointerEvent<Element>, size: Size) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const at = (v: number, start: number, len: number, n: number) => Math.min(n - 1, Math.max(0, Math.floor(((v - start) / len) * n)));
+    return { x: at(e.clientX, r.left, r.width, size.width), y: at(e.clientY, r.top, r.height, size.height) };
+  };
+  const touchHandlers = (size: Size) => ({
+    onPointerDown: (e: PointerEvent<Element>) => {
+      if (finger.current || (e.pointerType === "mouse" && e.button !== 0)) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const p = pixel(e, size);
+      finger.current = { id: e.pointerId, ...p };
+      sendTouch({ action: TouchAction.DOWN, ...p });
+    },
+    onPointerMove: (e: PointerEvent<Element>) => {
+      const f = finger.current;
+      if (f?.id !== e.pointerId) return;
+      const p = pixel(e, size);
+      if (p.x === f.x && p.y === f.y) return;
+      finger.current = { id: f.id, ...p };
+      sendTouch({ action: TouchAction.MOVE, ...p });
+    },
+    onPointerUp: (e: PointerEvent<Element>) => {
+      if (finger.current?.id !== e.pointerId) return;
+      finger.current = undefined;
+      sendTouch({ action: TouchAction.UP, ...pixel(e, size) });
+    },
+    onPointerCancel: (e: PointerEvent<Element>) => {
+      if (finger.current?.id !== e.pointerId) return;
+      finger.current = undefined;
+      sendTouch({ action: TouchAction.CANCEL, ...pixel(e, size) });
+    },
+  });
 
   return (
     <>
@@ -150,7 +226,13 @@ function Phone({ panel, model, keys, sideSize }: { panel: Panel; model: Model; k
           <Alert tone="red">{error}</Alert>
         </div>
       )}
-      <svg viewBox={`${vx} ${vy} ${vw} ${vh}`} className="mx-auto block h-auto w-full select-none" style={{ maxWidth: vw * panel.unit }} role="group" aria-label={`${modelName(model)} front panel`}>
+      <svg
+        viewBox={`${vx} ${vy} ${vw} ${vh}`}
+        className="mx-auto block h-auto w-full select-none"
+        style={{ maxWidth: panel.fitHeight ? `min(${vw * panel.unit}px, ${(78 * vw) / vh}vh)` : vw * panel.unit }}
+        role="group"
+        aria-label={`${modelName(model)} front panel`}
+      >
         <defs>
           <linearGradient id="gloss" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stopColor="#fff" stopOpacity="0.16" />
@@ -174,30 +256,48 @@ function Phone({ panel, model, keys, sideSize }: { panel: Panel; model: Model; k
         ))}
 
         {/* Speaker grille in the cradle: vertical slots within an oval. */}
-        {Array.from({ length: 11 }, (_, i) => {
-          const g = panel.grille;
-          const x = g.cx + ((i - 5) * g.rx) / 5.6;
-          const half = g.ry * Math.sqrt(Math.max(0, 1 - ((x - g.cx) / g.rx) ** 2)) * 0.95;
-          const w = g.rx / 9;
-          // Each column is a long slot broken by a short bridge, offset
-          // from its neighbor, with a round hole at one end.
-          const gap = half * (i % 2 ? 0.25 : -0.2);
-          return (
-            <g key={i} stroke="#08090a" strokeWidth={w} strokeLinecap="round">
-              <path d={`M${x} ${g.cy - half + w}V${g.cy + gap - w * 1.4}`} />
-              <path d={`M${x} ${g.cy + gap + w * 1.4}V${g.cy + half - w}`} />
-              <circle cx={x} cy={g.cy + gap} r={w * 0.2} />
-            </g>
-          );
-        })}
+        {grille &&
+          Array.from({ length: 11 }, (_, i) => {
+            const g = grille;
+            const x = g.cx + ((i - 5) * g.rx) / 5.6;
+            const half = g.ry * Math.sqrt(Math.max(0, 1 - ((x - g.cx) / g.rx) ** 2)) * 0.95;
+            const w = g.rx / 9;
+            // Each column is a long slot broken by a short bridge, offset
+            // from its neighbor, with a round hole at one end.
+            const gap = half * (i % 2 ? 0.25 : -0.2);
+            return (
+              <g key={i} stroke="#08090a" strokeWidth={w} strokeLinecap="round">
+                <path d={`M${x} ${g.cy - half + w}V${g.cy + gap - w * 1.4}`} />
+                <path d={`M${x} ${g.cy + gap + w * 1.4}V${g.cy + half - w}`} />
+                <circle cx={x} cy={g.cy + gap} r={w * 0.2} />
+              </g>
+            );
+          })}
 
         {/* Displays. */}
         <rect x={d.x} y={d.y} width={d.w} height={d.h} fill="#050506" />
-        {mainUrl && <image href={mainUrl} x={d.x} y={d.y} width={d.w} height={d.h} preserveAspectRatio="none" opacity={meta.backlight ? 1 : 0.6} style={{ imageRendering: "pixelated" }} />}
+        {mainUrl && (
+          <image href={mainUrl} x={d.x} y={d.y} width={d.w} height={d.h} preserveAspectRatio="none" opacity={meta.backlight ? 1 : 0.6} style={{ imageRendering: panel.smooth ? "auto" : "pixelated" }} />
+        )}
         {mainStatus === "reconnecting" && (
-          <text x={d.x + d.w / 2} y={d.y + d.h / 2} fill="#fbbf24" fontSize={d.h / 9} textAnchor="middle" dominantBaseline="central">
+          <text x={d.x + d.w / 2} y={d.y + d.h / 2} fill="#fbbf24" fontSize={Math.min(d.h / 9, d.w / 15)} textAnchor="middle" dominantBaseline="central">
             Connection lost
           </text>
+        )}
+        {/* The touchscreen: the picture itself is touched. */}
+        {touch && (
+          <rect
+            x={d.x}
+            y={d.y}
+            width={d.w}
+            height={d.h}
+            fill="transparent"
+            className="cursor-pointer"
+            style={{ touchAction: "none" }}
+            role="application"
+            aria-label="Touchscreen"
+            {...touchHandlers(touch)}
+          />
         )}
         {panel.side && (
           <>
@@ -212,11 +312,15 @@ function Phone({ panel, model, keys, sideSize }: { panel: Panel; model: Model; k
         ))}
 
         {/* Message waiting lamp. */}
-        <path d={panel.mwi.d} fill={panel.mwi.off}>
-          <title>Message waiting</title>
-        </path>
-        {mwi && <path d={panel.mwi.d} fill={lampFill[mwi.color]} className={blinkClass[mwi.blink]} pointerEvents="none" />}
-        <path d={panel.mwi.d} fill="none" stroke="#00000040" strokeWidth={0.7} pointerEvents="none" />
+        {panel.mwi && (
+          <>
+            <path d={panel.mwi.d} fill={panel.mwi.off}>
+              <title>Message waiting</title>
+            </path>
+            {mwi && <path d={panel.mwi.d} fill={lampFill[mwi.color]} className={blinkClass[mwi.blink]} pointerEvents="none" />}
+            <path d={panel.mwi.d} fill="none" stroke="#00000040" strokeWidth={0.7} pointerEvents="none" />
+          </>
+        )}
 
         {/* Keys. */}
         {panel.keys
@@ -302,8 +406,9 @@ export function Screen() {
 
   if (layout.error) return <Alert tone="red">{errorMessage(layout.error)}</Alert>;
   if (!layout.data) return <Spinner />;
-  const { screens, model, mirrorAvailable } = layout.data;
+  const { screens, model, mirrorAvailable, touch } = layout.data;
   const keys: KeyId[] = layout.data.keys;
+  const main = screens.find((s) => s.id === ScreenId.MAIN);
   const side = screens.find((s) => s.id === ScreenId.SIDE);
   const panel = panels[model];
   // Keys the phone reports that the drawing has no place for: listed
@@ -322,7 +427,7 @@ export function Screen() {
         {error && <Alert tone="red">{error}</Alert>}
         {!mirrorAvailable && <Alert tone="blue" title="Screen mirroring is unavailable." />}
         <Card>
-          {panel && <Phone panel={panel} model={model} keys={keys} sideSize={side} />}
+          {panel && <Phone panel={panel} model={model} keys={keys} sideSize={side} touch={touch ? main : undefined} />}
           {unplaced.length > 0 && (
             <div className="mx-auto mt-4 flex max-w-xl flex-wrap gap-2">
               {unplaced.map((k) => (

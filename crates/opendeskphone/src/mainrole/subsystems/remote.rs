@@ -1,5 +1,5 @@
-//! Diagnostics that drive the phone as a user would: keys, the hook, calls,
-//! apps, and a screenshot of what is on the display.  For SSH sessions and
+//! Diagnostics that drive the phone as a user would: keys, touches, the
+//! hook, calls, apps, and a screenshot of what is on the display.  For SSH sessions and
 //! for testing without touching the phone.
 
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use opendeskphone_hal::{PixelFormat, Screen};
-use opendeskphone_state::{Command, Key, Store};
+use opendeskphone_state::{Command, Key, Store, TouchPhase};
 
 use super::ui::ScreenTap;
 use crate::diag::Output;
@@ -62,6 +62,49 @@ Keys:
 
 fn parse_key(name: &str) -> Result<Key, String> {
     Key::from_name(name).ok_or_else(|| "not a key ('dphone key --help' lists them)".to_string())
+}
+
+/// Touch the screen as if with a finger (D80)
+///
+/// A tap at X, Y, or with --to, a drag from there.  X and Y are pixels of
+/// the main screen, from its top-left corner.
+#[derive(Debug, Parser)]
+#[command(name = "touch", after_help = TOUCH_EXAMPLES)]
+pub struct TouchCommand {
+    /// Pixels from the left edge
+    x: u16,
+    /// Pixels from the top edge
+    y: u16,
+    /// Drag the finger to here, and lift it there
+    #[arg(long, num_args = 2, value_names = ["X", "Y"])]
+    to: Option<Vec<u16>>,
+    /// The number of moves a drag takes
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u16).range(1..=1000))]
+    steps: u16,
+}
+
+const TOUCH_EXAMPLES: &str = "\
+Examples:
+  dphone touch 400 640                a tap in the middle of the D80's screen
+  dphone touch 400 1000 --to 400 300  a drag upward: a list moves on to its later rows";
+
+impl TouchCommand {
+    /// The events of the touch, in order.
+    fn events(&self) -> Vec<(TouchPhase, u16, u16)> {
+        let (x, y) = (self.x, self.y);
+        let mut events = vec![(TouchPhase::Down, x, y)];
+        match self.to.as_deref() {
+            Some(&[x1, y1]) => {
+                // As `SimHandle::touch_drag` moves.
+                let n = self.steps.max(1) as i32;
+                let at = |a: u16, b: u16, i: i32| (a as i32 + (b as i32 - a as i32) * i / n) as u16;
+                events.extend((1..=n).map(|i| (TouchPhase::Move, at(x, x1, i), at(y, y1, i))));
+                events.push((TouchPhase::Up, x1, y1));
+            }
+            _ => events.push((TouchPhase::Up, x, y)),
+        }
+        events
+    }
 }
 
 /// Lift or replace the handset
@@ -152,6 +195,35 @@ pub fn register(ctx: &Context, tap: Option<Arc<ScreenTap>>) {
                     }
                     tokio::time::sleep(Duration::from_millis(60)).await;
                 }
+            }
+            0
+        }
+    });
+
+    let store = ctx.store.clone();
+    ctx.diag.register(move |args: TouchCommand, out: Output| {
+        let store = store.clone();
+        async move {
+            let model = store.model();
+            if !model.is_touch() {
+                out.err(&format!("dphone touch: the {model} has no touchscreen\n")).await;
+                return 1;
+            }
+            let size = model.main_screen();
+            let events = args.events();
+            if let Some((_, x, y)) = events.iter().find(|(_, x, y)| *x >= size.width || *y >= size.height) {
+                out.err(&format!("dphone touch: ({x}, {y}) is not on the {}x{} screen\n", size.width, size.height)).await;
+                return 1;
+            }
+            for (phase, x, y) in events {
+                if let Err(e) = send(&store, Command::InjectTouch { phase, x, y }).await {
+                    out.err(&format!("dphone touch: {e}\n")).await;
+                    return 1;
+                }
+                // About a finger's pace: a tap is lifted well before a long
+                // press, and a drag moves every 20 ms.
+                let pause = if phase == TouchPhase::Down && args.to.is_none() { 60 } else { 20 };
+                tokio::time::sleep(Duration::from_millis(pause)).await;
             }
             0
         }
@@ -258,4 +330,25 @@ pub fn register(ctx: &Context, tap: Option<Arc<ScreenTap>>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use TouchPhase::*;
+
+    fn touch(words: &[&str]) -> TouchCommand {
+        TouchCommand::try_parse_from(std::iter::once("touch").chain(words.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn a_touch_is_a_tap_or_a_drag_in_steps() {
+        assert_eq!(touch(&["400", "640"]).events(), [(Down, 400, 640), (Up, 400, 640)]);
+        assert_eq!(
+            touch(&["10", "1000", "--to", "20", "400", "--steps", "3"]).events(),
+            [(Down, 10, 1000), (Move, 13, 800), (Move, 16, 600), (Move, 20, 400), (Up, 20, 400)]
+        );
+        // Ten moves unless told.
+        assert_eq!(touch(&["0", "0", "--to", "0", "100"]).events().len(), 12);
+    }
 }

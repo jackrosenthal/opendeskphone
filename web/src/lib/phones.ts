@@ -13,6 +13,11 @@
 //   D62 with its lamps lit.
 // - D65: retailer top-view photographs, with and without the handset;
 //   "Digium D6X Series IP Phone Quick Start Guide" (613-00026) drawing.
+// - D80: none.  The D80's drawing is schematic until references are
+//   added: an upright touchscreen (800x1280) in a plain black body, the
+//   handset in a cradle at the body's left, and no keys and no lamps (the
+//   D80 has neither).  Its proportions, its colors, and where its handset
+//   is are not the phone's.
 // - Sizes: the datasheet's displays (D40, D45, D50: 3.5 inch, 240x120;
 //   D70: 4.5 inch, 320x160) and the phones' widths (D40/D45 8.25 inches,
 //   D50 10.5 inches, D70 12.5 inches).
@@ -102,6 +107,12 @@ export type Panel = {
   /// Factor from units to CSS pixels at which the display is 1:1 with the
   /// phone's own pixels times `pixelScale`.
   unit: number;
+  /// The page keeps the whole drawing within the window's height (D80,
+  /// whose screen stands upright and would otherwise run off the bottom).
+  fitHeight?: boolean;
+  /// The picture is smoothed when scaled, not drawn as blocks of pixels
+  /// (D80, whose screen is shown smaller than its pixels).
+  smooth?: boolean;
   /// Body parts, back to front, under the keys.
   shapes: Shape[];
   /// Printed guide lines: x1, y1, x2, y2.
@@ -110,10 +121,10 @@ export type Panel = {
   display: { x: number; y: number; w: number; h: number };
   side?: { x: number; y: number; w: number; h: number };
   /// Message waiting lamp: outline, and its color when dark.
-  mwi: { d: string; off: string };
+  mwi?: { d: string; off: string };
   handset: { x: number; y: number; w: number; h: number; fill: string; print?: string };
   /// Speaker grille in the cradle, under the handset.
-  grille: { cx: number; cy: number; rx: number; ry: number };
+  grille?: { cx: number; cy: number; rx: number; ry: number };
   keys: PanelKey[];
 };
 
@@ -612,6 +623,38 @@ function oldFamily(v: Old, L: OldLayout): Panel {
   };
 }
 
+// ------------------------------------------------------------------- D80
+
+/// The D80, schematic (see the top of this file).  The display is 400 by
+/// 640 units, half the screen's pixels each way.
+function d80(): Panel {
+  const display = { x: 300, y: 96, w: 400, h: 640 };
+  const handset = { x: 74, y: 76, w: 150, h: 700, fill: "#222326" };
+  return {
+    // Room on the left for the handset lifted out of its cradle.
+    viewBox: [-114, 26, 874, 834],
+    unit: 800 / display.w,
+    fitHeight: true,
+    smooth: true,
+    shapes: [
+      // Cradle wing, left of the body.
+      { d: rect(62, 110, 210, 640, 26), fill: "#2b2d30" },
+      // Upper cup the earpiece rests in, with the hook switch.
+      { d: rect(84, 126, 130, 96, 24), fill: "#1c1d20" },
+      { d: rect(138, 198, 22, 9, 2), fill: "#0c0d0e" },
+      // Lower cup the mouthpiece rests in.
+      { d: rect(84, 630, 130, 104, 28), fill: "#1c1d20" },
+      // Body: glossy black around the screen.
+      { d: rect(266, 50, 468, 760, 30), fill: "#0e0f11", gloss: true },
+    ],
+    lines: [],
+    lineColor: "none",
+    display,
+    handset,
+    keys: [],
+  };
+}
+
 const two: Labeled[][] = [
   [[K.MESSAGES, "msgs"], [K.TRANSFER, "xfer"]],
   [[K.REDIAL, "redial"], [K.HOLD, "hold"]],
@@ -632,4 +675,5 @@ export const panels: Partial<Record<Model, Panel>> = {
   [Model.D60]: newFamily(2, false),
   [Model.D62]: newFamily(2, false),
   [Model.D65]: newFamily(6, true),
+  [Model.D80]: d80(),
 };

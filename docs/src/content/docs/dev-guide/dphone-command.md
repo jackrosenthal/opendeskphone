@@ -82,6 +82,7 @@ Remote.
 | Command | Description |
 | --- | --- |
 | `dphone key <key>...` | Presses keys in sequence, e.g., `dphone key 1 2 3 sk1`.  `dphone key --help` lists the key names. |
+| `dphone touch <x> <y>` | Taps the D80's touchscreen at a pixel of the screen, counted from the top-left corner, e.g., `dphone touch 400 640` for the middle of the 800x1280 screen.  `--to <x> <y>` drags the finger from the first place to the second instead, e.g., `dphone touch 400 1000 --to 400 300` to scroll a list; `--steps` sets the number of moves in the drag (default 10).  A model without a touchscreen refuses the command. |
 | `dphone hook off`, `dphone hook on` | Lift and replace the handset. |
 | `dphone call` | Lists the calls.  `dial <number>` calls a number, `answer` answers the first call, and `hangup` ends every call. |
 | `dphone app` | Lists the installed apps.  `launch` starts an app or brings a running app to the front; `close` closes an app. |

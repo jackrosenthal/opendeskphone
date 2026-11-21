@@ -82,11 +82,15 @@ fn diag(socket: &Path, args: &[&str]) -> (i32, String, String) {
 }
 
 fn start_main(dir: &Path, extra: &[&str]) -> (KillOnDrop, PathBuf) {
+    start_main_as(dir, "d40", extra)
+}
+
+fn start_main_as(dir: &Path, model: &str, extra: &[&str]) -> (KillOnDrop, PathBuf) {
     let nv = dir.join("nv");
     let run = dir.join("run");
     std::fs::create_dir_all(&nv).unwrap();
     let child = Command::new(BIN)
-        .args(["main", "--sim", "--model", "d40", "--nvdata"])
+        .args(["main", "--sim", "--model", model, "--nvdata"])
         .arg(&nv)
         .arg("--run-dir")
         .arg(&run)
@@ -137,6 +141,10 @@ fn diag_commands_and_restart() {
     assert!(err.contains("invalid value 'nope'"), "{err}");
     let (code, _, err) = diag(&socket, &["key", "1", "2", "#"]);
     assert_eq!(code, 0, "{err}");
+    // A D40 has no touchscreen.
+    let (code, _, err) = diag(&socket, &["touch", "10", "10"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("the D40 has no touchscreen"), "{err}");
 
     wait_for("healthy", Duration::from_secs(10), || diag(&socket, &["health"]).0 == 0);
     let (code, out, _) = diag(&socket, &["log", "-n", "50"]);
@@ -178,6 +186,43 @@ fn a_phone_with_no_server_and_no_accounts_shows_the_server_menu() {
     wait_for("the idle screen", Duration::from_secs(10), || state("ui").contains("screen: \"idle\""));
     assert!(state("system").contains("phase: Running"), "{}", state("system"));
     assert!(state("provisioning").contains("phase: Standalone"), "{}", state("provisioning"));
+}
+
+/// The D80 is operated by touch: `dphone touch` taps the server menu's
+/// second row, and a place off the screen is refused.
+#[test]
+fn a_d80_is_operated_by_touch() {
+    let dir = temp();
+    // A SIP port of the phone's own (see the test above).
+    let sip_port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    std::fs::create_dir_all(dir.path().join("nv")).unwrap();
+    std::fs::write(
+        dir.path().join("nv/ui-config.xml"),
+        format!("<config>\n    <setting id=\"transport_udp_port\" value=\"{sip_port}\" />\n</config>\n"),
+    )
+    .unwrap();
+    let (_main, socket) = start_main_as(dir.path(), "d80", &["--no-ssh"]);
+    wait_for("diag socket", Duration::from_secs(10), || socket.exists());
+    let state = |topic: &str| diag(&socket, &["state", topic]).1;
+    wait_for("the server menu", Duration::from_secs(30), || state("ui").contains("screen: \"provisioning\""));
+    wait_for("the client waiting for a server", Duration::from_secs(30), || state("provisioning").contains("phase: AwaitingServer"));
+
+    let (code, _, err) = diag(&socket, &["touch", "800", "10"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("(800, 10) is not on the 800x1280 screen"), "{err}");
+    let (code, _, err) = diag(&socket, &["touch", "10", "10", "--to", "10", "1280"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("(10, 1280) is not on the 800x1280 screen"), "{err}");
+    assert!(state("ui").contains("screen: \"provisioning\""), "{}", state("ui"));
+
+    // The rows are "Enter address..." and "Use without a server", each
+    // 96 pixels high under a title bar of 96: the second is 192 to 288.
+    assert_eq!(diag(&socket, &["touch", "400", "240"]).0, 0);
+    wait_for("the idle screen", Duration::from_secs(10), || state("ui").contains("screen: \"idle\""));
+    assert!(state("provisioning").contains("phase: Standalone"), "{}", state("provisioning"));
+    // A drag is taken too.
+    let (code, _, err) = diag(&socket, &["touch", "400", "1000", "--to", "400", "300", "--steps", "5"]);
+    assert_eq!(code, 0, "{err}");
 }
 
 /// A factory reset from the phone's own menu, on a provisioned phone: the

@@ -4,12 +4,15 @@ package opendeskphone.v1;
 
 import "opendeskphone/v1/model.proto";
 
-// Screen mirror and key injection.
+// Screen mirror, and key and touch injection.
 service ScreenService {
   rpc GetScreenLayout(GetScreenLayoutRequest) returns (GetScreenLayoutResponse);
   // Sends the current picture, then a new one whenever the screen changes.
   rpc WatchScreen(WatchScreenRequest) returns (stream WatchScreenResponse);
   rpc PressKey(PressKeyRequest) returns (PressKeyResponse);
+  // A touch of the main screen, as if by a finger: only on a model whose
+  // screen is a touchscreen (`GetScreenLayoutResponse.touch`).
+  rpc Touch(TouchRequest) returns (TouchResponse);
   rpc SetHook(SetHookRequest) returns (SetHookResponse);
 }
 
@@ -26,6 +29,22 @@ enum KeyAction {
   KEY_ACTION_TAP = 1;
   KEY_ACTION_DOWN = 2;
   KEY_ACTION_UP = 3;
+}
+
+// What a finger does.  One finger is followed: a touch begins with DOWN,
+// moves with any number of MOVEs, and ends with UP or CANCEL.
+enum TouchAction {
+  TOUCH_ACTION_UNSPECIFIED = 0;
+  // Down and up again at the one place.
+  TOUCH_ACTION_TAP = 1;
+  // The finger is put down.
+  TOUCH_ACTION_DOWN = 2;
+  // The finger that is down moved here.
+  TOUCH_ACTION_MOVE = 3;
+  // The finger is lifted here.
+  TOUCH_ACTION_UP = 4;
+  // The touch is to be forgotten: nothing was touched.
+  TOUCH_ACTION_CANCEL = 5;
 }
 
 message ScreenInfo {
@@ -136,6 +155,9 @@ message GetScreenLayoutResponse {
   uint32 softkey_bar_height = 5;
   // False when no screen source is attached (no picture, keys still work).
   bool mirror_available = 6;
+  // The main screen is a touchscreen (D80), which takes `Touch`; such a
+  // model has no keys.
+  bool touch = 7;
 }
 
 message WatchScreenRequest {
@@ -160,6 +182,16 @@ message PressKeyRequest {
 }
 
 message PressKeyResponse {}
+
+message TouchRequest {
+  // The pixel of the main screen, from its top-left corner, within the
+  // size `GetScreenLayout` gives.
+  uint32 x = 1;
+  uint32 y = 2;
+  TouchAction action = 3;
+}
+
+message TouchResponse {}
 
 message SetHookRequest {
   bool off_hook = 1;

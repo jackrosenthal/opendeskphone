@@ -26,6 +26,12 @@ impl Drop for Phone {
 }
 
 async fn phone() -> Phone {
+    phone_of(Model::D60).await
+}
+
+/// A phone of another model.  (The configuration is a D60's for every
+/// model: what the tests read of it is common to all.)
+async fn phone_of(model: Model) -> Phone {
     let mut id = [0u8; 8];
     getrandom::fill(&mut id).unwrap();
     let dir = std::env::temp_dir().join(format!("opendeskphone-web-test-{}", id.map(|b| format!("{b:02x}")).concat()));
@@ -33,7 +39,7 @@ async fn phone() -> Phone {
     let nv = Nvdata::new(dir.join("nvdata"));
     nv.ensure_layout().unwrap();
     let config = Arc::new(Mutex::new(ConfigStore::open(nv, opendeskphone_config::Model::D60, dir.join("tmp")).unwrap()));
-    let store = Store::new(Model::D60);
+    let store = Store::new(model);
     let options = WebOptions {
         http: Some("127.0.0.1:0".parse().unwrap()),
         https: None,
@@ -242,6 +248,7 @@ async fn static_files_and_authentication() {
     assert_eq!(keys[0], serde_json::json!({ "kind": "KIND_LINE", "index": 1 }));
     assert!(keys.contains(&serde_json::json!({ "kind": "KIND_DIGIT" })));
     assert!(keys.contains(&serde_json::json!({ "kind": "KIND_VOLUME_UP" })));
+    assert_eq!(v.get("touch"), None, "not a touchscreen");
 
     // Unknown methods, wrong content types, and bad messages.
     assert_eq!(rpc_json(p.addr, &s, "StatusService/Nope", "{}").await.json()["code"], "unimplemented");
@@ -479,6 +486,10 @@ async fn commands_uploads_backup_and_password() {
     for bad in [r#"{}"#, r#"{"key":{}}"#, r#"{"key":{"kind":"KIND_SOFT","index":5}}"#, r#"{"key":{"kind":"KIND_DIGIT","index":10}}"#] {
         assert_eq!(rpc_json(p.addr, &s, "ScreenService/PressKey", bad).await.status, 400, "{bad}");
     }
+    // A D60 has no touchscreen: nothing is sent to the UI.
+    let r = rpc_json(p.addr, &s, "ScreenService/Touch", r#"{"x":10,"y":10}"#).await;
+    assert_eq!((r.status, r.json()["code"].as_str()), (400, Some("failed_precondition")));
+    assert_eq!(pressed.lock().unwrap().len(), 2);
 
     // Firmware upload: streamed to the sink, described, then installed.
     let up = |body: &'static [u8]| {
@@ -650,4 +661,63 @@ async fn the_theme_setting() {
     assert_eq!(set("tides").await.json()["theme"]["source"], "SETTING_SOURCE_LOCAL");
     let r = set("").await;
     assert_eq!((&r.json()["theme"]["id"], &r.json()["theme"]["source"]), (&serde_json::json!("slate"), &serde_json::json!("SETTING_SOURCE_PROVISIONED")));
+}
+
+/// The D80's screen is a touchscreen: the layout says so and lists no
+/// keys, and a touch is a place and what the finger did there.
+#[tokio::test]
+async fn touches_of_the_touchscreen() {
+    use opendeskphone_state::TouchPhase::*;
+    let p = phone_of(Model::D80).await;
+    let s = login(p.addr, "789").await.ok().unwrap();
+
+    let v = rpc_json(p.addr, &s, "ScreenService/GetScreenLayout", "{}").await.json();
+    assert_eq!((&v["model"], &v["skin"], &v["touch"]), (&serde_json::json!("MODEL_D80"), &serde_json::json!("SKIN_TOUCH"), &serde_json::json!(true)));
+    assert_eq!(v["screens"], serde_json::json!([{ "id": "SCREEN_ID_MAIN", "width": 800, "height": 1280, "color": true }]));
+    assert_eq!(v.get("keys"), None, "no keys");
+
+    let rx = p.store.handle(Domain::Ui);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    std::thread::spawn(move || {
+        while let Some(env) = rx.recv() {
+            seen2.lock().unwrap().push(env.command.clone());
+            env.done();
+        }
+    });
+    // A drag, each event as it comes; a tap, which is down and up at one
+    // place (also with no action given); and a touch called off.
+    for body in [
+        r#"{"x":400,"y":1000,"action":"TOUCH_ACTION_DOWN"}"#,
+        r#"{"x":400,"y":700,"action":"TOUCH_ACTION_MOVE"}"#,
+        r#"{"x":399,"y":300,"action":"TOUCH_ACTION_UP"}"#,
+        r#"{"x":0,"y":1279,"action":"TOUCH_ACTION_TAP"}"#,
+        r#"{"x":799,"y":0}"#,
+        r#"{"x":5,"y":6,"action":"TOUCH_ACTION_DOWN"}"#,
+        r#"{"x":5,"y":6,"action":"TOUCH_ACTION_CANCEL"}"#,
+    ] {
+        let r = rpc_json(p.addr, &s, "ScreenService/Touch", body).await;
+        assert_eq!(r.status, 200, "{body}: {:?}", String::from_utf8_lossy(&r.body));
+    }
+    let t = |phase, x, y| Command::InjectTouch { phase, x, y };
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            t(Down, 400, 1000),
+            t(Move, 400, 700),
+            t(Up, 399, 300),
+            t(Down, 0, 1279),
+            t(Up, 0, 1279),
+            t(Down, 799, 0),
+            t(Up, 799, 0),
+            t(Down, 5, 6),
+            t(Cancel, 5, 6),
+        ]
+    );
+    // Off the screen.
+    for bad in [r#"{"x":800,"y":0}"#, r#"{"x":0,"y":1280}"#, r#"{"x":70000,"y":1}"#] {
+        let r = rpc_json(p.addr, &s, "ScreenService/Touch", bad).await;
+        assert_eq!((r.status, r.json()["code"].as_str()), (400, Some("invalid_argument")), "{bad}");
+    }
+    assert_eq!(seen.lock().unwrap().len(), 9);
 }

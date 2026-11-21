@@ -27,6 +27,7 @@ const modelNames: Record<number, string> = {
   [Model.D62]: "D62",
   [Model.D65]: "D65",
   [Model.D70]: "D70",
+  [Model.D80]: "D80",
 };
 
 /// A model's name ("D60"); empty for none.

@@ -67,6 +67,9 @@ fn glyph(c: char) -> [u8; 5] {
 
 struct Painter {
     display: Box<dyn Display>,
+    /// The touchscreen (D80): where the last touch is or was, and whether
+    /// the finger is still down.
+    finger: Option<(u16, u16, bool)>,
 }
 
 impl Painter {
@@ -102,7 +105,8 @@ impl Painter {
     }
 
     /// The whole picture: a title bar, the typed digits, the softkey bar,
-    /// and a block per softkey that lights while held.
+    /// a block per softkey that lights while held, and on the touchscreen
+    /// a cross where the finger is (lit) or was last lifted (gray).
     fn paint(&mut self, model: Model, dial: &str, held: Option<Key>, off_hook: bool) {
         let size = model.main_screen();
         let bar = model.softkey_bar_height();
@@ -122,6 +126,11 @@ impl Painter {
                 Rect::new(i * w + 3, size.height - bar + 3, w - 6, bar - 6),
                 if lit { (45, 212, 191) } else { (71, 85, 105) },
             );
+        }
+        if let Some((x, y, down)) = self.finger {
+            let rgb = if down { (225, 29, 72) } else { (148, 163, 184) };
+            self.fill(Screen::Main, Rect::new(x.saturating_sub(24), y.saturating_sub(2), 49, 5), rgb);
+            self.fill(Screen::Main, Rect::new(x.saturating_sub(2), y.saturating_sub(24), 5, 49), rgb);
         }
         let _ = self.display.flush(Screen::Main, &[]);
         if let Some(side) = model.side_screen() {
@@ -382,7 +391,7 @@ fn unsupported(c: &Command) -> Result<Reply, CommandError> {
 fn spawn_handlers(store: &Store, hal: Hal, config: Arc<Mutex<ConfigStore>>) {
     let model = hal.model;
     let sim = hal.sim.clone().expect("sim backend");
-    let painter = Arc::new(Mutex::new(Painter { display: hal.display }));
+    let painter = Arc::new(Mutex::new(Painter { display: hal.display, finger: None }));
     painter.lock().unwrap().paint(model, "", None, false);
 
     // Ui: keys go to the simulated keypad and onto the picture.
@@ -418,6 +427,18 @@ fn spawn_handlers(store: &Store, hal: Hal, config: Arc<Mutex<ConfigStore>>) {
             });
             let ui = store.get::<st::Ui>();
             p.lock().unwrap().paint(model, &ui.dial_buffer, held, *off_hook);
+            Ok(Reply::Done)
+        }
+        // Touches go to the simulated touchscreen, and the picture marks
+        // where the finger is.
+        Command::InjectTouch { phase, x, y } => {
+            if !model.is_touch() {
+                return Err(CommandError::Invalid(format!("the {model} has no touchscreen")));
+            }
+            sim2.touch(*phase, *x, *y);
+            let mut p = p.lock().unwrap();
+            p.finger = Some((*x, *y, matches!(phase, st::TouchPhase::Down | st::TouchPhase::Move)));
+            p.paint(model, &store.get::<st::Ui>().dial_buffer, held, store.get::<st::Audio>().off_hook);
             Ok(Reply::Done)
         }
         other => unsupported(other),
@@ -828,7 +849,9 @@ fn main() -> std::io::Result<()> {
 </contacts></phonebooks>"#,
         )?;
     }
-    let cfg_model: opendeskphone_config::Model = model.name().parse().expect("same model names");
+    // The configuration knows the seven keyed models; the D80 takes the
+    // D60's, as in the main role.
+    let cfg_model: opendeskphone_config::Model = model.name().parse().unwrap_or(opendeskphone_config::Model::D60);
     let config = ConfigStore::open(nv, cfg_model, std::env::temp_dir()).map_err(|e| std::io::Error::other(e.to_string()))?;
     let config = Arc::new(Mutex::new(config));
 
