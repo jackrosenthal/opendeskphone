@@ -295,4 +295,3 @@ pub const TRANSFER_NOW: &str = "Transfer now";
 pub const ASK_FIRST: &str = "Ask first";
 pub const COMPLETE_TRANSFER: &str = "Complete transfer";
 pub const TRANSFER_WHOM_TO: &str = "to";
-pub const RECENT: &str = "Recent";
