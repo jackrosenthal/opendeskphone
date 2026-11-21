@@ -261,12 +261,58 @@ impl ButtonStyle {
     pub fn colors(self, th: &Theme) -> (Rgb, Option<Rgb>, Rgb) {
         match self {
             ButtonStyle::Secondary => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
-            ButtonStyle::Primary => (th.sel_bg, None, th.sel_fg),
+            ButtonStyle::Primary => primary(th),
             ButtonStyle::Call => (th.sk_go, None, th.sk_fg),
             ButtonStyle::Destructive => (th.sk_stop, None, th.sk_fg),
             ButtonStyle::On => (th.sk_fg, None, th.sk_bg),
         }
     }
+}
+
+/// The hue of a color in degrees, and how saturated it is (0 to 255).
+fn hue_sat(c: Rgb) -> (i32, i32) {
+    let (r, g, b) = ((c >> 16 & 255) as i32, (c >> 8 & 255) as i32, (c & 255) as i32);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let d = max - min;
+    if d == 0 {
+        return (0, 0);
+    }
+    let hue = if max == r {
+        60 * (g - b) / d
+    } else if max == g {
+        120 + 60 * (b - r) / d
+    } else {
+        240 + 60 * (r - g) / d
+    };
+    (hue.rem_euclid(360), d * 255 / max)
+}
+
+/// The fill and the label of the main button: the theme's own color (the
+/// selection's), unless that could be taken for the green of a call or
+/// the red of what destroys (a theme of the woods, or of the desert).
+/// Then it is the same color with most of its hue taken out: green and
+/// red keep their meaning on every theme.
+fn primary(th: &Theme) -> (Rgb, Option<Rgb>, Rgb) {
+    let (hue, sat) = hue_sat(th.sel_bg);
+    let near = |role: Rgb| {
+        let d = (hue - hue_sat(role).0).abs();
+        d.min(360 - d) <= 45
+    };
+    if sat < 100 || !(near(th.sk_go) || near(th.sk_stop)) {
+        return (th.sel_bg, None, th.sel_fg);
+    }
+    let c = th.sel_bg;
+    let luma = ((c >> 16 & 255) * 77 + (c >> 8 & 255) * 150 + (c & 255) * 29) >> 8;
+    let fill = crate::gfx::mix(c, luma << 16 | luma << 8 | luma, 7);
+    let (black, white) = (0x000001, 0xFFFFFF);
+    let fg = if crate::skin::contrast(fill, th.sel_fg) >= crate::skin::TEXT_CONTRAST {
+        th.sel_fg
+    } else if crate::skin::contrast(fill, black) >= crate::skin::contrast(fill, white) {
+        black
+    } else {
+        white
+    };
+    (fill, None, fg)
 }
 
 /// [`button`] in the colors of `style`.

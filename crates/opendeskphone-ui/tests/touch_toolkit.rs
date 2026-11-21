@@ -233,6 +233,55 @@ fn the_button_styles_and_the_switch() {
     save_png(&c, &dir.join("buttons-and-switch.png"));
 }
 
+/// On every built-in theme the main button is not the green of a call nor
+/// the red of what destroys, and its label can be read: a theme whose own
+/// color is a green or a red has that button without the hue.
+#[test]
+fn the_main_button_is_not_green_or_red_on_any_theme() {
+    fn hue_sat(c: u32) -> (i32, i32) {
+        let (r, g, b) = ((c >> 16 & 255) as i32, (c >> 8 & 255) as i32, (c & 255) as i32);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let d = max - min;
+        if d == 0 {
+            return (0, 0);
+        }
+        let hue = if max == r {
+            60 * (g - b) / d
+        } else if max == g {
+            120 + 60 * (b - r) / d
+        } else {
+            240 + 60 * (r - g) / d
+        };
+        (hue.rem_euclid(360), d * 255 / max)
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/toolkit");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut changed = Vec::new();
+    for w in opendeskphone_ui::wallpaper::all() {
+        let th = Theme::for_model(Model::D80).in_wallpaper(w);
+        let (fill, _, fg) = ButtonStyle::Primary.colors(th);
+        let (hue, sat) = hue_sat(fill);
+        for role in [th.sk_go, th.sk_stop] {
+            let d = (hue - hue_sat(role).0).abs();
+            assert!(sat < 100 || d.min(360 - d) > 45, "{}: {fill:06X} beside {role:06X}", w.id);
+        }
+        assert!(opendeskphone_ui::skin::contrast(fg, fill) >= 4.5, "{}: {fg:06X} on {fill:06X}", w.id);
+        if fill != th.sel_bg {
+            changed.push(w.id);
+            let mut c = Canvas::new(800, 1280, false);
+            c.clear(th.bg);
+            widgets::title_bar(&mut c, th, IRect::new(0, 0, 800, th.title_h), w.name);
+            let styles = [ButtonStyle::Secondary, ButtonStyle::Primary, ButtonStyle::Call, ButtonStyle::Destructive, ButtonStyle::On];
+            for (i, style) in styles.into_iter().enumerate() {
+                widgets::button_styled(&mut c, th, IRect::new(40, 140 + i as i32 * 120, 400, 96), &format!("{style:?}"), style, Hit::Nothing);
+            }
+            save_png(&c, &dir.join(format!("theme-{}.png", w.id)));
+        }
+    }
+    // The themes of greens and of reds, and no other.
+    assert_eq!(changed, ["evergreen", "merlot", "ember", "sunrise", "lanterns", "dunes", "summit", "eclipse", "tartan", "hot-dog-stand", "forest"]);
+}
+
 /// Whether any pixel of `r` differs between the two pictures.
 fn differ(a: &[u32], b: &[u32], r: IRect) -> bool {
     (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| a[(y * 800 + x) as usize] != b[(y * 800 + x) as usize]))
