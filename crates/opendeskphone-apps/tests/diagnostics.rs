@@ -350,12 +350,21 @@ fn the_display_test_on_the_touchscreen() {
     p.touch(400, 96 + 48);
     p.shot("display-1-white");
     assert!(rest(&p).iter().all(|(_, _, c)| *c == WHITE), "the whole display, the softkey buttons' part too");
-    // The back button is over the pattern's corner.
-    assert!(p.pixels().0[..CORNER * w].iter().any(|c| *c != WHITE));
+    // The back button is over the pattern's corner, on a round button of
+    // its own: it shows on white, with dark and light of its own, as it
+    // does on black.
+    let corner = |p: &Phone| -> (bool, bool) {
+        let (px, _) = p.pixels();
+        let green = |c: &u32| (c >> 8) & 0xFF;
+        let corner: Vec<u32> = (0..CORNER).flat_map(|y| px[y * w..y * w + CORNER].to_vec()).collect();
+        (corner.iter().any(|c| green(c) < 0x60), corner.iter().any(|c| green(c) > 0xA0))
+    };
+    assert_eq!(corner(&p), (true, true), "the button and its arrow on white");
     // A touch anywhere shows the next pattern.
     p.touch(700, 1200);
     p.shot("display-2-black");
     assert!(rest(&p).iter().all(|(_, _, c)| *c == BLACK));
+    assert_eq!(corner(&p), (true, true), "the button and its arrow on black");
     p.touch(10, 600);
     p.shot("display-3-bars");
     let bars = [0xFF_0000, 0x00_FF00, 0x00_00FF, 0xFF_FF00, 0x00_FFFF, 0xFF_00FF, WHITE, BLACK];

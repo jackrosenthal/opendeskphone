@@ -225,10 +225,16 @@ fn the_back_button_is_the_cancel_key() {
     r.tap_hit(Hit::Key(Key::Cancel));
     assert_eq!(r.events(), [AppEvent::Key { widget: None, key: Key::Cancel }]);
     // It is over whatever the app has there, also a widget that takes
-    // touches, and also in a full-screen view.
+    // touches, and also in a full-screen view, where the arrow is on a
+    // round button of its own (the app draws there what it likes): more
+    // of the corner is drawn on than the arrow alone.
+    let drawn = |r: &Rig| (0..96 * 96).filter(|i| r.ui.canvas().pixel(i % 96, i / 96) != r.ui.canvas().pixel(95, 95)).count();
+    let arrow = drawn(&r);
     r.view.set_touch_claim(None, true);
     r.view.set_full_screen(true);
     r.ui.pump();
+    assert!(arrow > 0 && drawn(&r) > 72 * 72 / 2, "{arrow} {}", drawn(&r));
+    assert_eq!(r.ui.canvas().pixel(1, 1), r.ui.canvas().pixel(95, 95), "round: not the corner itself");
     assert_eq!(r.region(Hit::Key(Key::Cancel)), back);
     r.tap(10, 10);
     assert_eq!(r.events(), [AppEvent::Key { widget: None, key: Key::Cancel }]);
