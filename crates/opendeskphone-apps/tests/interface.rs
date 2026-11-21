@@ -34,8 +34,13 @@ fn commands(r: &Rig) -> Vec<Command> {
     r.commands()
 }
 
-fn hangups(r: &Rig) -> Vec<u32> {
-    commands(r).iter().filter_map(|c| if let Command::Hangup { call } = c { Some(call.0) } else { None }).collect()
+/// The calls hung up, once `n` have been: a hangup is posted, not waited
+/// for (see `common::recorded`).
+fn hangups(r: &Rig, n: usize) -> Vec<u32> {
+    common::recorded_of(&r.commands, n, |c| matches!(c, Command::Hangup { .. }))
+        .iter()
+        .filter_map(|c| if let Command::Hangup { call } = c { Some(call.0) } else { None })
+        .collect()
 }
 
 fn call(id: u32, hidden: bool) -> Call {
@@ -305,14 +310,14 @@ fn a_hidden_call_ends_with_the_app_that_got_it() {
     r.key("calendar", Key::Cancel);
     assert_eq!(r.ui.top(), None);
     assert!(!r.mgr.is_running("calendar"));
-    assert_eq!(hangups(&r), [] as [u32; 0]);
+    assert_eq!(hangups(&r, 0), [] as [u32; 0]);
 
     // The app that got the call shows itself, and leaves: the call ends.
     r.launch("checks");
-    assert_eq!(hangups(&r), [] as [u32; 0]);
+    assert_eq!(hangups(&r, 0), [] as [u32; 0]);
     ask(&mut r, "leave", "");
     assert_eq!(r.ui.top(), None);
-    assert_eq!(hangups(&r), [21]);
+    assert_eq!(hangups(&r, 1), [21]);
 }
 
 #[test]
@@ -322,7 +327,7 @@ fn a_hidden_call_ends_when_its_app_stops() {
     r.key("checks", Key::Cancel);
     hidden_call_arrives(&mut r, 22);
     r.mgr.close("checks");
-    assert_eq!(hangups(&r), [22]);
+    assert_eq!(hangups(&r, 1), [22]);
 }
 
 #[test]
@@ -330,9 +335,9 @@ fn a_hidden_call_no_app_got_ends_when_the_app_on_screen_leaves() {
     let mut r = rig();
     // No app observes the event of this call.
     hidden_call_arrives(&mut r, 23);
-    assert_eq!(hangups(&r), [] as [u32; 0]);
+    assert_eq!(hangups(&r, 0), [] as [u32; 0]);
     r.key("checks", Key::Cancel);
-    assert_eq!(hangups(&r), [23]);
+    assert_eq!(hangups(&r, 1), [23]);
 }
 
 #[test]
@@ -342,9 +347,10 @@ fn an_app_stops_only_the_sound_the_app_started() {
     let mut r = rig();
     let audio = Arc::new(Mutex::new(Vec::new()));
     common::answer_commands(&r.store, Domain::Audio, audio.clone(), |_| Ok(Reply::Done));
-    // What the audio side was asked since the last look, by kind.
-    let asked = |audio: &Arc<Mutex<Vec<Command>>>| -> Vec<&'static str> {
-        std::thread::sleep(std::time::Duration::from_millis(30));
+    // What the audio side was asked since the last look, by kind, once it
+    // has been asked `n` things.
+    let asked = |audio: &Arc<Mutex<Vec<Command>>>, n: usize| -> Vec<&'static str> {
+        common::recorded(audio, n);
         audio
             .lock()
             .unwrap()
@@ -362,25 +368,25 @@ fn an_app_stops_only_the_sound_the_app_started() {
     // ringtone preview of the settings) is not the app's to stop.
     ask(&mut r, "stop", "");
     ask(&mut r, "preview", "");
-    assert_eq!(asked(&audio), [] as [&str; 0]);
+    assert_eq!(asked(&audio, 0), [] as [&str; 0]);
 
     // The app's sound is the app's to stop.
     assert_eq!(ask(&mut r, "play", ""), "Ok(())");
     ask(&mut r, "stop", "");
-    assert_eq!(asked(&audio), ["play", "stop"]);
+    assert_eq!(asked(&audio, 2), ["play", "stop"]);
     // The sound is over (here: another sound took its place); stopping
     // again would stop that other sound.
     r.store.emit(Event::PlaybackStopped { app: "checks".into(), position_secs: 1 });
     r.settle();
     assert_eq!(seen(&r), "stopped 1");
     ask(&mut r, "stop", "");
-    assert_eq!(asked(&audio), [] as [&str; 0]);
+    assert_eq!(asked(&audio, 0), [] as [&str; 0]);
 
     // The preview the app started is the app's to stop, once.
     ask(&mut r, "preview", "Buzzer");
     ask(&mut r, "preview", "");
     ask(&mut r, "preview", "");
-    assert_eq!(asked(&audio), ["preview", "stop"]);
+    assert_eq!(asked(&audio, 2), ["preview", "stop"]);
 }
 
 /// The guest on a phone of this model.
