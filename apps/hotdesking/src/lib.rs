@@ -1,9 +1,19 @@
 //! Hot desking: log a user in to this phone with an extension and PIN, or
 //! log the current user out.  The phone reprovisions for the new user, and
 //! the app stays on screen until the phone says how that ended.
+//!
+//! On the touchscreen the form opens with the extension's input focused
+//! and the on-screen keyboard up.  The keyboard's key that ends an input
+//! goes on to the PIN, and from the PIN logs in: the extension, that key,
+//! the PIN, and that key again are all it takes.  (The app moves on and
+//! logs in on `WidgetEvent::Submitted`, whether the keyboard has moved the
+//! focus on itself or not.)  With the keyboard put away, "Log in" is a
+//! button across the bottom; "Log out" and "Try again" are buttons too,
+//! and logging out asks on a screen with "Cancel" and "Log out".
 
+use opendeskphone_app_sdk::controls::{self, Button, Look};
 use opendeskphone_app_sdk::prelude::*;
-use opendeskphone_app_sdk::{InputMode, hotdesk};
+use opendeskphone_app_sdk::{InputMode, hotdesk, nav};
 
 const SK_LOGIN: u32 = 1;
 const SK_LOGOUT: u32 = 2;
@@ -15,7 +25,7 @@ const SK_BACK: u32 = 6;
 /// The softkeys the touchscreen does without: the back button is the way
 /// back and out.
 fn keys(keys: &[Softkey]) -> Vec<Softkey> {
-    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_BACK])
+    nav::softkeys(keys, &[SK_EXIT, SK_BACK])
 }
 
 #[derive(Default)]
@@ -33,39 +43,66 @@ enum Screen {
 #[derive(Default)]
 struct HotDesk {
     screen: Screen,
+    /// Touch: the screen's button, with the softkey whose work it does,
+    /// and the question before logging out.
+    button: Option<(Button, u32)>,
+    confirm: Option<nav::Confirm>,
 }
 
 impl HotDesk {
+    /// Touch: a button across the bottom of the window that does what the
+    /// softkey `id` does.
+    fn button(&mut self, label: &str, look: Look, id: u32) {
+        let (_, bottom) = controls::split_bottom(content_rect());
+        self.button = Some((Button::new(ROOT, bottom, label, look), id));
+    }
+
     fn show(&mut self) {
+        self.button = None;
+        self.confirm = None;
         let user = hotdesk::current_user();
         if user.is_empty() {
+            // (Touch: "Log in" is a button.)
+            let softkeys = if has_keys() {
+                vec![Softkey::new(SK_LOGIN, "Log In"), Softkey::new(SK_EXIT, "Cancel")]
+            } else {
+                Vec::new()
+            };
             let form = Form::show(
                 "Log In",
                 &[
                     ("Extension", InputMode::Numeric, ""),
                     ("PIN", InputMode::Pin, ""),
                 ],
-                &keys(&[
-                    Softkey::new(SK_LOGIN, "Log In"),
-                    Softkey::new(SK_EXIT, "Cancel"),
-                ]),
+                &softkeys,
             );
+            if !has_keys() {
+                self.button("Log in", Look::Primary, SK_LOGIN);
+            }
             self.screen = Screen::Login(form);
         } else {
             Message::show(
                 "Hot Desking",
                 &format!("Logged in as {user}."),
-                &keys(&[
-                    Softkey::new(SK_LOGOUT, "Log Out"),
-                    Softkey::new(SK_EXIT, "Exit"),
-                ]),
+                &if has_keys() {
+                    vec![Softkey::new(SK_LOGOUT, "Log Out"), Softkey::new(SK_EXIT, "Exit")]
+                } else {
+                    Vec::new()
+                },
             );
+            if !has_keys() {
+                self.button("Log out", Look::Primary, SK_LOGOUT);
+            }
             self.screen = Screen::LoggedIn;
         }
     }
 
     fn fail(&mut self, text: &str) {
+        self.button = None;
         Message::show("Hot Desking", text, &keys(&[Softkey::new(SK_BACK, "Back")]));
+        if !has_keys() {
+            self.button("Try again", Look::Primary, SK_BACK);
+        }
         self.screen = Screen::Failed;
     }
 
@@ -85,6 +122,8 @@ impl HotDesk {
 
     /// Shows what the phone is doing until `Event::HotdeskDone` comes.
     fn wait(&mut self, text: &str) {
+        self.button = None;
+        self.confirm = None;
         Message::show("Hot Desking", text, &keys(&[Softkey::new(SK_EXIT, "Exit")]));
         self.screen = Screen::Working;
     }
@@ -97,7 +136,32 @@ impl HotDesk {
         match result {
             // Logged in: who the phone is now for.  Logged out: the form.
             Ok(()) => self.show(),
-            Err(why) => self.fail(&format!("The PBX did not allow that:\n{why}")),
+            Err(why) if has_keys() => self.fail(&format!("The PBX did not allow that:\n{why}")),
+            Err(why) => self.fail(&format!(
+                "The PBX did not allow that: {why}\nCheck the extension and the PIN, and try again."
+            )),
+        }
+    }
+
+    fn ask_logout(&mut self) {
+        let question = format!("Log {} out of this phone?", hotdesk::current_user());
+        if has_keys() {
+            Message::show("Log Out", &question, &keys(&[Softkey::new(SK_YES, "Yes"), Softkey::new(SK_NO, "No")]));
+        } else {
+            self.button = None;
+            self.confirm = Some(nav::Confirm::show("Log Out", &question, "Log out", Look::Primary));
+        }
+        self.screen = Screen::Confirm;
+    }
+
+    /// Touch: what a finger did on a widget that takes touches.
+    fn touched(&mut self, w: Widget, t: &Touch) {
+        if let Some(yes) = self.confirm.as_mut().and_then(|c| c.touched(w, t)) {
+            return self.handle(Event::Softkey(if yes { SK_YES } else { SK_NO }));
+        }
+        let tapped = self.button.as_mut().and_then(|(b, id)| b.touched(w, t).then_some(*id));
+        if let Some(id) = tapped {
+            self.handle(Event::Softkey(id));
         }
     }
 }
@@ -118,14 +182,8 @@ impl App for HotDesk {
                     self.login();
                 }
             }
-            Event::Softkey(SK_LOGOUT) => {
-                Message::show(
-                    "Log Out",
-                    &format!("Log {} out of this phone?", hotdesk::current_user()),
-                    &keys(&[Softkey::new(SK_YES, "Yes"), Softkey::new(SK_NO, "No")]),
-                );
-                self.screen = Screen::Confirm;
-            }
+            Event::Touch((w, t)) => self.touched(w, &t),
+            Event::Softkey(SK_LOGOUT) => self.ask_logout(),
             Event::Softkey(SK_YES) => match hotdesk::logout() {
                 Ok(()) => self.wait("Logging out..."),
                 Err(_) => self.fail("The phone could not log out."),

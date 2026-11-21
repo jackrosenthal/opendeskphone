@@ -1026,14 +1026,60 @@ fn hotdesking_by_touch() {
     // A label is not an input.
     r.ui.tap("hotdesking", 100, 96 + 8 + 96 + 16 + 48);
     assert_eq!(r.ui.focused("hotdesking"), extension);
-    assert_eq!(r.ui.softkeys("hotdesking"), ["Log In"]);
-    r.softkey("hotdesking", "Log In");
+    // "Log in" is a button across the bottom, not a softkey.
+    assert_eq!(r.ui.softkeys("hotdesking"), [] as [&str; 0]);
+    assert_eq!(common::labels(&r, "hotdesking"), ["Log in"]);
+    assert_eq!(common::button(&r, "hotdesking", "Log in").fill, common::highlight());
+    common::press(&mut r, "hotdesking", "Log in");
     assert!(
         r.commands()
             .iter()
             .any(|c| matches!(c, Command::SelectUser { id, pin } if id == "101" && pin == "4321"))
     );
     assert!(r.ui.shows("hotdesking", "Logging in 101..."));
+
+    // The PBX refuses the PIN: the app says so, and what to do; "Try
+    // again" is the form again.
+    r.store.update::<opendeskphone_state::Provisioning, _>(|p| {
+        p.selection = Some(Err("Invalid password (-199)".into()));
+    });
+    r.settle();
+    assert!(r.ui.shows("hotdesking", "Check the extension and the PIN"), "{:?}", r.ui.texts("hotdesking"));
+    assert_eq!(common::labels(&r, "hotdesking"), ["Try again"]);
+    common::press(&mut r, "hotdesking", "Try again");
+    assert_eq!(common::labels(&r, "hotdesking"), ["Log in"]);
+
+    // The key that ends an input (Select, as the keyboard's sends it)
+    // moves on to the PIN, and from the PIN logs in.
+    r.store.update::<opendeskphone_state::Provisioning, _>(|p| p.selection = None);
+    r.ui.type_text("hotdesking", "101");
+    r.key("hotdesking", Key::Select);
+    r.ui.type_text("hotdesking", "1234");
+    r.key("hotdesking", Key::Select);
+    assert!(
+        r.commands()
+            .iter()
+            .any(|c| matches!(c, Command::SelectUser { id, pin } if id == "101" && pin == "1234"))
+    );
+    r.store.update::<opendeskphone_state::Provisioning, _>(|p| {
+        p.assigned_user = "101".into();
+        p.selection = Some(Ok(()));
+    });
+    r.settle();
+    assert!(r.ui.shows("hotdesking", "Logged in as 101"));
+
+    // "Log out" asks, with "Cancel" and "Log out".
+    r.store.update::<opendeskphone_state::Provisioning, _>(|p| p.selection = None);
+    assert_eq!(common::labels(&r, "hotdesking"), ["Log out"]);
+    common::press(&mut r, "hotdesking", "Log out");
+    assert!(r.ui.shows("hotdesking", "Log 101 out of this phone?"));
+    assert_eq!(common::labels(&r, "hotdesking"), ["Cancel", "Log out"]);
+    common::press(&mut r, "hotdesking", "Cancel");
+    assert!(r.ui.shows("hotdesking", "Logged in as 101"));
+    common::press(&mut r, "hotdesking", "Log out");
+    common::press(&mut r, "hotdesking", "Log out");
+    assert!(r.commands().iter().any(|c| matches!(c, Command::SelectUser { id, .. } if id.is_empty())));
+    assert!(r.ui.shows("hotdesking", "Logging out..."));
 }
 
 #[test]
@@ -1353,19 +1399,21 @@ fn hotdesking_is_logged_in_to_with_the_on_screen_keyboard() {
 }
 
 #[test]
-fn the_keyboard_is_put_away_for_hotdesking_s_softkeys() {
-    use opendeskphone_ui::Hit;
+fn the_keyboard_is_put_away_for_hotdesking_s_button() {
     use opendeskphone_ui::osk::Cap;
     let mut p = TouchPhone::new();
     p.mgr.launch("hotdesking").unwrap();
     p.settle();
     p.type_keys("101");
-    // The back button puts the keyboard away: the softkeys are buttons
-    // again, and the app is still there, with what was typed.
+    // The back button puts the keyboard away: "Log in" is there, across
+    // the bottom of the window, and the app is still there, with what was
+    // typed.
     p.sim.touch_tap(48, 48);
     p.settle();
     assert_eq!(p.ui.screen_name(), "app:hotdesking");
-    assert!(!p.has(Cap::Done.hit()) && p.has(Hit::Key(Key::Soft(1))));
+    assert!(!p.has(Cap::Done.hit()));
+    let c = p.ui.canvas();
+    assert_ne!(c.pixel(400, 1048 + 10), c.pixel(400, 1000), "the button");
     p.shot("hotdesking-keyboard-away");
     // The back button now leaves the app.
     p.sim.touch_tap(48, 48);
