@@ -5,6 +5,10 @@
 //! the event `digium.incomingCall.voicemail`; the app answers it while it
 //! is on screen (and rejects it otherwise), and sends `*`, `#`, and `0` as
 //! DTMF for rewind, skip, and pause.
+//!
+//! On the touchscreen, which has no keys, touching a message highlights
+//! it, for the softkeys to act on ("Play" plays it), and rewind, pause,
+//! and skip are softkeys while a message plays.
 
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::{VoicemailMessage, VoicemailSort};
@@ -22,6 +26,9 @@ const SK_STOP: u32 = 10;
 const SK_OPEN: u32 = 11;
 const SK_MOVE: u32 = 12;
 const SK_REFRESH: u32 = 13;
+const SK_REWIND: u32 = 14;
+const SK_PAUSE: u32 = 15;
+const SK_SKIP: u32 = 16;
 
 const PLAYBACK_EVENT: &str = "digium.incomingCall.voicemail";
 const PAGE: u32 = 30;
@@ -177,13 +184,7 @@ impl Voicemail {
     fn draw_list(&mut self) {
         let r = screen(&folder_title(&self.folder));
         if self.messages.is_empty() {
-            let t = ui::create(
-                WidgetKind::Text,
-                ROOT,
-                Rect::new(4, r.y + 2, r.width - 8, r.height - 4),
-            );
-            ui::set_wrap(t, true);
-            ui::set_text(t, "No messages.");
+            opendeskphone_app_sdk::nav::note(r, "No messages.");
             ui::set_softkeys(
                 ROOT,
                 &[
@@ -250,10 +251,29 @@ impl Voicemail {
             m.duration / 60,
             m.duration % 60
         );
-        Message::show("Playing", &text, &[Softkey::new(SK_STOP, "Stop")]);
+        let mut keys = vec![Softkey::new(SK_STOP, "Stop")];
+        if !has_keys() {
+            // What `*`, `0`, and `#` do on a phone that has them.
+            keys.extend([
+                Softkey::new(SK_REWIND, "Rewind"),
+                Softkey::new(SK_PAUSE, "Pause"),
+                Softkey::new(SK_SKIP, "Skip"),
+            ]);
+        }
+        Message::show("Playing", &text, &keys);
         ui::claim_keys(ROOT, &[Key::Cancel, Key::Star, Key::Pound, Key::Digit(0)]);
         self.current = Some(m);
         self.screen = Screen::Playing;
+    }
+
+    /// Sends the PBX's playback a digit: `*` rewinds, `#` skips, and `0`
+    /// pauses.
+    fn control(&mut self, digit: &str) {
+        if self.screen == Screen::Playing
+            && let Some(call) = self.call
+        {
+            let _ = calls::send_dtmf(call, digit);
+        }
     }
 
     fn stop_playing(&mut self) {
@@ -404,16 +424,9 @@ impl App for Voicemail {
             }
             Event::Key(k) => match (k, &self.screen) {
                 // Rewind, skip, and pause.
-                (Key::Star | Key::Pound | Key::Digit(0), Screen::Playing) => {
-                    let digit = match k {
-                        Key::Star => "*",
-                        Key::Pound => "#",
-                        _ => "0",
-                    };
-                    if let Some(call) = self.call {
-                        let _ = calls::send_dtmf(call, digit);
-                    }
-                }
+                (Key::Star, Screen::Playing) => self.control("*"),
+                (Key::Pound, Screen::Playing) => self.control("#"),
+                (Key::Digit(0), Screen::Playing) => self.control("0"),
                 (Key::Cancel, Screen::Playing) => self.stop_playing(),
                 (Key::Cancel, Screen::Folders | Screen::MoveTo | Screen::ConfirmDelete) => {
                     self.current = None;
@@ -428,6 +441,10 @@ impl App for Voicemail {
                 }
             }
             Event::Widget((_, WidgetEvent::Activated(i))) => match self.screen {
+                // Touch: the touch that activates a message is the one
+                // that highlights it, and the softkeys are for the
+                // highlighted one.  "Play" plays it.
+                Screen::List if !has_keys() => {}
                 Screen::List => self.play(),
                 Screen::Folders => {
                     if let Some(f) = self.folders.get(i as usize) {
@@ -445,6 +462,9 @@ impl App for Voicemail {
             },
             Event::Softkey(SK_PLAY) => self.play(),
             Event::Softkey(SK_STOP) => self.stop_playing(),
+            Event::Softkey(SK_REWIND) => self.control("*"),
+            Event::Softkey(SK_PAUSE) => self.control("0"),
+            Event::Softkey(SK_SKIP) => self.control("#"),
             Event::Softkey(SK_DELETE) => {
                 if let Some(m) = self.selected() {
                     Message::show(

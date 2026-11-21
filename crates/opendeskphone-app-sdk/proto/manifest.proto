@@ -93,6 +93,7 @@ enum PhoneModel {
   PHONE_MODEL_D62 = 5;
   PHONE_MODEL_D65 = 6;
   PHONE_MODEL_D70 = 7;
+  PHONE_MODEL_D80 = 8;
 }
 
 // The phone's icons, in the order of the enum `icon` of the app interface

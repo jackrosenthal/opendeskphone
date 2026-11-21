@@ -62,11 +62,7 @@ impl AppWindow for UiWindow {
                 opendeskphone_state::Skin::SmallGray => Skin::SmallGray,
                 opendeskphone_state::Skin::LargeGray => Skin::LargeGray,
                 opendeskphone_state::Skin::Color => Skin::Color,
-                // TODO(D80 app API): the app interface's `skin` enum
-                // (`wit/app.wit`) has no `touch` case yet.  Until it has,
-                // a D80 tells an app it has the color skin, with the
-                // touch skin's (larger) metrics.
-                opendeskphone_state::Skin::Touch => Skin::Color,
+                opendeskphone_state::Skin::Touch => Skin::Touch,
             },
             width: m.width,
             height: m.height,
@@ -76,6 +72,8 @@ impl AppWindow for UiWindow {
             row_height: m.row_height,
             scroll_bar_width: m.scroll_bar_width,
             color: m.color,
+            keys: m.keys,
+            back_width: m.back_width,
         }
     }
     fn create(&mut self, kind: WidgetKind, parent: Option<u32>, bounds: Rect) -> u32 {
@@ -323,7 +321,11 @@ impl AppWindow for UiWindow {
             None => self.view.set_window_key_claims(claims),
         }
     }
+    fn claim_touch(&mut self, w: Option<u32>, on: bool) {
+        self.view.set_touch_claim(w.map(id), on);
+    }
     fn poll_event(&mut self) -> Option<WindowEvent> {
+        let point = |x, y| Point { x, y };
         loop {
             return Some(match self.events.try_recv()? {
                 AppEvent::Foreground => WindowEvent::Foreground,
@@ -346,6 +348,14 @@ impl AppWindow for UiWindow {
                 AppEvent::InputSubmitted { widget, value } => WindowEvent::Submitted {
                     widget: widget.0,
                     value,
+                },
+                AppEvent::Touch { widget, touch } => WindowEvent::Touch {
+                    widget: widget.map_or(0, |w| w.0),
+                    touch: match touch {
+                        tk::Touch::Tap { x, y } => Touch::Tap(point(x, y)),
+                        tk::Touch::Drag { x0, y0, x, y } => Touch::Drag((point(x0, y0), point(x, y))),
+                        tk::Touch::DragEnd { x0, y0, x, y } => Touch::DragEnd((point(x0, y0), point(x, y))),
+                    },
                 },
                 AppEvent::CloseRequested => WindowEvent::CloseRequested,
                 AppEvent::Focused { .. } => continue,

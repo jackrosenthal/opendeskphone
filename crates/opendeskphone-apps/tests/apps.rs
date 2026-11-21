@@ -857,3 +857,235 @@ fn diagnostics_menu_tests_and_status_pages() {
     assert_eq!(r.ui.top(), None);
     assert!(!r.mgr.is_running("diagnostics"));
 }
+
+// ---------------------------------------------------------------- touch
+//
+// The D80 has a touchscreen and no keys: the apps are used through their
+// lists, their softkey buttons, and the back button (which is the key
+// `Cancel`).
+
+use opendeskphone_state::Model;
+
+/// A D80.
+fn touch_rig(config: FakeConfig) -> Rig {
+    Rig::with_root(common::staged(), config, Model::D80)
+}
+
+/// A finger on row `row` of a list that begins under the title, in the
+/// D80's window: the title and each row are 96 pixels high.
+fn tap_list_row(r: &mut Rig, app: &str, row: i32) {
+    r.ui.tap(app, 400, 96 + row * 96 + 48);
+    r.settle();
+}
+
+/// The back button.
+fn back(r: &mut Rig, app: &str) {
+    r.key(app, Key::Cancel);
+}
+
+#[test]
+fn status_by_touch() {
+    let mut r = touch_rig(FakeConfig::dasp());
+    r.pbx.on("switchvox.users.presence.options.getList", |_| {
+        Ok(json!({"presence_options": {"presence_option": [
+            {"id": "1", "presence": "available", "sub_presence": "", "owner": "system", "active": "1"},
+            {"id": "2", "presence": "away", "sub_presence": "Lunch", "owner": "system", "active": "0"},
+            {"id": "3", "presence": "dnd", "sub_presence": "", "owner": "system", "active": "0"},
+        ]}}))
+    });
+    r.pbx.on("switchvox.users.presence.getInfo", |_| {
+        Ok(json!({"presence": {"id": "1", "presence": "available", "sub_presence": "", "message": ""}}))
+    });
+    r.pbx.on("switchvox.users.presence.update", |_| Ok(json!({"success": {}})));
+    r.launch("status");
+    assert_eq!(r.ui.items("status").len(), 3);
+    // The message's screen, and the back button out of it.
+    r.softkey("status", "Message");
+    r.ui.type_text("status", "Back at 1");
+    r.settle();
+    back(&mut r, "status");
+    assert_eq!(r.ui.items("status").len(), 3, "the back button leaves the message for the list");
+    // Touching a status sets it.
+    tap_list_row(&mut r, "status", 2);
+    assert_eq!(r.pbx.last("switchvox.users.presence.update").unwrap()["presence_option_id"], "3");
+    assert_eq!(r.ui.top(), None);
+}
+
+#[test]
+fn parking_by_touch() {
+    let mut r = touch_rig(FakeConfig::dasp());
+    r.pbx.on("switchvox.users.parkingLots.getList", |_| {
+        Ok(json!({"parking_lots": {"parking_lot": [{
+        "account_id": "100", "parking_lot_start": "701", "parking_lot_stop": "720",
+        "parked_calls": {"parked_call": [
+            {"from_caller_id_name": "Alice", "from_caller_id_number": "101",
+             "duration": "75", "lotnum": "702", "current_call_id": "PJSIP/101-1"},
+            {"from_caller_id_name": "", "from_caller_id_number": "5551234",
+             "duration": "5", "lotnum": "701", "current_call_id": "PJSIP/t-2"},
+        ]}}]}}))
+    });
+    r.launch("parking");
+    assert_eq!(r.ui.items("parking").len(), 2);
+    // Touching a parked call takes it.
+    tap_list_row(&mut r, "parking", 1);
+    assert!(r.commands().iter().any(|c| matches!(c, Command::Dial { target, .. } if target == "702")));
+    assert_eq!(r.ui.top(), None);
+}
+
+#[test]
+fn queues_by_touch() {
+    let mut r = touch_rig(FakeConfig::dasp());
+    r.pbx.on("switchvox.users.callQueues.getList", |_| {
+        Ok(json!({"callQueues": {"callQueue": [
+            {"name": "Sales", "account_id": "600", "loggedin_status": "permanent"},
+            {"name": "Support", "account_id": "601", "loggedin_status": "logged_out"}]}}))
+    });
+    r.pbx.on("switchvox.users.callQueues.login", |_| Ok(json!({"success": {}})));
+    r.pbx.on("switchvox.users.callQueues.getTodaysStatus", |_| {
+        Ok(
+            json!({"callQueue": {"overview": {"total_members": "4", "logged_in_count": "2",
+            "members_on_call": "1", "callers_waiting": "3", "total_calls": "40",
+            "completed_calls_today": "35", "abandoned_calls": "5"}}}),
+        )
+    });
+    r.launch("queues");
+    assert_eq!(r.ui.softkeys("queues"), ["Pause", "Details", "Exit"]);
+    // Touching a queue highlights it, and the softkeys are that queue's:
+    // nothing else happens, so the other queue can be reached.
+    tap_list_row(&mut r, "queues", 1);
+    assert_eq!(r.ui.softkeys("queues"), ["Log In", "Details", "Exit"]);
+    assert_eq!(r.ui.items("queues").len(), 2);
+    assert_eq!(r.pbx.count("switchvox.users.callQueues.getTodaysStatus"), 0);
+    r.softkey("queues", "Log In");
+    assert_eq!(r.pbx.last("switchvox.users.callQueues.login").unwrap()["call_queue_account_id"], "601");
+    // The first queue again, and its details, by the softkey.
+    tap_list_row(&mut r, "queues", 0);
+    tap_list_row(&mut r, "queues", 0);
+    assert_eq!(r.pbx.count("switchvox.users.callQueues.getTodaysStatus"), 0);
+    r.softkey("queues", "Details");
+    assert!(r.ui.shows("queues", "Waiting: 3"));
+    assert_eq!(
+        r.pbx.last("switchvox.users.callQueues.getTodaysStatus").unwrap()["call_queue_account_id"],
+        "600"
+    );
+    back(&mut r, "queues");
+    assert_eq!(r.ui.items("queues").len(), 2);
+    back(&mut r, "queues");
+    assert_eq!(r.ui.top(), None);
+}
+
+#[test]
+fn hotdesking_by_touch() {
+    let mut r = touch_rig(FakeConfig::dasp());
+    r.launch("hotdesking");
+    // The form's rows are a row's height, with space between, under the
+    // title: the first input has the focus, and a touch gives it to the
+    // other.
+    let extension = r.ui.focused("hotdesking");
+    r.ui.type_text("hotdesking", "101");
+    r.ui.tap("hotdesking", 500, 96 + 8 + 96 + 16 + 48);
+    r.settle();
+    let pin = r.ui.focused("hotdesking");
+    assert!(pin.is_some() && pin != extension, "the PIN's input is touched");
+    r.ui.type_text("hotdesking", "4321");
+    r.settle();
+    // And back to the first, which is as high as a row.
+    r.ui.tap("hotdesking", 500, 96 + 8 + 90);
+    assert_eq!(r.ui.focused("hotdesking"), extension);
+    // A label is not an input.
+    r.ui.tap("hotdesking", 100, 96 + 8 + 96 + 16 + 48);
+    assert_eq!(r.ui.focused("hotdesking"), extension);
+    r.softkey("hotdesking", "Log In");
+    assert!(
+        r.commands()
+            .iter()
+            .any(|c| matches!(c, Command::SelectUser { id, pin } if id == "101" && pin == "4321"))
+    );
+    assert!(r.ui.shows("hotdesking", "Logging in 101..."));
+}
+
+#[test]
+fn contacts_by_touch() {
+    let mut r = touch_rig(contacts_config(true));
+    r.launch("contacts");
+    // The groups; touching one opens it.
+    tap_list_row(&mut r, "contacts", 0);
+    assert_eq!(r.ui.items("contacts").len(), 2);
+    // No softkey is for a highlighted row: a contact is touched.
+    assert_eq!(r.ui.softkeys("contacts"), ["Search", "Groups", "Exit"]);
+    // Touching a contact shows its numbers, and dials nothing yet.
+    tap_list_row(&mut r, "contacts", 0);
+    assert_eq!(
+        r.ui.items("contacts"),
+        vec![
+            ("Extension".to_string(), "101".to_string()),
+            ("Mobile".to_string(), "5550101".to_string())
+        ]
+    );
+    assert_eq!(r.ui.softkeys("contacts"), ["Back"]);
+    assert!(!r.commands().iter().any(|c| matches!(c, Command::Dial { .. })));
+    // The back button, and the search: its list is under the input.
+    back(&mut r, "contacts");
+    r.softkey("contacts", "Search");
+    assert_eq!(r.ui.softkeys("contacts"), ["Back"]);
+    r.ui.type_text("contacts", "bo");
+    r.settle();
+    assert_eq!(r.ui.items("contacts"), vec![("Bob Young".to_string(), String::new())]);
+    r.ui.tap("contacts", 400, 96 + 96 + 2 + 48);
+    r.settle();
+    assert_eq!(r.ui.items("contacts"), vec![("Extension".to_string(), "102".to_string())]);
+    // Touching a number dials it.
+    tap_list_row(&mut r, "contacts", 0);
+    assert!(r.commands().iter().any(|c| matches!(c, Command::Dial { target, .. } if target == "102")));
+    assert_eq!(r.ui.top(), None);
+}
+
+#[test]
+fn voicemail_by_touch() {
+    let mut r = touch_rig(FakeConfig::dasp());
+    voicemail_pbx(&r);
+    r.launch("voicemail");
+    assert_eq!(r.ui.softkeys("voicemail")[3], "Read");
+    // Touching a message highlights it, for the softkeys: it does not
+    // play by that.
+    tap_list_row(&mut r, "voicemail", 1);
+    assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 0);
+    assert_eq!(r.ui.softkeys("voicemail")[3], "Unread");
+    tap_list_row(&mut r, "voicemail", 1);
+    assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 0);
+    r.softkey("voicemail", "Play");
+    assert_eq!(r.pbx.last("switchvox.users.voicemail.play").unwrap()["message_id"], "msg0000");
+    // What `*`, `0`, and `#` do on the other phones are softkeys.
+    assert_eq!(r.ui.softkeys("voicemail"), ["Stop", "Rewind", "Pause", "Skip"]);
+    let mut call = Call::new(CallId(9), AccountId(0), Direction::Incoming, Party::default());
+    call.state = CallState::Ringing;
+    r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.push(call.clone()));
+    r.store.emit(Event::Push { name: "digium.incomingCall.voicemail".into(), body: String::new() });
+    r.settle();
+    for (key, digit) in [("Rewind", '*'), ("Pause", '0'), ("Skip", '#')] {
+        r.softkey("voicemail", key);
+        assert!(
+            r.commands().iter().any(|c| matches!(c, Command::Dtmf { call, digit: d } if call.0 == 9 && *d == digit)),
+            "{key}"
+        );
+    }
+    // The back button stops it.
+    back(&mut r, "voicemail");
+    assert!(r.commands().iter().any(|c| matches!(c, Command::Hangup { call } if call.0 == 9)));
+    assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
+    // A folder is opened by touching it.
+    r.softkey("voicemail", "Folders");
+    tap_list_row(&mut r, "voicemail", 1);
+    assert!(r.ui.shows("voicemail", "No messages."));
+    assert_eq!(r.pbx.last("switchvox.users.voicemail.getList").unwrap()["folder"], "Old");
+}
+
+#[test]
+fn a_playing_message_has_one_softkey_on_a_phone_with_keys() {
+    // Rewind, pause, and skip are keys there.
+    let mut r = rig();
+    voicemail_pbx(&r);
+    r.launch("voicemail");
+    r.softkey("voicemail", "Play");
+    assert_eq!(r.ui.softkeys("voicemail"), ["Stop"]);
+}

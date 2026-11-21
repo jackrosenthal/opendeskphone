@@ -7,6 +7,10 @@
 //! The game has the whole display: there are no softkeys.  Cancel, which
 //! the app leaves to the phone, closes it, as does line key 1.
 //!
+//! The touchscreen has no keys: a touch anywhere starts a game and flaps
+//! (the phone's back button, in the corner, leaves), and between games a
+//! button under the plate shows the leaderboard and takes it away.
+//!
 //! The leaderboard is the best scores of the PBX's users, each with the
 //! date and time it was set, the same on every phone: Down or Up shows it
 //! between games, and takes it away again.  It is one shared key of the
@@ -64,6 +68,12 @@ const SEED_FILE: &str = "seed";
 const START_HINT: &str = "Any key flaps.  Cancel leaves.";
 /// Said on the start screen and after a game.
 const BOARD_HINT: &str = "Down shows the leaderboard.";
+/// The same where there are no keys: the leaderboard has a button there.
+const TOUCH_START_HINT: &str = "Touch to flap.";
+const TOUCH_AGAIN_HINT: &str = "Touch to play again.";
+/// The button's label, and its label while the leaderboard shows.
+const BOARD_BUTTON: &str = "Leaderboard";
+const BACK_BUTTON: &str = "Back";
 
 /// The leaderboard's key among the app's shared keys on the PBX.  Its
 /// value is the rows as [`board::format`] writes them.
@@ -155,8 +165,11 @@ struct Look {
     /// The window.
     width: i32,
     height: i32,
-    /// Size of one pixel of the artwork: 2 on the color screens.
+    /// Size of one pixel of the artwork: 2 on the color screens, 4 on
+    /// the touchscreen.
     unit: i32,
+    /// The phone has no keys: the game is played by touch.
+    touch: bool,
     pipe: PipeColors,
     /// The sparrow's layers, back to front: the mark in the art and the
     /// color.
@@ -173,6 +186,7 @@ impl Look {
         let m = ui::get_metrics();
         let rules = match m.skin {
             Skin::Color => Rules::COLOR,
+            Skin::Touch => Rules::TOUCH,
             Skin::LargeGray => Rules::LARGE_GRAY,
             Skin::SmallGray => Rules::SMALL_GRAY,
         };
@@ -227,7 +241,12 @@ impl Look {
             rules,
             width: i32::from(m.width),
             height: i32::from(m.height),
-            unit: if m.color { 2 } else { 1 },
+            unit: match m.skin {
+                Skin::Touch => 4,
+                _ if m.color => 2,
+                _ => 1,
+            },
+            touch: !m.keys,
             pipe,
             feathers,
             wing,
@@ -332,7 +351,11 @@ fn plate(ops: &mut Vec<Op>, look: &Look, x: i32, y: i32, w: i32, h: i32) {
 /// The score during a game: digits on a plate at the top of the field.
 fn score(ops: &mut Vec<Op>, look: &Look, value: u32) {
     let text = value.to_string();
-    let scale = if look.unit == 2 { 3 } else { 2 };
+    let scale = match look.unit {
+        4 => 6,
+        2 => 3,
+        _ => 2,
+    };
     let n = text.len() as i32;
     let (dw, dh, pad) = (5 * scale, 7 * scale, 2 * scale);
     let w = n * dw + (n - 1) * scale + 2 * pad;
@@ -422,6 +445,9 @@ struct Screen {
     /// The plate behind the three lines.
     plate: Rect,
     board: BoardView,
+    /// The touchscreen's button for the leaderboard: its label, and how
+    /// wide and high it is.  It is under whichever plate shows.
+    button: Option<(Widget, u16, u16)>,
 }
 
 impl Screen {
@@ -433,12 +459,21 @@ impl Screen {
         ui::claim_keys(ROOT, &keys);
         let canvas = canvas::create(ROOT, Rect::new(0, 0, m.width, m.height));
 
-        let (title_h, pad) = if m.color {
+        let touch = m.skin == Skin::Touch;
+        let (title_h, pad) = if touch {
+            (m.title_height, 16)
+        } else if m.color {
             (m.title_height, 8)
         } else {
             (m.line_height, 4)
         };
-        let w = if m.color { 300 } else { m.width * 3 / 4 };
+        let w = if touch {
+            600
+        } else if m.color {
+            300
+        } else {
+            m.width * 3 / 4
+        };
         // A plate `w` wide and `h` high, in the middle of the field with
         // the sparrow that sits on it.
         let plate_of = |w: u16, h: u16| {
@@ -480,6 +515,7 @@ impl Screen {
         // screen on the gray ones.
         let (board_w, score_w) = match m.skin {
             Skin::Color => (440, 44),
+            Skin::Touch => (760, 88),
             Skin::LargeGray => (m.width, 35),
             Skin::SmallGray => (m.width, 30),
         };
@@ -522,6 +558,15 @@ impl Screen {
                 .collect(),
             wing: layer(&WING, b'o'),
         };
+        // Where there are no keys, a finger plays, anywhere on the
+        // display, and the leaderboard has a button, as high as a row of a
+        // list (which is made to be touched).
+        let button = (!m.keys).then(|| {
+            ui::claim_touch(ROOT, true);
+            let (bw, bh) = (m.width * 9 / 20, m.row_height);
+            let label = text(Rect::new(0, 0, bw, bh), Font::Bold, Align::Center);
+            (label, bw, bh)
+        });
         Screen {
             look,
             art,
@@ -531,7 +576,21 @@ impl Screen {
             hint,
             plate,
             board,
+            button,
         }
+    }
+
+    /// Where the touchscreen's button is: under the plate that shows, in
+    /// the middle.
+    fn button_rect(&self, board: bool) -> Option<Rect> {
+        let (_, w, h) = self.button?;
+        let p = if board { &self.board.plate } else { &self.plate };
+        Some(Rect::new(
+            p.x + (p.width as i16 - w as i16) / 2,
+            p.y + (p.height + h / 3) as i16,
+            w,
+            h,
+        ))
     }
 
     /// Puts the texts of `panel` on screen, and no others.
@@ -551,6 +610,13 @@ impl Screen {
             Panel::Board(title, rows) => (Some(*title), *rows),
             _ => (None, &[][..]),
         };
+        if let Some((label, ..)) = self.button {
+            if let Some(at) = self.button_rect(title.is_some()) {
+                ui::set_bounds(label, at);
+            }
+            ui::set_text(label, if title.is_some() { BACK_BUTTON } else { BOARD_BUTTON });
+            ui::set_visible(label, !matches!(panel, Panel::None));
+        }
         if let Some(title) = title {
             ui::set_text(b.title, title);
             ui::set_text(b.note, "No scores yet.");
@@ -651,6 +717,18 @@ impl Screen {
                 }
             }
         }
+        if state != State::Flying
+            && let Some(b) = self.button_rect(board)
+        {
+            plate(
+                &mut ops,
+                look,
+                i32::from(b.x),
+                i32::from(b.y),
+                i32::from(b.width),
+                i32::from(b.height),
+            );
+        }
         if let Err(e) = canvas::draw(self.canvas, &ops) {
             opendeskphone_app_sdk::log_warn(&format!("drawing refused: {e}"));
         }
@@ -678,6 +756,8 @@ struct Sparrow {
     waiting: Vec<Row>,
     /// The request to the PBX's store that is under way.
     asked: Option<u32>,
+    /// A finger is being dragged: its touch has been taken.
+    dragging: bool,
 }
 
 impl Default for Sparrow {
@@ -694,6 +774,7 @@ impl Default for Sparrow {
             version: 0,
             waiting: Vec::new(),
             asked: None,
+            dragging: false,
         }
     }
 }
@@ -730,10 +811,12 @@ impl Sparrow {
                 },
                 &rows,
             ),
+            State::Ready if screen.look.touch => Panel::Lines(["Desk Sparrow", TOUCH_START_HINT, ""]),
             State::Ready => Panel::Lines(["Desk Sparrow", START_HINT, BOARD_HINT]),
             State::Over(_) => {
                 over = format!("Score {}   Best {}", self.game.score, self.best);
-                Panel::Lines(["Game over", &over, BOARD_HINT])
+                let hint = if screen.look.touch { TOUCH_AGAIN_HINT } else { BOARD_HINT };
+                Panel::Lines(["Game over", &over, hint])
             }
         };
         screen.texts(&panel);
@@ -771,6 +854,23 @@ impl Sparrow {
         if self.screen.is_some() && self.state != State::Flying {
             self.viewing = !self.viewing;
             self.show();
+        }
+    }
+
+    /// A finger came down at a place of the display (the touchscreen):
+    /// on the leaderboard's button between games, the button; anywhere
+    /// else, what a key of the keypad is.
+    fn touched(&mut self, at: Point) {
+        let viewing = self.viewing && self.state != State::Flying;
+        let button = self.screen.as_ref().and_then(|s| s.button_rect(viewing));
+        let on_button = button.is_some_and(|b| {
+            let (x, y) = (i32::from(at.x) - i32::from(b.x), i32::from(at.y) - i32::from(b.y));
+            x >= 0 && y >= 0 && x < i32::from(b.width) && y < i32::from(b.height)
+        });
+        if on_button && self.state != State::Flying {
+            self.turn();
+        } else {
+            self.play();
         }
     }
 
@@ -951,6 +1051,15 @@ impl App for Sparrow {
             Event::Timer(id) if self.timer == Some(id) => self.tick(),
             Event::Key(k) if PLAY_KEYS.contains(&k) => self.play(),
             Event::Key(k) if BOARD_KEYS.contains(&k) => self.turn(),
+            Event::Touch((_, Touch::Tap(at))) => self.touched(at),
+            // A finger that slips as it touches flaps all the same, once.
+            Event::Touch((_, Touch::Drag((from, _)))) => {
+                if !self.dragging {
+                    self.dragging = true;
+                    self.touched(from);
+                }
+            }
+            Event::Touch((_, Touch::DragEnd(_))) => self.dragging = false,
             Event::Storage((id, outcome)) if self.asked == Some(id) => {
                 self.asked = None;
                 self.answered(outcome);

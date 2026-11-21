@@ -8,8 +8,8 @@ Helpers call the interfaces on the other pages, and give the app the capabilitie
 
 `use opendeskphone_app_sdk::prelude::*;` imports:
 
-- The trait `App`, the constant `ROOT`, and the types `Event`, `Key`, `Widget`, `Rect`, `ListItem`, `Image`, `Icon`, `Softkey`, `WidgetKind`, `WidgetEvent`, `Skin`, `PbxResult`, `PbxError`, `StorageLocation`, `StorageEntry`, `StorageOutcome`, `StorageReply`, `TimeStyle`, `AppKind`, `Form`, and `Message`.
-- The functions `screen`, `content_rect`, and `row_height`.
+- The trait `App`, the constant `ROOT`, and the types `Event`, `Key`, `Widget`, `Rect`, `ListItem`, `Image`, `Icon`, `Softkey`, `WidgetKind`, `WidgetEvent`, `Skin`, `PbxResult`, `PbxError`, `StorageLocation`, `StorageEntry`, `StorageOutcome`, `StorageReply`, `TimeStyle`, `Touch`, `Point`, `AppKind`, `Form`, and `Message`.
+- The functions `screen`, `content_rect`, `row_height`, and `has_keys`.
 - The modules `audio`, `calls`, `config`, `events`, `http`, `l10n`, `pbx`, `presence`, `runtime`, `storage`, `timers`, and `ui`.
 
 ## Screens
@@ -20,9 +20,9 @@ Helpers call the interfaces on the other pages, and give the app the capabilitie
 pub fn screen(title: &str) -> Rect
 ```
 
-Clears the window with `ui::clear(ROOT)`, which also removes the window's softkeys and key claims; claims `cancel` for the window; creates a `Text` in `Font::Title`, `title_height` tall, across the top; and returns the rectangle below the title.
+Clears the window with `ui::clear(ROOT)`, which also removes the window's softkeys, key claims, and touch claim; claims `cancel` for the window; creates a `Text` in `Font::Title`, `title_height` tall, across the top; and returns the rectangle below the title.  On the touchscreen, the title starts to the right of the [back button](ui.md#touch) (`back_width`).
 
-`cancel` then arrives as `Event::Key(Key::Cancel)` instead of taking the app off the screen.  The app should call `runtime::background` or go back one screen.
+`cancel` then arrives as `Event::Key(Key::Cancel)` instead of taking the app off the screen.  The app should call `runtime::background` or go back one screen.  On the touchscreen, the back button is `cancel`.
 
 ### `content_rect`
 
@@ -40,6 +40,14 @@ pub fn row_height() -> u16
 
 Returns `ui::get_metrics().row_height`.
 
+### `has_keys`
+
+```rust
+pub fn has_keys() -> bool
+```
+
+Returns `ui::get_metrics().keys`: `false` on a phone that is used by touch alone (the D80).  See [`Metrics`](types.md#metrics-and-skin).
+
 ### `Message`
 
 ```rust
@@ -51,6 +59,14 @@ impl Message {
 ```
 
 A screen with a title and wrapped text.  `show` calls `screen`, creates the text widget, sets `keys` as the window's softkeys, and focuses the text.
+
+### `nav::note`
+
+```rust
+pub fn note(area: Rect, text: &str) -> Widget
+```
+
+Creates a wrapped `Text` that fills `area` (the rectangle that `screen` returned), inset as the text of a `Message`: for a screen that shows a sentence in place of a list.  The insets of `note`, `Message`, and `Form` are larger on the touchscreen.
 
 ### `Form`
 

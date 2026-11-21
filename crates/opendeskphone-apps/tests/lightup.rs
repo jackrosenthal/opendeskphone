@@ -1250,3 +1250,318 @@ fn a_phone_without_a_pbx_store_plays_as_ever_and_keeps_its_times() {
     assert_eq!(r.ui.texts(APP)[0], "Offline: 7x7 Easy");
     assert_eq!(listed(&r), [("1. You".to_string(), "1:23".to_string())]);
 }
+
+// ------------------------------------------------- the touchscreen (D80)
+
+/// The canvas over the board, which takes the touches: its place in the
+/// window and its side.  It is the canvas made after the rows.
+fn board(r: &Rig, side: usize) -> (i32, i32, i32) {
+    let (bounds, ops) = r.ui.drawings(APP)[side].clone();
+    assert!(ops.is_empty(), "nothing is drawn over the board: there is no cursor");
+    assert_eq!(bounds.width, bounds.height);
+    (i32::from(bounds.x), i32::from(bounds.y), i32::from(bounds.width))
+}
+
+/// A touch in the middle of a cell.
+fn touch(r: &mut Rig, side: usize, cell: (usize, usize)) {
+    let (x, y, width) = board(r, side);
+    let pitch = (width - 1) / side as i32;
+    r.ui.tap(APP, x + cell.0 as i32 * pitch + pitch / 2, y + cell.1 as i32 * pitch + pitch / 2);
+    r.settle();
+}
+
+#[test]
+fn on_the_touchscreen_a_puzzle_is_played_by_touching_its_cells() {
+    let mut r = rig(Model::D80, 7);
+    r.launch(APP);
+    // No puzzle yet: the list, whose rows are touched.
+    assert_eq!(r.ui.texts(APP), ["New puzzle"]);
+    r.ui.tap_row(APP, 0);
+    r.settle();
+    wait(&mut r);
+    let puzzle = native(7, Difficulty::Easy, 7);
+    assert_eq!(state(&mut r).0, puzzle);
+
+    // The upright window: the time beside the back button, the board
+    // under that line, as wide as the window allows, and under the board
+    // what a touch does, which names no key.  There is no picture of keys.
+    let (x, y, width) = board(&r, 7);
+    assert_eq!((x, y, width), (0, 96, 7 * 114 + 1));
+    assert!(!r.ui.takes_touches(APP, 0));
+    assert_eq!(r.ui.drawings(APP).len(), 7 + 1, "the rows and what is touched");
+    let texts = beside(&r);
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert!(texts[0].starts_with("Touch a cell"), "{texts:?}");
+    assert!(!texts.concat().chars().any(|c| c.is_ascii_digit()), "{texts:?}");
+    // Five softkeys: the phone shows three and "More".
+    assert_eq!(r.ui.softkeys(APP), ["Undo", "Auto", "New", "Help", "Scores"]);
+
+    // A touch puts a light, the next makes it a square, and the third
+    // clears the cell; a black cell takes nothing.
+    let white = (0..49).find(|i| !puzzle.is_black(*i)).unwrap();
+    let black = (0..49).find(|i| puzzle.is_black(*i)).unwrap();
+    let cell = |i: usize| (i % 7, i / 7);
+    touch(&mut r, 7, cell(white));
+    assert!(state(&mut r).0.has_light(white));
+    touch(&mut r, 7, cell(white));
+    let (grid, cursor) = state(&mut r);
+    assert!(grid.is_marked(white) && !grid.has_light(white));
+    assert_eq!(cursor, cell(white));
+    touch(&mut r, 7, cell(white));
+    assert_eq!(state(&mut r).0, puzzle);
+    touch(&mut r, 7, cell(black));
+    assert_eq!(state(&mut r).0, puzzle);
+    // The last grid line is the last cell's, and beside the board nothing
+    // is touched.
+    let last = 48;
+    r.ui.tap(APP, x + width - 1, y + width - 1);
+    r.ui.tap(APP, x + width / 2, y + width + 20);
+    r.ui.tap(APP, x + width / 2, y - 20);
+    r.settle();
+    let after = state(&mut r).0;
+    assert_eq!(after.has_light(last), !puzzle.is_black(last));
+    assert_eq!((0..48).filter(|i| after.has_light(*i)).count(), 0);
+    // A drag does nothing to the board.
+    r.ui.drag(APP, (x + 60, y + 60), (x + 400, y + 400));
+    r.settle();
+    assert_eq!(state(&mut r).0, after);
+    // Undo takes the touches back, one by one.
+    for _ in 0..4 {
+        r.softkey(APP, "Undo");
+    }
+    assert_eq!(state(&mut r).0, puzzle);
+
+    // "Auto" does what the key 8 does.
+    let mut expected = Game::new(puzzle.clone());
+    let auto = expected.auto();
+    r.softkey(APP, "Auto");
+    assert_eq!(state(&mut r).0, *expected.grid());
+    if auto {
+        r.softkey(APP, "Undo");
+    }
+    assert_eq!(state(&mut r).0, puzzle);
+
+    // The lights of the solution, each with one touch: solved, with the
+    // time where the line about touching was.
+    let solved = solution(&puzzle);
+    for i in (0..49).filter(|i| solved.has_light(*i)) {
+        touch(&mut r, 7, cell(i));
+    }
+    let texts = r.ui.texts(APP);
+    assert_eq!(texts.len(), 2, "{texts:?}");
+    assert_eq!(texts[0], "Solved!");
+    assert!(texts[1].starts_with("Time "), "{texts:?}");
+    assert_eq!(r.ui.softkeys(APP), ["New", "Help", "Exit", "Scores"]);
+    // A solved puzzle does not change.
+    let kept = state(&mut r).0;
+    touch(&mut r, 7, cell(white));
+    assert_eq!(state(&mut r).0, kept);
+    // The back button is Cancel, which leaves the app.
+    r.key(APP, Key::Cancel);
+    assert!(!r.mgr.is_running(APP));
+}
+
+#[test]
+fn on_the_touchscreen_the_other_screens_name_no_key_and_fit() {
+    use lightup_game::help::PAGES;
+    let mut r = rig_with(Model::D80, WRONG);
+    r.launch(APP);
+    let kept = state(&mut r);
+
+    // The help: a picture and, under it, the sentences for a touchscreen.
+    r.softkey(APP, "Help");
+    for (n, page) in PAGES.iter().enumerate() {
+        let texts = r.ui.texts(APP);
+        assert_eq!(texts[0], format!("How to play ({}/{})", n + 1, PAGES.len()));
+        assert_eq!(texts[1], page.words(false));
+        assert!(!texts[1].chars().any(|c| c.is_ascii_digit() && c != '0'), "{}", texts[1]);
+        let (picture, _) = r.ui.drawings(APP)[0].clone();
+        assert!(picture.y >= 96 && picture.x > 0 && picture.x as u16 + picture.width < 800, "{picture:?}");
+        r.softkey(APP, "Next");
+    }
+    assert_eq!(r.ui.texts(APP)[1], PAGES[0].words(false));
+    // Back (the back button is Cancel) to the puzzle as it was.
+    r.key(APP, Key::Cancel);
+    assert_eq!(state(&mut r), kept);
+    assert!(beside(&r)[0].starts_with("Touch a cell"));
+
+    // The tables, and from them the puzzle again.
+    r.softkey(APP, "Scores");
+    assert!(r.ui.texts(APP)[0].contains("7x7 Hard"), "{:?}", r.ui.texts(APP));
+    r.softkey(APP, "Size");
+    assert!(r.ui.texts(APP)[0].contains("10x10 Hard"), "{:?}", r.ui.texts(APP));
+    r.softkey(APP, "Back");
+    assert_eq!(state(&mut r), kept);
+
+    // The largest board is as wide as the window allows too.
+    let mut r = rig_with(Model::D80, &fresh(14, 3));
+    r.launch(APP);
+    assert_eq!(board(&r, 14), (0, 96, 14 * 57 + 1));
+
+    // The phones with keys have their sentences, their keys, and their
+    // cursor, and take no touches.
+    let mut r = rig_with(Model::D60, WRONG);
+    r.launch(APP);
+    assert_eq!(r.ui.softkeys(APP), ["Undo", "New", "Help", "Scores"]);
+    let (_, cursor) = r.ui.drawings(APP)[7].clone();
+    assert!(!cursor.is_empty(), "the cursor is drawn");
+    r.ui.tap(APP, 20, 20);
+    r.settle();
+    assert_eq!(state(&mut r).0, parse(WRONG).0);
+    r.softkey(APP, "Help");
+    assert_eq!(r.ui.texts(APP)[1], PAGES[0].text);
+}
+
+/// A puzzle file of a puzzle nobody has played yet.
+fn fresh(side: usize, seed: u64) -> String {
+    format!("size={side}\ndifficulty=easy\nelapsed=65000\ncursor=0,0\n{}", native(side, Difficulty::Easy, seed).to_text())
+}
+
+/// A simulated D80 with the phone's own UI, which the app draws on and a
+/// finger touches.
+struct Phone {
+    store: opendeskphone_state::Store,
+    ui: opendeskphone_ui::Ui,
+    sim: opendeskphone_hal::sim::SimHandle,
+    mgr: opendeskphone_apps::AppManager,
+    nvdata: PathBuf,
+    _dir: common::TempDir,
+}
+
+impl Phone {
+    fn new(puzzle: &str) -> Phone {
+        use opendeskphone_apps::testutil::{FakePbx, services_with_store};
+        use opendeskphone_state::{Phase, Store, System};
+        let model = Model::D80;
+        let dir = common::temp_dir("lightup-phone");
+        let nvdata = dir.0.join("nvdata");
+        std::fs::create_dir_all(storage(&nvdata)).unwrap();
+        std::fs::write(storage(&nvdata).join("puzzle"), puzzle).unwrap();
+        let mut hal = opendeskphone_hal::Hal::sim(model);
+        let sim = hal.sim.clone().unwrap();
+        let store = Store::new(model);
+        let config = opendeskphone_ui::UiConfig { backlight_timeout_secs: 0, ..Default::default() };
+        let ui = opendeskphone_ui::Ui::from_hal(&mut hal, store.clone(), config);
+        store.update::<System, _>(|s| {
+            s.phase = Phase::Running;
+            s.time_synced = true;
+        });
+        let shell = opendeskphone_apps::uishell::UiShell::new(ui.handle(), model);
+        let mut cfg = opendeskphone_apps::ManagerConfig::rooted(staged(), &nvdata);
+        cfg.target = opendeskphone_apps::engine::Target::Pulley64;
+        let services = services_with_store(&FakePbx::default(), FakeConfig::default(), &FakeStore::default());
+        let mut mgr =
+            opendeskphone_apps::AppManager::new(cfg, store.clone(), Box::new(shell), services).expect("engine");
+        mgr.scan();
+        let mut phone = Phone { store, ui, sim, mgr, nvdata, _dir: dir };
+        phone.settle();
+        phone.mgr.launch(APP).unwrap();
+        phone.settle();
+        phone
+    }
+
+    /// The UI and the manager take turns until both are done.
+    fn settle(&mut self) {
+        for _ in 0..4 {
+            self.ui.pump();
+            self.mgr.pump();
+        }
+        self.ui.pump();
+    }
+
+    fn tap(&mut self, x: i32, y: i32) {
+        self.sim.touch_tap(x as u16, y as u16);
+        self.settle();
+    }
+
+    /// Touches a softkey button: they are the four softkey keys, by
+    /// their places.
+    fn softkey(&mut self, n: u8) {
+        let r = self.ui.canvas().hit_rect(opendeskphone_ui::Hit::Key(Key::Soft(n))).expect("a softkey button");
+        self.tap(r.x + r.w / 2, r.y + r.h / 2);
+    }
+
+    fn pixel(&self, x: i32, y: i32) -> u32 {
+        self.ui.canvas().pixel(x, y)
+    }
+
+    /// Writes the screen as a PNG, to look at.
+    fn shot(&self, name: &str) {
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("lightup");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, h) = (800, 1280);
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let p = self.pixel(x as i32, y as i32);
+                rgb.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
+            }
+        }
+        let file = std::io::BufWriter::new(std::fs::File::create(dir.join(format!("D80-{name}.png"))).unwrap());
+        let mut enc = png::Encoder::new(file, w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&rgb).unwrap();
+    }
+
+    /// The puzzle as the app keeps it: the phone's menu covers the app
+    /// for a moment, at which the app writes its puzzle down.
+    fn state(&mut self) -> Grid {
+        self.settle();
+        let p = self.store.send(opendeskphone_state::Command::ShowScreen { name: "menu".into() });
+        self.settle();
+        assert_eq!(p.wait(), Ok(opendeskphone_state::Reply::Done));
+        self.mgr.launch(APP).unwrap();
+        self.settle();
+        assert_eq!(self.ui.screen_name(), "app:lightup");
+        parse(&local(&self.nvdata, "puzzle")).0
+    }
+}
+
+#[test]
+fn on_a_d80_the_game_is_drawn_and_touched_on_the_phones_own_screen() {
+    listen();
+    for (side, puzzle) in [(7usize, WRONG.to_string()), (14, fresh(14, 3))] {
+        let mut p = Phone::new(&puzzle);
+        assert_eq!(p.ui.screen_name(), "app:lightup");
+        let before = parse(&puzzle).0;
+        p.shot(&format!("play-{side}"));
+        // The board is under the title's line, across the window; the
+        // back button's corner has the background, but for the arrow.
+        let pitch = 799 / side as i32;
+        let x0 = (800 - (pitch * side as i32 + 1)) / 2;
+        let bg = p.pixel(799, 0);
+        assert_eq!(p.pixel(2, 2), bg, "{side}: the corner is free");
+        // The phone drew all of it: every row has its grid line at the
+        // left edge of the board (a row over the limits of a canvas
+        // would be missing).
+        for row in 0..side as i32 {
+            assert_ne!(p.pixel(x0, 96 + row * pitch + pitch / 2), bg, "{side}: row {row}");
+        }
+        // A touch on an empty white cell puts a light there.
+        let i = (0..side * side)
+            .find(|i| !before.is_black(*i) && !before.has_light(*i) && !before.is_marked(*i))
+            .unwrap();
+        let (cx, cy) = ((i % side) as i32, (i / side) as i32);
+        p.tap(x0 + cx * pitch + pitch / 2, 96 + cy * pitch + pitch / 2);
+        p.shot(&format!("touched-{side}"));
+        assert!(p.state().has_light(i), "{side}");
+        // The first softkey button is "Undo".
+        p.softkey(1);
+        assert_eq!(p.state(), before, "{side}");
+        if side == 7 {
+            // The fourth is "More"; then the first is "Help", and the
+            // second "Scores".  The back button leaves either for the
+            // puzzle.
+            p.softkey(4);
+            p.softkey(1);
+            p.shot("help");
+            p.tap(40, 40);
+            p.softkey(4);
+            p.softkey(2);
+            p.shot("scores");
+            p.tap(40, 40);
+            assert_eq!(p.state(), before);
+        }
+    }
+}

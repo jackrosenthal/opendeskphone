@@ -1,7 +1,56 @@
 //! Small screen helpers shared by the built-in apps: a message screen and
 //! a labeled-input form.
 
-use crate::{InputMode, ROOT, Rect, Softkey, Widget, WidgetKind, row_height, screen, ui};
+use crate::{InputMode, ROOT, Rect, Skin, Softkey, Widget, WidgetKind, row_height, screen, ui};
+
+/// The space these screens leave around what they show, in pixels: at the
+/// sides of the window, above and below a text, between the rows of a
+/// form, and between a label and its input.  The touchscreen has about
+/// twice the other screens' pixels to the inch, and its rows are apart
+/// by what keeps a finger on the one it means.
+struct Space {
+    side: u16,
+    edge: u16,
+    row_gap: u16,
+    label_gap: u16,
+}
+
+fn space() -> Space {
+    match ui::get_metrics().skin {
+        Skin::Touch => Space {
+            side: 16,
+            edge: 8,
+            row_gap: 16,
+            label_gap: 8,
+        },
+        _ => Space {
+            side: 4,
+            edge: 2,
+            row_gap: 2,
+            label_gap: 2,
+        },
+    }
+}
+
+/// A wrapped text that fills `area` (what [`screen`] returned), inset as
+/// the text of a [`Message`] is: for a screen that has something to say
+/// in place of its list.
+pub fn note(area: Rect, text: &str) -> Widget {
+    let s = space();
+    let w = ui::create(
+        WidgetKind::Text,
+        ROOT,
+        Rect::new(
+            s.side as i16,
+            area.y + s.edge as i16,
+            area.width.saturating_sub(2 * s.side),
+            area.height.saturating_sub(2 * s.edge),
+        ),
+    );
+    ui::set_wrap(w, true);
+    ui::set_text(w, text);
+    w
+}
 
 /// A full-screen wrapped message (loading, error, confirmation text).
 pub struct Message {
@@ -12,18 +61,7 @@ impl Message {
     /// Clears the window and shows `text`, with the given softkeys.
     pub fn show(title: &str, text: &str, keys: &[Softkey]) -> Message {
         let r = screen(title);
-        let w = ui::create(
-            WidgetKind::Text,
-            ROOT,
-            Rect::new(
-                4,
-                r.y + 2,
-                r.width.saturating_sub(8),
-                r.height.saturating_sub(4),
-            ),
-        );
-        ui::set_wrap(w, true);
-        ui::set_text(w, text);
+        let w = note(r, text);
         ui::set_softkeys(ROOT, keys);
         ui::set_focus(w);
         Message { text: w }
@@ -37,19 +75,22 @@ pub struct Form {
 
 impl Form {
     /// Clears the window and builds the form; focus goes to the first input.
+    /// (On the touchscreen, touching an input focuses it.)
     pub fn show(title: &str, fields: &[(&str, InputMode, &str)], keys: &[Softkey]) -> Form {
         let r = screen(title);
         let h = row_height();
+        let s = space();
         let label_w = r.width / 3;
+        let input_x = s.side + label_w + s.label_gap;
         let mut inputs = Vec::new();
         for (i, (label, mode, value)) in fields.iter().enumerate() {
-            let y = r.y + (i as u16 * (h + 2)) as i16 + 2;
-            let l = ui::create(WidgetKind::Text, ROOT, Rect::new(4, y, label_w, h));
+            let y = r.y + (i as u16 * (h + s.row_gap) + s.edge) as i16;
+            let l = ui::create(WidgetKind::Text, ROOT, Rect::new(s.side as i16, y, label_w, h));
             ui::set_text(l, label);
             let inp = ui::create(
                 WidgetKind::Input,
                 ROOT,
-                Rect::new(label_w as i16 + 6, y, r.width - label_w - 10, h),
+                Rect::new(input_x as i16, y, r.width.saturating_sub(input_x + s.side), h),
             );
             ui::set_input_mode(inp, *mode);
             ui::set_value(inp, value);

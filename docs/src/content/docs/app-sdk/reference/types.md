@@ -20,18 +20,19 @@ Timer and request IDs are never 0.  The `pbx` requests, `http::request`, and the
 ```rust
 pub struct Rect { pub x: i16, pub y: i16, pub width: u16, pub height: u16 }
 pub struct Size { pub width: u16, pub height: u16 }
+pub struct Point { pub x: i16, pub y: i16 }
 
 impl Rect {
     pub const fn new(x: i16, y: i16, width: u16, height: u16) -> Rect;
 }
 ```
 
-Coordinates are in pixels.
+Coordinates are in pixels.  A `Point` is a place in a widget, counted from the widget's top-left corner (see [`Touch`](#touch)).
 
 ## `Metrics` and `Skin`
 
 ```rust
-pub enum Skin { SmallGray, LargeGray, Color }
+pub enum Skin { SmallGray, LargeGray, Color, Touch }
 
 pub struct Metrics {
     pub skin: Skin,
@@ -43,24 +44,34 @@ pub struct Metrics {
     pub row_height: u16,
     pub scroll_bar_width: u16,
     pub color: bool,
+    pub keys: bool,
+    pub back_width: u16,
 }
 ```
 
 [`ui::get_metrics`](ui.md#get_metrics) returns, by skin:
 
-| Field | `SmallGray` (D40, D45, D50) | `LargeGray` (D70) | `Color` (D60, D62, D65) |
-| --- | --- | --- | --- |
-| `width` | 240 | 320 | 480 |
-| `height` | 102 | 140 | 243 |
-| `height` in full-screen mode | 120 | 160 | 272 |
-| `line_height` | 15 | 17 | 25 |
-| `title_height` | 15 | 17 | 40 |
-| `title_offset` | 1 | 1 | 4 |
-| `row_height` | 15 | 17 | 32 |
-| `scroll_bar_width` | 4 | 4 | 8 |
-| `color` | `false` | `false` | `true` |
+| Field | `SmallGray` (D40, D45, D50) | `LargeGray` (D70) | `Color` (D60, D62, D65) | `Touch` (D80) |
+| --- | --- | --- | --- | --- |
+| `width` | 240 | 320 | 480 | 800 |
+| `height` | 102 | 140 | 243 | 1160 |
+| `height` in full-screen mode | 120 | 160 | 272 | 1280 |
+| `line_height` | 15 | 17 | 25 | 44 |
+| `title_height` | 15 | 17 | 40 | 96 |
+| `title_offset` | 1 | 1 | 4 | 8 |
+| `row_height` | 15 | 17 | 32 | 96 |
+| `scroll_bar_width` | 4 | 4 | 8 | 12 |
+| `color` | `false` | `false` | `true` | `true` |
+| `keys` | `true` | `true` | `true` | `false` |
+| `back_width` | 0 | 0 | 0 | 96 |
 
 `width` and `height` are the window's size.  `row_height` is the height of a list row.
+
+`Skin::Touch` is the touchscreen of a phone without keys (the D80): an upright screen, about twice as many pixels to the inch as the color models have, with rows and buttons tall enough for a finger.
+
+`keys` tells whether the phone has keys: a dial pad, arrow keys, and keys below the display.  Where `keys` is `false`, no key press ever arrives from a key, so offer every action on the screen: in a list, as a softkey, or on a widget that takes touches ([`ui::claim_touch`](ui.md#claim_touch)).  Don't show hints such as "Press 5" there.
+
+`back_width` is the width of the [back button](ui.md#touch), which the phone draws over the top-left corner of the window on a phone without keys, `title_height` tall.  Keep that corner free; a title starts to the right of the button.  `back_width` is 0 on a phone with keys.
 
 ## Widgets
 
@@ -91,6 +102,26 @@ impl Softkey {
 ```
 
 See [`ui`](ui.md).
+
+## `Touch`
+
+```rust
+pub enum Touch {
+    Tap(Point),
+    Drag((Point, Point)),
+    DragEnd((Point, Point)),
+}
+```
+
+What a finger did on a widget that takes touches ([`ui::claim_touch`](ui.md#claim_touch)), in [`Event::Touch`](app-events.md#touch).  Each `Point` counts pixels from the top-left corner of that widget (of the window, for `ROOT`).
+
+| Variant | Meaning |
+| --- | --- |
+| `Tap(at)` | The finger came down and went up again at `at`. |
+| `Drag((from, to))` | The finger came down at `from` and has moved to `to`.  One event arrives for every movement. |
+| `DragEnd((from, to))` | The finger of a drag was lifted at `to`. |
+
+A finger that moves less than 18 pixels taps; a finger that moves farther drags, and doesn't tap.  A finger held in one place is a tap.  During a drag, `to` can lie outside the widget, with negative coordinates to the left of the widget or above.
 
 ## Keys
 

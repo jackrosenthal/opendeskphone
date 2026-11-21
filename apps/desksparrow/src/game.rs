@@ -103,6 +103,28 @@ impl Rules {
         tick_ms: 100,
     };
 
+    /// 800x1280, the touchscreen, upright: the color screens' game at
+    /// twice the size, with the same time to cross from pipe to pipe, in a
+    /// field that is much higher than it is wide.
+    pub const TOUCH: Rules = Rules {
+        width: 800,
+        height: 1248,
+        bird_w: 64,
+        bird_h: 48,
+        bird_x: 160,
+        grace: 6,
+        gravity: 44,
+        flap: 300,
+        max_fall: 352,
+        speed: 8,
+        pipe_w: 88,
+        gap: 192,
+        spacing: 352,
+        margin: 48,
+        max_shift: 200,
+        tick_ms: 50,
+    };
+
     /// The highest and lowest top edge an opening can have.
     pub fn gap_range(&self) -> (i32, i32) {
         (self.margin, self.height - self.margin - self.gap)
@@ -271,7 +293,7 @@ impl Game {
 mod tests {
     use super::*;
 
-    const ALL: [Rules; 3] = [Rules::COLOR, Rules::LARGE_GRAY, Rules::SMALL_GRAY];
+    const ALL: [Rules; 4] = [Rules::COLOR, Rules::LARGE_GRAY, Rules::SMALL_GRAY, Rules::TOUCH];
 
     /// A player that flaps when the sparrow is about to sink below the
     /// next opening.

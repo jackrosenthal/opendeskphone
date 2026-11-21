@@ -382,3 +382,68 @@ fn an_app_stops_only_the_sound_the_app_started() {
     ask(&mut r, "preview", "");
     assert_eq!(asked(&audio), ["preview", "stop"]);
 }
+
+/// The guest on a phone of this model.
+fn rig_on(model: Model) -> Rig {
+    let mut r = Rig::with_root(staged(), FakeConfig::default(), model);
+    r.launch("checks");
+    r
+}
+
+#[test]
+fn the_metrics_tell_a_touchscreen_from_a_phone_with_keys() {
+    // The D80: the touch skin, no keys, and a back button at the corner.
+    assert_eq!(
+        ask(&mut rig_on(Model::D80), "metrics", ""),
+        "Skin::Touch 800x1160 line=44 title=96 row=96 bar=12 color=true keys=false back=96 model=PhoneModel::D80"
+    );
+    // The others are as they were, and have keys.
+    assert_eq!(
+        ask(&mut rig_on(Model::D60), "metrics", ""),
+        "Skin::Color 480x243 line=25 title=40 row=32 bar=8 color=true keys=true back=0 model=PhoneModel::D60"
+    );
+    assert_eq!(
+        ask(&mut rig_on(Model::D70), "metrics", ""),
+        "Skin::LargeGray 320x140 line=17 title=17 row=17 bar=4 color=false keys=true back=0 model=PhoneModel::D70"
+    );
+    assert_eq!(
+        ask(&mut rig_on(Model::D40), "metrics", ""),
+        "Skin::SmallGray 240x102 line=15 title=15 row=15 bar=4 color=false keys=true back=0 model=PhoneModel::D40"
+    );
+}
+
+#[test]
+fn a_touch_comes_to_the_widget_that_takes_touches() {
+    let mut r = rig_on(Model::D80);
+    let answer = ask(&mut r, "touch", "");
+    let (canvas, list) = answer.strip_prefix("canvas=").unwrap().split_once(" list=").unwrap();
+    assert!(r.ui.takes_touches("checks", canvas.parse().unwrap()));
+    assert!(!r.ui.takes_touches("checks", 0));
+    // On the canvas: the place is counted from the canvas's corner.
+    r.ui.tap("checks", 110, 220);
+    // Beside it, nothing takes the touch.
+    r.ui.tap("checks", 50, 220);
+    // A drag, which leaves the canvas, and its end.
+    r.ui.drag("checks", (150, 250), (450, 150));
+    // The list has the built-in behavior: its second row.
+    r.ui.tap("checks", 20, 600 + 96 + 10);
+    r.settle();
+    assert_eq!(
+        seen(&r),
+        format!(
+            "tap {canvas} 10,20; drag {canvas} 50,50 350,-50; end {canvas} 50,50 350,-50; \
+             highlighted {list} 1; activated {list} 1"
+        )
+    );
+
+    // With the window taking touches, the rest of the window is the
+    // app's too, with places of the window; the canvas is still its own.
+    let mut r = rig_on(Model::D80);
+    let answer = ask(&mut r, "touch", "window");
+    let canvas = answer.strip_prefix("canvas=").unwrap().split_once(' ').unwrap().0;
+    assert!(r.ui.takes_touches("checks", 0));
+    r.ui.tap("checks", 50, 220);
+    r.ui.tap("checks", 399, 499);
+    r.settle();
+    assert_eq!(seen(&r), format!("tap 0 50,220; tap {canvas} 299,299"));
+}

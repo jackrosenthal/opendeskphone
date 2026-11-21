@@ -13,6 +13,7 @@ pub enum Event {
     Hook(bool),
     Softkey(u32),
     Widget((Widget, WidgetEvent)),
+    Touch((Widget, Touch)),
     Timer(u32),
     Pbx((u32, Result<PbxResult, PbxError>)),
     Http((u32, Result<HttpResponse, String>)),
@@ -56,7 +57,7 @@ The last event of an instance.  The phone sends `Exit` before discarding the ins
 Event::Key(key)
 ```
 
-A key claimed with [`ui::claim_keys`](ui.md#claim_keys) by the window or one of the app's widgets was pressed, or any key while [`input::capture`](input.md) is on.  Releases and repeats aren't reported, and the event doesn't name the claiming widget.  [`Key`](types.md#keys) names the key.
+A key claimed with [`ui::claim_keys`](ui.md#claim_keys) by the window or one of the app's widgets was pressed, or any key while [`input::capture`](input.md) is on.  On a phone without keys, the only key is `Key::Cancel`, from the [back button](ui.md#touch).  Releases and repeats aren't reported, and the event doesn't name the claiming widget.  [`Key`](types.md#keys) names the key.
 
 ## `Hook`
 
@@ -82,10 +83,18 @@ Event::Widget((widget, widget_event))
 
 | `WidgetEvent` | Sent when |
 | --- | --- |
-| `Highlighted(row)` | The user moved a list's selection with `up` or `down`.  Not sent for `ui::set_selected` or `ui::set_items`. |
-| `Activated(row)` | The user pressed `select` on a list with at least one row. |
+| `Highlighted(row)` | The user moved a list's selection with `up` or `down`, or touched a row that wasn't selected.  Not sent for `ui::set_selected` or `ui::set_items`. |
+| `Activated(row)` | The user pressed `select` on a list with at least one row, or touched a row (after `Highlighted`, if the row wasn't selected). |
 | `Changed(text)` | The user typed into or deleted from an input.  Not sent for `ui::set_value`. |
 | `Submitted(text)` | The user pressed `select` in an input. |
+
+## `Touch`
+
+```rust
+Event::Touch((widget, touch))
+```
+
+A finger tapped or dragged on `widget`, a widget that takes touches ([`ui::claim_touch`](ui.md#claim_touch)); `ROOT` is the window.  [`Touch`](types.md#touch) tells what the finger did and where, counted from the widget's top-left corner.  Only a phone with a touchscreen sends `Touch` ([`Skin::Touch`](types.md#metrics-and-skin)).  Touches on the stock widgets, the softkeys, and the back button arrive as the events of those: `Widget`, `Softkey`, and `Key(Key::Cancel)`.
 
 ## `Timer`
 

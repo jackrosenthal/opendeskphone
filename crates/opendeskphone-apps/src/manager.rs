@@ -1262,6 +1262,7 @@ impl AppManager {
             WindowEvent::Submitted { widget, value } => {
                 wit::Event::Widget((widget | bit, wit::WidgetEvent::Submitted(value)))
             }
+            WindowEvent::Touch { widget, touch } => wit::Event::Touch((widget | bit, touch)),
             WindowEvent::CloseRequested => {
                 self.shell.hide(name);
                 return;

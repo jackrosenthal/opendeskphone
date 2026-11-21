@@ -32,6 +32,8 @@ pub struct Node {
     pub image: String,
     pub softkeys: Vec<Softkey>,
     pub claims: Vec<Key>,
+    /// The widget takes touches.
+    pub touch: bool,
     /// What a canvas shows (`None`: not a canvas).
     pub drawing: Option<Vec<DrawOp>>,
 }
@@ -43,6 +45,8 @@ pub struct Win {
     pub focus: Option<u32>,
     pub softkeys: Vec<Softkey>,
     pub claims: Vec<Key>,
+    /// The window takes the touches no widget takes.
+    pub touch: bool,
     /// Package pictures handed over with `define_image`: name and size.
     pub images: Vec<(String, usize)>,
     /// How many times the app has drawn on a canvas.
@@ -106,6 +110,66 @@ impl Win {
         }
         self.claims.contains(&key)
     }
+
+    /// Where a widget's top-left corner is in the window, if the widget
+    /// and everything it is in are shown and (`x`, `y`) is in them all.
+    fn origin_under(&self, id: u32, x: i32, y: i32) -> Option<(i32, i32)> {
+        let mut chain = Vec::new();
+        let mut cur = Some(id);
+        while let Some(i) = cur {
+            let n = self.nodes.get(&i)?;
+            chain.push(n);
+            cur = n.parent;
+        }
+        let (mut ox, mut oy) = (0, 0);
+        for n in chain.iter().rev() {
+            (ox, oy) = (ox + i32::from(n.bounds.x), oy + i32::from(n.bounds.y));
+            let inside = x >= ox && y >= oy && x < ox + i32::from(n.bounds.width) && y < oy + i32::from(n.bounds.height);
+            if !n.visible || !inside {
+                return None;
+            }
+        }
+        Some((ox, oy))
+    }
+
+    /// What a finger at (`x`, `y`) of the window is on, as the toolkit
+    /// finds it: the last made of the widgets there that take touches or
+    /// are a list, an input, or a scroll widget (with its top-left
+    /// corner); else the window, if it takes touches (widget 0).
+    fn touched(&self, x: i32, y: i32) -> Option<(u32, i32, i32)> {
+        let mut found = self.touch.then_some((0, 0, 0));
+        for n in self.nodes.values() {
+            let stock = matches!(n.kind, WidgetKind::TextList | WidgetKind::Input | WidgetKind::Scroll) && n.drawing.is_none();
+            if (n.touch || stock)
+                && let Some((ox, oy)) = self.origin_under(n.id, x, y)
+            {
+                found = Some((n.id, ox, oy));
+            }
+        }
+        found
+    }
+
+    fn takes_touches(&self, id: u32) -> bool {
+        if id == 0 { self.touch } else { self.nodes.get(&id).is_some_and(|n| n.touch) }
+    }
+
+    /// A tap on a row of a list: the list is focused, and the row is
+    /// highlighted and activated.
+    fn tap_row(&mut self, list: u32, row: u32) {
+        self.focus = Some(list);
+        let n = self.nodes.get_mut(&list).expect("the list");
+        assert!((row as usize) < n.items.len(), "the list has no row {row}");
+        let changed = n.selected != row;
+        n.selected = row;
+        if changed {
+            self.push(WindowEvent::Highlighted { widget: list, row });
+        }
+        self.push(WindowEvent::Activated { widget: list, row });
+    }
+}
+
+fn point(x: i32, y: i32) -> Point {
+    Point { x: x as i16, y: y as i16 }
 }
 
 #[derive(Default)]
@@ -128,9 +192,7 @@ fn metrics_for(model: opendeskphone_state::Model) -> Metrics {
         opendeskphone_state::Skin::SmallGray => (Skin::SmallGray, 15, 15, 1, 15, 4, false),
         opendeskphone_state::Skin::LargeGray => (Skin::LargeGray, 17, 17, 1, 17, 4, false),
         opendeskphone_state::Skin::Color => (Skin::Color, 25, 40, 4, 32, 8, true),
-        // TODO(D80 app API): no `touch` skin in the app interface yet;
-        // as `uishell.rs` has it.
-        opendeskphone_state::Skin::Touch => (Skin::Color, 44, 96, 8, 96, 12, true),
+        opendeskphone_state::Skin::Touch => (Skin::Touch, 44, 96, 8, 96, 12, true),
     };
     Metrics {
         skin,
@@ -142,6 +204,8 @@ fn metrics_for(model: opendeskphone_state::Model) -> Metrics {
         row_height: row,
         scroll_bar_width: sb,
         color,
+        keys: !model.is_touch(),
+        back_width: if model.is_touch() { 96 } else { 0 },
     }
 }
 
@@ -402,6 +466,67 @@ impl FakeUi {
         })
     }
 
+    /// Touch: a finger taps the window at (`x`, `y`), with the toolkit's
+    /// built-in behavior on a widget that does not take touches: a row of
+    /// a list is highlighted and activated (the fake's lists do not
+    /// scroll: their rows are those from the first), and an input is
+    /// focused.
+    pub fn tap(&self, app: &str, x: i32, y: i32) {
+        let row_h = i32::from(metrics_for(self.model.unwrap_or(opendeskphone_state::Model::D80)).row_height);
+        self.with(app, |w| {
+            let Some((id, ox, oy)) = w.touched(x, y) else { return };
+            if w.takes_touches(id) {
+                w.push(WindowEvent::Touch { widget: id, touch: Touch::Tap(point(x - ox, y - oy)) });
+                return;
+            }
+            let n = &w.nodes[&id];
+            match n.kind {
+                WidgetKind::TextList => {
+                    let row = ((y - oy) / row_h) as usize;
+                    if row < n.items.len() {
+                        w.tap_row(id, row as u32);
+                    }
+                }
+                WidgetKind::Input => w.focus = Some(id),
+                _ => {}
+            }
+        })
+    }
+
+    /// Touch: a finger taps row `row` of the focused list, or the first
+    /// list (wherever the list has scrolled to).
+    pub fn tap_row(&self, app: &str, row: u32) {
+        self.with(app, |w| {
+            let list = w
+                .focus
+                .filter(|f| w.nodes.get(f).is_some_and(|n| n.kind == WidgetKind::TextList))
+                .or_else(|| w.nodes.values().find(|n| n.kind == WidgetKind::TextList && n.visible).map(|n| n.id))
+                .expect("a list");
+            w.tap_row(list, row);
+        })
+    }
+
+    /// Touch: a finger comes down at `from` of the window, moves to `to`,
+    /// and is lifted.  A widget that takes touches gets the drag and its
+    /// end; nothing else does anything with it here (the fake's lists do
+    /// not scroll).
+    pub fn drag(&self, app: &str, from: (i32, i32), to: (i32, i32)) {
+        self.with(app, |w| {
+            let Some((id, ox, oy)) = w.touched(from.0, from.1) else { return };
+            if !w.takes_touches(id) {
+                return;
+            }
+            let ends = (point(from.0 - ox, from.1 - oy), point(to.0 - ox, to.1 - oy));
+            w.push(WindowEvent::Touch { widget: id, touch: Touch::Drag(ends) });
+            w.push(WindowEvent::Touch { widget: id, touch: Touch::DragEnd(ends) });
+        })
+    }
+
+    /// Whether a widget (0: the window) takes touches.
+    pub fn takes_touches(&self, app: &str, widget: u32) -> bool {
+        self.with(app, |w| w.takes_touches(widget))
+    }
+
     /// Replaces the text of the focused input, as if typed.
     pub fn type_text(&self, app: &str, text: &str) {
         self.with(app, |w| {
@@ -480,6 +605,7 @@ impl FakeWindow {
                     image: String::new(),
                     softkeys: Vec::new(),
                     claims: Vec::new(),
+                    touch: false,
                     drawing: canvas.then(Vec::new),
                 },
             );
@@ -563,6 +689,7 @@ impl AppWindow for FakeWindow {
                 w.focus = None;
                 w.softkeys.clear();
                 w.claims.clear();
+                w.touch = false;
             }
             Some(id) => {
                 for d in w.descendants(id) {
@@ -675,6 +802,16 @@ impl AppWindow for FakeWindow {
             Some(id) => {
                 if let Some(n) = w.nodes.get_mut(&id) {
                     n.claims = keys.to_vec()
+                }
+            }
+        })
+    }
+    fn claim_touch(&mut self, id: Option<u32>, on: bool) {
+        self.with(|w| match id {
+            None => w.touch = on,
+            Some(id) => {
+                if let Some(n) = w.nodes.get_mut(&id) {
+                    n.touch = on
                 }
             }
         })

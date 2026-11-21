@@ -1,4 +1,4 @@
-//! Rendering and key dispatch for [`crate::appview`] trees.
+//! Rendering, key dispatch, and touch dispatch for [`crate::appview`] trees.
 
 use crate::appview::*;
 use crate::gfx::{Canvas, HAlign, IRect, Rgb};
@@ -152,8 +152,11 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
                 .max()
                 .unwrap_or(0);
             let mut sy = node.scroll_y as i32;
-            // Follow the focused descendant.
-            if let Some(f) = tree.focus.filter(|f| *f != id && is_descendant(tree, *f, id)) {
+            // Follow the focused descendant.  (Touch: once, when the
+            // focus has moved; after that a finger scrolls.)
+            if (!th.touch || tree.follow_focus)
+                && let Some(f) = tree.focus.filter(|f| *f != id && is_descendant(tree, *f, id))
+            {
                 let top = offset_within(tree, f, id);
                 let h = tree.node(f).map(|n| n.rect.h as i32).unwrap_or(0);
                 if top < sy {
@@ -257,7 +260,7 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
                     x += widths[ci];
                     match cells.get(ci) {
                         Some(Cell::Text(t)) => {
-                            c.text_in(th.font(col.font), cr.inset_xy(th.pad.min(4), 0), t, row_fg, halign(col.align))
+                            c.text_in(th.font(col.font), cr.inset_xy(if th.touch { th.pad } else { th.pad.min(4) }, 0), t, row_fg, halign(col.align))
                         }
                         Some(Cell::Icon(name)) => {
                             if let Some(icon) = th.icon(name) {
@@ -314,6 +317,7 @@ pub(crate) fn render_over(tree: &mut Tree, c: &mut Canvas, th: &Theme, area: IRe
     for id in tree.roots.clone() {
         draw_node(tree, c, th, id, area.x, area.y, now_ms, ink);
     }
+    tree.follow_focus = false;
     c.restore_clip(old);
 }
 
@@ -344,6 +348,245 @@ fn focusable(tree: &Tree) -> Vec<WidgetId> {
         walk(tree, *r, &mut out);
     }
     out
+}
+
+/// Deletes the character before the cursor of the focused input.  Returns
+/// whether an input has the focus.
+fn delete_before_cursor(tree: &mut Tree, events: &mut Vec<AppEvent>) -> bool {
+    let Some(id) = focused_input(tree) else { return false };
+    let mut tap = std::mem::take(&mut tree.multitap);
+    if let Some(n) = tree.node_mut(id)
+        && widgets::edit_backspace(&mut n.text, &mut n.cursor, &mut tap) == Edit::Changed
+    {
+        events.push(AppEvent::InputChanged { widget: id, value: n.text.clone() });
+    }
+    tree.multitap = tap;
+    true
+}
+
+/// Runs `f` on the locked tree and then queues the events it made.
+fn with_tree<R>(view: &AppView, f: impl FnOnce(&mut Tree, &mut Vec<AppEvent>) -> R) -> R {
+    let mut events: Vec<AppEvent> = Vec::new();
+    let result = {
+        let mut guard = view.batch();
+        f(&mut guard, &mut events)
+    };
+    for ev in events {
+        view.push_event(ev);
+    }
+    result
+}
+
+pub(crate) fn backspace(view: &AppView) -> bool {
+    with_tree(view, delete_before_cursor)
+}
+
+/// Whether an input of this mode takes the character.
+fn mode_takes(mode: InputMode, ch: char) -> bool {
+    match mode {
+        InputMode::Text | InputMode::Password => !ch.is_control(),
+        InputMode::Numeric => ch.is_ascii_digit() || ch == '.',
+        InputMode::Pin => ch.is_ascii_digit(),
+        InputMode::Dial => ch.is_ascii_digit() || ch == '*' || ch == '#',
+    }
+}
+
+pub(crate) fn type_text(view: &AppView, text: &str) -> bool {
+    with_tree(view, |tree, events| {
+        let Some(id) = focused_input(tree) else { return false };
+        tree.multitap.reset();
+        let Some(n) = tree.node_mut(id) else { return false };
+        let mut changed = false;
+        for ch in text.chars().filter(|ch| mode_takes(n.mode, *ch)) {
+            let len = n.text.chars().count();
+            if len >= n.max_len as usize {
+                break;
+            }
+            let cur = (n.cursor as usize).min(len);
+            let at = n.text.char_indices().nth(cur).map_or(n.text.len(), |(i, _)| i);
+            n.text.insert(at, ch);
+            n.cursor = (cur + 1) as u16;
+            changed = true;
+        }
+        if changed {
+            events.push(AppEvent::InputChanged { widget: id, value: n.text.clone() });
+        }
+        true
+    })
+}
+
+// ----------------------------------------------------------------- touch
+
+/// What a finger came down on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    /// A widget (`None`: the window) that takes touches, and where its
+    /// top-left corner is in the view.
+    Claim { widget: Option<WidgetId>, x: i32, y: i32 },
+    /// A row of a list.
+    Row { list: WidgetId, row: u32 },
+    /// A list, below its last row.
+    List(WidgetId),
+    Input(WidgetId),
+    Scroll(WidgetId),
+}
+
+/// A drag under way: what the finger came down on, where (in the view),
+/// and where the finger is now.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Dragging {
+    target: Option<Target>,
+    x0: i32,
+    y0: i32,
+    x: i32,
+    y: i32,
+}
+
+/// What is touched at (`x`, `y`) of the view: the topmost widget there, as
+/// the widgets are painted, that takes touches or does something with a
+/// finger itself; under them all, the window, if it takes touches.
+fn locate(tree: &Tree, x: i32, y: i32) -> Option<Target> {
+    fn walk(tree: &Tree, id: WidgetId, ox: i32, oy: i32, x: i32, y: i32, found: &mut Option<Target>) {
+        let Some(n) = tree.node(id) else { return };
+        if !n.visible {
+            return;
+        }
+        // Nothing of a widget, or of what is in it, shows outside it.
+        let (rx, ry) = (ox + n.rect.x as i32, oy + n.rect.y as i32);
+        if x < rx || y < ry || x >= rx + n.rect.w as i32 || y >= ry + n.rect.h as i32 {
+            return;
+        }
+        if n.touch {
+            *found = Some(Target::Claim { widget: Some(id), x: rx, y: ry });
+        } else {
+            match n.kind {
+                WidgetKind::List => {
+                    // The rows as `widgets::list` lays them out.
+                    let row_h = n.row_height.max(1) as i32;
+                    let shown = (n.rect.h as i32 / row_h).max(1);
+                    let i = (y - ry) / row_h;
+                    let row = n.top_row as i32 + i;
+                    *found = Some(if i < shown && (row as usize) < n.rows.len() {
+                        Target::Row { list: id, row: row as u32 }
+                    } else {
+                        Target::List(id)
+                    });
+                }
+                WidgetKind::Input => *found = Some(Target::Input(id)),
+                WidgetKind::Scroll => *found = Some(Target::Scroll(id)),
+                _ => {}
+            }
+        }
+        let sy = match n.kind {
+            WidgetKind::Group => 0,
+            WidgetKind::Scroll => n.scroll_y as i32,
+            // No other kind shows its children.
+            _ => return,
+        };
+        for ch in &n.children {
+            walk(tree, *ch, rx, ry - sy, x, y, found);
+        }
+    }
+    let mut found = tree.window_touch.then_some(Target::Claim { widget: None, x: 0, y: 0 });
+    for r in &tree.roots {
+        walk(tree, *r, 0, 0, x, y, &mut found);
+    }
+    found
+}
+
+fn clamp16(v: i32) -> i16 {
+    v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+/// A tap at (`x`, `y`) of the view.
+pub(crate) fn tap(view: &AppView, x: i32, y: i32) {
+    with_tree(view, |tree, events| match locate(tree, x, y) {
+        Some(Target::Claim { widget, x: wx, y: wy }) => {
+            events.push(AppEvent::Touch { widget, touch: Touch::Tap { x: clamp16(x - wx), y: clamp16(y - wy) } });
+        }
+        Some(Target::Row { list, row }) => {
+            if tree.focus != Some(list) {
+                tree.focus(Some(list));
+                events.push(AppEvent::Focused { widget: list });
+            }
+            if let Some(n) = tree.node_mut(list) {
+                if n.selected != row {
+                    n.selected = row;
+                    events.push(AppEvent::ListSelected { widget: list, row });
+                }
+                events.push(AppEvent::ListActivated { widget: list, row });
+            }
+        }
+        Some(Target::Input(id)) => {
+            if tree.focus != Some(id) {
+                tree.focus(Some(id));
+                events.push(AppEvent::Focused { widget: id });
+            }
+        }
+        Some(Target::List(_) | Target::Scroll(_)) | None => {}
+    });
+}
+
+/// Scrolls what a finger on widget `from` scrolls by dragging `dy` pixels
+/// (up is negative): the nearest of the widget and the widgets it is in
+/// that is a list with more rows than it shows, or a `Scroll` with more in
+/// it than it shows.
+fn scroll_by(tree: &mut Tree, from: WidgetId, dy: i32) {
+    let mut cur = Some(from);
+    while let Some(id) = cur {
+        let Some(n) = tree.node_mut(id) else { return };
+        match n.kind {
+            WidgetKind::List if n.rows.len() as i32 * n.row_height as i32 > n.rect.h as i32 => {
+                let mut st = ListState { selected: n.selected as usize, top: n.top_row as usize, drag: n.drag };
+                st.drag(dy, n.row_height as i32, n.rows.len());
+                (n.top_row, n.drag) = (st.top as u32, st.drag);
+                return;
+            }
+            WidgetKind::Scroll if n.content_h > n.rect.h => {
+                let max = n.content_h as i32 - n.rect.h as i32;
+                n.scroll_y = (n.scroll_y as i32 - dy).clamp(0, max) as u16;
+                return;
+            }
+            _ => cur = n.parent,
+        }
+    }
+}
+
+/// One movement of a drag: the finger came down at (`x0`, `y0`) of the
+/// view, and has moved `dx` and `dy` pixels since the movement before.
+pub(crate) fn drag(view: &AppView, x0: i32, y0: i32, dx: i32, dy: i32) {
+    with_tree(view, |tree, events| {
+        let mut d = match tree.dragging {
+            Some(d) => d,
+            None => Dragging { target: locate(tree, x0, y0), x0, y0, x: x0, y: y0 },
+        };
+        (d.x, d.y) = (d.x + dx, d.y + dy);
+        tree.dragging = Some(d);
+        match d.target {
+            Some(Target::Claim { widget, x: wx, y: wy }) => events.push(AppEvent::Touch {
+                widget,
+                touch: Touch::Drag { x0: clamp16(d.x0 - wx), y0: clamp16(d.y0 - wy), x: clamp16(d.x - wx), y: clamp16(d.y - wy) },
+            }),
+            Some(Target::Row { list: id, .. } | Target::List(id) | Target::Input(id) | Target::Scroll(id)) => scroll_by(tree, id, dy),
+            None => {}
+        }
+    });
+}
+
+/// The finger of the drag was lifted (or the drag is over otherwise).
+pub(crate) fn drag_end(view: &AppView) {
+    // (Without marking the view as changed when there was no drag.)
+    if view.batch_quiet().dragging.is_none() {
+        return;
+    }
+    with_tree(view, |tree, events| {
+        if let Some(Dragging { target: Some(Target::Claim { widget, x: wx, y: wy }), x0, y0, x, y }) = tree.dragging.take() {
+            events.push(AppEvent::Touch {
+                widget,
+                touch: Touch::DragEnd { x0: clamp16(x0 - wx), y0: clamp16(y0 - wy), x: clamp16(x - wx), y: clamp16(y - wy) },
+            });
+        }
+    });
 }
 
 pub(crate) fn dispatch(view: &AppView, key: Key, now_ms: u64) -> Dispatch {
@@ -390,14 +633,7 @@ fn dispatch_locked(tree: &mut Tree, key: Key, now_ms: u64, events: &mut Vec<AppE
                     Dispatch::Consumed
                 }
                 Slot::Delete => {
-                    if let Some(id) = focused_input(tree) {
-                        let mut tap = std::mem::take(&mut tree.multitap);
-                        if let Some(n) = tree.node_mut(id)
-                            && widgets::edit_backspace(&mut n.text, &mut n.cursor, &mut tap) == Edit::Changed {
-                                events.push(AppEvent::InputChanged { widget: id, value: n.text.clone() });
-                            }
-                        tree.multitap = tap;
-                    }
+                    delete_before_cursor(tree, events);
                     Dispatch::Consumed
                 }
             };

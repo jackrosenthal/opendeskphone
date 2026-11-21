@@ -37,7 +37,9 @@ pub enum Op {
 }
 
 /// Where things go in an app window: the board on the left, and a panel
-/// for the level number and the counts on the right.
+/// for the level number and the counts on the right; in an upright window
+/// ([`Layout::upright`]), the panel across the top and the board under
+/// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     /// The side of a square, in pixels.
@@ -67,6 +69,25 @@ impl Layout {
             board_height,
             panel_x: board_width as i16,
             panel_width: width - board_width,
+        }
+    }
+
+    /// The layout for an upright window of this size (a touchscreen's):
+    /// the panel is the `header` pixels across the top, and the board is
+    /// in the middle of what is below, its squares as large as the
+    /// width allows for the largest level: 72 pixels in 800x1160.
+    pub fn upright(width: u16, height: u16, header: u16) -> Layout {
+        let below = height.saturating_sub(header);
+        let tile = (width / MAX_WIDTH as u16).min(below / MAX_HEIGHT as u16);
+        let (board_width, board_height) = (tile * MAX_WIDTH as u16, tile * MAX_HEIGHT as u16);
+        Layout {
+            tile,
+            board_x: ((width - board_width) / 2) as i16,
+            board_y: (header + (below - board_height) / 2) as i16,
+            board_width,
+            board_height,
+            panel_x: 0,
+            panel_width: width,
         }
     }
 }
@@ -286,9 +307,9 @@ impl Painter {
         }
     }
 
-    /// The top left corner of a square of the level; a level smaller than
-    /// the largest is in the middle of the board.
-    fn corner(&self, level: &Level, i: usize) -> (i16, i16) {
+    /// The top left corner of a square of the level, on the board; a
+    /// level smaller than the largest is in the middle of the board.
+    pub fn corner(&self, level: &Level, i: usize) -> (i16, i16) {
         let t = self.tile as usize;
         let x = (MAX_WIDTH - level.width) * t / 2 + (i % level.width) * t;
         let y = (MAX_HEIGHT - level.height) * t / 2 + (i / level.width) * t;
@@ -448,6 +469,19 @@ mod tests {
             assert_eq!(l.panel_x as u16 + l.panel_width, w);
             assert!(l.panel_width >= w / 4);
         }
+    }
+
+    #[test]
+    fn an_upright_window_has_the_panel_over_the_board() {
+        let l = Layout::upright(800, 1160, 96);
+        assert_eq!(l.tile, 72);
+        assert_eq!((l.board_width, l.board_height), (792, 504));
+        assert_eq!((l.board_x, l.board_y), (4, 96 + (1064 - 504) / 2));
+        assert_eq!((l.panel_x, l.panel_width), (0, 800));
+        // A window too low for the width's squares has smaller ones.
+        let l = Layout::upright(800, 446, 96);
+        assert_eq!(l.tile, 50);
+        assert!(l.board_y as u16 + l.board_height <= 446);
     }
 
     /// A row of everything there is to tell apart: floor, wall, target,

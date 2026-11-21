@@ -18,4 +18,6 @@ With capture off, keys follow [Focus and keys](ui.md#focus-and-keys).
 
 The third consecutive `cancel` takes the app off the screen and isn't delivered.  The first two are delivered.  Any other key resets the count.
 
+On a phone without keys ([`Metrics::keys`](types.md#metrics-and-skin) is `false`), the only key is `cancel`, from the [back button](ui.md#touch), and capture doesn't change where touches go.
+
 Calls and notices from the phone cover a capturing window like any other, and get the keys while shown; a notice takes `select`, `cancel`, and the four keys below the display.  Capture stays on while the window is off screen, and resumes when the window returns.

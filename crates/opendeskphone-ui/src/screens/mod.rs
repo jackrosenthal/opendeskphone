@@ -125,6 +125,17 @@ pub(crate) trait Screen: Send {
     fn drag(&mut self, _cx: &Cx, _from: Option<Hit>, _dx: i32, _dy: i32) -> Nav {
         Nav::Ignored
     }
+    /// Touch: [`Screen::drag`] with the place the finger went down, pixel
+    /// (`x`, `y`) of the screen, for a screen that has to know where in a
+    /// region a drag began.  The UI calls this one.
+    fn drag_at(&mut self, cx: &Cx, from: Option<Hit>, _x: i32, _y: i32, dx: i32, dy: i32) -> Nav {
+        self.drag(cx, from, dx, dy)
+    }
+    /// Touch: the finger of a drag ([`Screen::drag`]) was lifted, or the
+    /// touch was canceled.
+    fn drag_end(&mut self, _cx: &Cx, _from: Option<Hit>) -> Nav {
+        Nav::Ignored
+    }
     /// Touch: the one list of a screen that draws it with
     /// [`widgets::list`] in rows of the skin's height (`row_h`), and the
     /// number of its rows.  With it, and nothing else, a tap on a row

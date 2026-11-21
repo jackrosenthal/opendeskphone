@@ -456,3 +456,190 @@ fn the_screens_on_every_kind_of_display() {
         assert_eq!(p.ui.screen_name(), "app:alarms");
     }
 }
+
+// ---------------------------------------------------------- the touchscreen
+
+/// The app on a D80, which has no keys.
+fn touch_rig() -> (Rig, Arc<Mutex<Vec<Command>>>) {
+    let r = Rig::with_root(staged(), FakeConfig::default(), Model::D80);
+    let log = alarm_clock(&r.store);
+    (r, log)
+}
+
+/// The D80's window: the title's height, and a row's.
+const TITLE: i32 = 96;
+const ROW: i32 = 96;
+
+/// Touches row `row` of the list under the title.
+fn touch_field(r: &mut Rig, row: i32) {
+    r.ui.tap(APP, 400, TITLE + row * ROW + ROW / 2);
+    r.settle();
+}
+
+/// Touches row `row` of the list that has the focus.
+fn touch_row(r: &mut Rig, row: u32) {
+    r.ui.tap_row(APP, row);
+    r.settle();
+}
+
+#[test]
+fn on_the_touchscreen_an_alarm_is_set_by_touch() {
+    let (mut r, log) = touch_rig();
+    let audio = Arc::new(Mutex::new(Vec::new()));
+    common::answer_commands(&r.store, Domain::Audio, audio.clone(), |_| Ok(Reply::Done));
+    r.launch(APP);
+    // The back button leaves: no "Exit".
+    assert_eq!(r.ui.softkeys(APP), ["New"]);
+    r.softkey(APP, "New");
+    assert_eq!(r.ui.softkeys(APP), ["Save", "Cancel"]);
+
+    // The time: touching the field opens the dialog, in which the hours
+    // and the minutes are two lists; nothing is typed, and nothing says
+    // to type.
+    touch_field(&mut r, 0);
+    let texts = r.ui.texts(APP);
+    assert_eq!(texts[..2], ["New Alarm", "Time"]);
+    assert!(!texts.iter().any(|t| t.contains("Type")), "{texts:?}");
+    assert_eq!(r.ui.softkeys(APP), ["OK", "AM/PM", "Cancel"]);
+    assert_eq!(rows(&r).len(), 12, "the hours of half a day");
+    assert_eq!(rows(&r)[0], row("12", ""));
+    // What is under the dialog is not touched while it is open.
+    touch_field(&mut r, 1);
+    assert_eq!(r.ui.texts(APP)[..2], ["New Alarm", "Time"]);
+    // Seven o'clock; then the minutes, the list at the right (the dialog
+    // is 600 pixels wide in the middle of the window, and its lists are
+    // under a head of 88 pixels).
+    touch_row(&mut r, 7);
+    r.ui.tap(APP, 550, 342 + 90 + ROW / 2);
+    r.settle();
+    assert_eq!(rows(&r).len(), 60);
+    touch_row(&mut r, 30);
+    if !r.ui.shows(APP, "7:30 AM") {
+        r.softkey(APP, "AM/PM");
+    }
+    assert!(r.ui.shows(APP, "7:30 AM"), "{:?}", r.ui.texts(APP));
+    r.softkey(APP, "AM/PM");
+    assert!(r.ui.shows(APP, "7:30 PM"), "{:?}", r.ui.texts(APP));
+    r.softkey(APP, "OK");
+    assert_eq!(r.ui.texts(APP), ["New Alarm"], "the dialog is gone");
+    assert_eq!(rows(&r)[0], row("Time", "7:30 PM"));
+
+    // The days: a touch marks a day, and another takes the mark off.
+    touch_field(&mut r, 1);
+    assert_eq!(r.ui.texts(APP), ["New Alarm", "Repeat"]);
+    touch_row(&mut r, 1);
+    touch_row(&mut r, 3);
+    touch_row(&mut r, 5);
+    touch_row(&mut r, 3);
+    r.softkey(APP, "OK");
+    assert_eq!(rows(&r)[1], row("Repeat", "Mon Fri"));
+
+    // The tone: a touch sounds one, and the button takes it.
+    touch_field(&mut r, 2);
+    assert_eq!(r.ui.texts(APP), ["New Alarm", "Tone"]);
+    touch_row(&mut r, 1);
+    touch_row(&mut r, 2);
+    assert_eq!(r.ui.texts(APP), ["New Alarm", "Tone"], "the dialog stays open");
+    assert_eq!(r.ui.softkeys(APP), ["OK", "Cancel"]);
+    r.softkey(APP, "OK");
+    assert_eq!(rows(&r)[2], row("Tone", "Osmium"));
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(
+        *audio.lock().unwrap(),
+        [
+            Command::PlayAlarmTone { name: "Buzzer".into() },
+            Command::PlayAlarmTone { name: "Osmium".into() },
+            Command::StopSound
+        ]
+    );
+
+    r.softkey(APP, "Save");
+    assert_eq!(*log.lock().unwrap(), [Command::SetAlarm { alarm: alarm(19, 30, 0b0100010, "Osmium") }]);
+    assert_eq!(rows(&r), [row("7:30 PM", "Mon Fri")]);
+    assert_eq!(r.ui.softkeys(APP), ["New", "Edit", "Disable", "Delete"]);
+}
+
+#[test]
+fn on_the_touchscreen_a_touched_alarm_is_the_one_the_buttons_are_for() {
+    let (mut r, log) = touch_rig();
+    for a in [alarm(8, 0, 0b0000010, "Beep"), alarm(13, 15, 0, "Buzzer")] {
+        r.store.send(Command::SetAlarm { alarm: a }).wait().unwrap();
+    }
+    log.lock().unwrap().clear();
+    r.launch(APP);
+    assert_eq!(rows(&r), [row("8:00 AM", "Mon"), row("1:15 PM", "Once")]);
+    // The second alarm: chosen, not opened.
+    touch_field(&mut r, 1);
+    assert_eq!(r.ui.texts(APP), ["Alarms"]);
+    r.softkey(APP, "Disable");
+    assert_eq!(rows(&r), [row("8:00 AM", "Mon"), row("1:15 PM", "Disabled")]);
+    assert_eq!(r.ui.softkeys(APP), ["New", "Edit", "Enable", "Delete"]);
+    // Touched again, it is still only chosen; "Edit" opens it.
+    touch_field(&mut r, 1);
+    assert_eq!(r.ui.texts(APP), ["Alarms"]);
+    r.softkey(APP, "Edit");
+    assert_eq!(r.ui.texts(APP), ["Edit Alarm"]);
+    assert_eq!(rows(&r)[0], row("Time", "1:15 PM"));
+    // The time's dialog opens on the alarm's time; the back button (the
+    // key `cancel`) closes the dialog, then the alarm, then the app.
+    touch_field(&mut r, 0);
+    assert!(r.ui.shows(APP, "1:15 PM"));
+    assert_eq!(r.ui.softkeys(APP)[0], "OK");
+    r.key(APP, Key::Cancel);
+    assert_eq!(r.ui.texts(APP), ["Edit Alarm"]);
+    r.key(APP, Key::Cancel);
+    assert_eq!(r.ui.texts(APP), ["Alarms"]);
+    touch_field(&mut r, 0);
+    r.softkey(APP, "Delete");
+    assert_eq!(rows(&r), [row("1:15 PM", "Disabled")]);
+    r.key(APP, Key::Cancel);
+    assert_ne!(r.ui.top().as_deref(), Some(APP));
+}
+
+#[test]
+fn the_screens_on_the_touchscreen() {
+    let mut p = Phone::new(Model::D80);
+    let touch = |p: &mut Phone, x: u16, y: u16| {
+        p.sim.touch_tap(x, y);
+        p.settle();
+    };
+    let list = p.shot("1-list");
+    // The first alarm, and "Edit", the second button under the window.
+    touch(&mut p, 400, 96 + 48);
+    assert!(p.shot("1-list-touched") == list, "the first alarm was the chosen one already");
+    touch(&mut p, 12 + 197 + 90, 1172 + 48);
+    let edit = p.shot("2-edit");
+    assert!(edit != list);
+    let width = p.sim.frame(Screen::Main).unwrap().info.stride;
+    // The time: the lists of the hours and the minutes.
+    touch(&mut p, 400, 96 + 48);
+    let time = p.shot("3-time");
+    assert!(time != edit);
+    assert!(time[..width * 96] == edit[..width * 96], "the title stays");
+    // An hour and a minute, by touch, and a drag through the minutes.
+    touch(&mut p, 250, 342 + 90 + 96 + 48);
+    p.sim.touch_drag((550, 342 + 90 + 400), (550, 342 + 90 + 100), 4);
+    p.settle();
+    touch(&mut p, 550, 342 + 90 + 48);
+    let picked = p.shot("4-time-picked");
+    assert!(picked != time);
+    // "OK", the first button.
+    touch(&mut p, 12 + 90, 1172 + 48);
+    let edited = p.shot("5-edited");
+    assert!(edited != edit, "the new time shows");
+    assert!(edited[..width * 96] == edit[..width * 96]);
+    touch(&mut p, 400, 96 + 96 + 48);
+    let days = p.shot("6-repeat");
+    assert!(days != edited);
+    // The back button closes the dialog.
+    touch(&mut p, 48, 48);
+    assert!(p.shot("6-closed") != days);
+    touch(&mut p, 400, 96 + 2 * 96 + 48);
+    let tones = p.shot("7-tone");
+    assert!(tones != days && tones != edited);
+    touch(&mut p, 48, 48);
+    touch(&mut p, 48, 48);
+    assert!(p.shot("8-list")[..width * 96] == list[..width * 96]);
+    touch(&mut p, 48, 48);
+    assert_ne!(p.ui.screen_name(), "app:alarms");
+}

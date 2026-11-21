@@ -10,13 +10,16 @@ package opendeskphone:app@3.0.0;
 
 interface types {
   /// A widget handle.  Handle 0 is the app's root window (the app content
-  /// area of the skin, e.g., 480x243 on color models).
+  /// area of the skin, e.g., 480x243 on color models and 800x1160 on the
+  /// touchscreen).
   type widget = u32;
   type timer-id = u32;
   type request-id = u32;
   type call-id = u32;
 
-  enum skin { small-gray, large-gray, color }
+  /// The kinds of screen.  `touch` is the touchscreen of a phone that
+  /// has no keys (the D80): the user touches what is on the screen.
+  enum skin { small-gray, large-gray, color, touch }
 
   record size { width: u16, height: u16 }
 
@@ -24,7 +27,7 @@ interface types {
   /// metrics of the skin.
   record metrics {
     skin: skin,
-    /// App content area (240x102, 320x140, or 480x243).
+    /// App content area (240x102, 320x140, 480x243, or 800x1160).
     width: u16,
     height: u16,
     line-height: u16,
@@ -33,6 +36,17 @@ interface types {
     row-height: u16,
     scroll-bar-width: u16,
     color: bool,
+    /// The phone has keys: a dial pad, arrows, and keys under the
+    /// display.  A phone without (the `touch` skin) is used by touch
+    /// alone: no `event.key` comes from a key there, and what an app
+    /// does with a key it must offer on the screen (a list, a softkey,
+    /// or a widget that takes touches, `ui.claim-touch`).
+    keys: bool,
+    /// The width of the back button, which the phone draws over the
+    /// top-left corner of the window where there are no keys, as high
+    /// as `title-height`: touching it is the key `cancel`.  A title
+    /// begins to the right of it.  0 where the phone has keys.
+    back-width: u16,
   }
   record rect { x: s16, y: s16, width: u16, height: u16 }
 
@@ -125,7 +139,7 @@ interface types {
     key: u8,
   }
 
-  enum phone-model { d40, d45, d50, d60, d62, d65, d70 }
+  enum phone-model { d40, d45, d50, d60, d62, d65, d70, d80 }
 
   record softkey {
     /// App-chosen identifier reported in `event.softkey`.
@@ -142,6 +156,23 @@ interface types {
     changed(string),
     /// Select was pressed in an input.
     submitted(string),
+  }
+
+  /// A place in a widget, in pixels from its top-left corner.  A finger
+  /// that leaves the widget is at a place outside it (also negative).
+  record point { x: s16, y: s16 }
+
+  /// What a finger did on a widget that takes touches
+  /// (`ui.claim-touch`).
+  variant touch {
+    /// It came down and went up again in one place: that place.
+    tap(point),
+    /// It moves, having come down: where it came down, and where it is
+    /// now.  Arrives for every movement.
+    drag(tuple<point, point>),
+    /// It was lifted after a `drag`: where it came down, and where it
+    /// was lifted.
+    drag-end(tuple<point, point>),
   }
 
   variant error {
@@ -502,6 +533,9 @@ interface types {
     hook(bool),
     softkey(u32),
     widget(tuple<widget, widget-event>),
+    /// A finger on a widget that takes touches (`ui.claim-touch`), on a
+    /// phone with a touchscreen.
+    touch(tuple<widget, touch>),
     timer(timer-id),
     /// The result of a `pbx` request.
     pbx(tuple<request-id, result<pbx-result, pbx-error>>),
@@ -632,12 +666,27 @@ interface ui {
   /// An unclaimed `cancel` backgrounds the app.
   claim-keys: func(w: widget, keys: list<key>);
 
+  /// With `true`, what a finger does on this widget comes as
+  /// `event.touch` instead of the built-in behavior, with places counted
+  /// from the widget's top-left corner (widget 0: the window's).  A
+  /// touch goes to the topmost of the widgets under the finger that take
+  /// touches or have a behavior of their own (a list, an input, a scroll
+  /// widget); the other widgets let it through, and under them all is
+  /// the window, which gets it if it takes touches.  The built-in
+  /// behavior: touching a list's row highlights and activates it
+  /// (`highlighted`, if it was not, then `activated`), a drag scrolls a
+  /// list or a scroll widget, and touching an input focuses it.  The
+  /// softkeys and the back button are not the app's to take.  Only a
+  /// phone with a touchscreen (the `touch` skin) has touches; elsewhere
+  /// this does nothing.
+  claim-touch: func(w: widget, on: bool);
+
   /// Gives the app's window the whole display (`true`), or the usual
   /// area above the softkey bar again.  A full-screen window has no
   /// softkey bar: softkeys are not shown, and the four keys under the
   /// display do nothing unless the app claims them (`key.softkey`).
   /// `get-metrics` reports the size the window now has (480x272, 320x160,
-  /// or 240x120 when full-screen); widgets keep their bounds.  An
+  /// 240x120, or 800x1280 when full-screen); widgets keep their bounds.  An
   /// unclaimed `cancel` still leaves the app and line key 1 always does,
   /// and a call or a notice of the phone comes over a full-screen window
   /// as over any other.  The idle window is not affected.
@@ -645,7 +694,8 @@ interface ui {
 
   /// Softkeys attached to a widget; the bar shows the keys of the focused
   /// widget or its nearest ancestor that has any.  More than four become a
-  /// "More" page.
+  /// "More" page.  On the touchscreen the softkeys are buttons to touch,
+  /// in the same four places.
   set-softkeys: func(w: widget, keys: list<softkey>);
 }
 

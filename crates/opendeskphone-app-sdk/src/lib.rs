@@ -48,9 +48,9 @@ pub use bindings::opendeskphone::app::types::{
     AccountInfo, Align, CallInfo, CallQueue, CallState, Error, Event, ExpansionKey, Font, Header,
     HttpResponse, Icon, Image, InputMode, Key, LineState, ListItem, Metrics, Mwi,
     ParkedCall, ParkingLot, PbxError, PbxPresence, PbxPresenceOption, PbxPresenceState, PbxResult,
-    PbxServerError, PbxUser, PhoneModel, Presence, PresenceStatus, Push, PushMethod, QueueCaller, QueueMember,
-    QueueMembership, QueueStatus, Rect, Size, Skin, Softkey, StorageChange, StorageEntry,
-    StorageLocation, StorageOutcome, StorageReply, VoicemailFolder, VoicemailMessage,
+    PbxServerError, PbxUser, PhoneModel, Point, Presence, PresenceStatus, Push, PushMethod, QueueCaller,
+    QueueMember, QueueMembership, QueueStatus, Rect, Size, Skin, Softkey, StorageChange, StorageEntry,
+    StorageLocation, StorageOutcome, StorageReply, Touch, VoicemailFolder, VoicemailMessage,
     VoicemailPage, VoicemailSort, WidgetEvent, WidgetKind,
 };
 pub use bindings::opendeskphone::app::l10n::TimeStyle;
@@ -150,9 +150,18 @@ pub fn row_height() -> u16 {
     ui::get_metrics().row_height
 }
 
+/// Whether the phone has keys.  One without (the touchscreen, the D80) is
+/// used by touch alone: what an app does with a key there, it offers on
+/// the screen instead.
+pub fn has_keys() -> bool {
+    ui::get_metrics().keys
+}
+
 /// Clears the window, draws a title line, and returns the rectangle left
 /// below it.  The window claims `cancel`, so the app sees it as
-/// [`Event::Key`] and decides between "back" and leaving.
+/// [`Event::Key`] and decides between "back" and leaving.  (On the
+/// touchscreen `cancel` is the back button, which the phone draws at the
+/// left of the title line; the title begins after it.)
 pub fn screen(title: &str) -> Rect {
     ui::clear(ROOT);
     ui::claim_keys(ROOT, &[Key::Cancel]);
@@ -160,7 +169,12 @@ pub fn screen(title: &str) -> Rect {
     let t = ui::create(
         WidgetKind::Text,
         ROOT,
-        Rect::new(0, 0, m.width, m.title_height),
+        Rect::new(
+            m.back_width as i16,
+            0,
+            m.width.saturating_sub(m.back_width),
+            m.title_height,
+        ),
     );
     ui::set_font(t, Font::Title);
     ui::set_text(t, title);
@@ -184,10 +198,10 @@ pub mod prelude {
     pub use crate::manifest::AppKind;
     pub use crate::nav::{Form, Message};
     pub use crate::{
-        App, Event, Icon, Image, Key, ListItem, PbxError, PbxResult, ROOT, Rect, Skin, Softkey,
-        StorageEntry, StorageLocation, StorageOutcome, StorageReply, TimeStyle, Widget,
-        WidgetEvent, WidgetKind, audio, calls, config, content_rect, events, http, l10n, pbx,
-        presence, row_height, runtime, screen, storage, timers, ui,
+        App, Event, Icon, Image, Key, ListItem, PbxError, PbxResult, Point, ROOT, Rect, Skin,
+        Softkey, StorageEntry, StorageLocation, StorageOutcome, StorageReply, TimeStyle, Touch,
+        Widget, WidgetEvent, WidgetKind, audio, calls, config, content_rect, events, has_keys,
+        http, l10n, pbx, presence, row_height, runtime, screen, storage, timers, ui,
     };
 }
 
