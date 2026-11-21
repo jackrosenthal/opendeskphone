@@ -107,7 +107,7 @@ async fn register_failover_subscribe_message() {
     assert!(!bad.requests("REGISTER").is_empty());
     let regs = good.requests("REGISTER");
     assert!(regs.len() >= 2, "challenge, then credentials");
-    assert_eq!(regs[0].header("User-Agent"), Some("Digium D60 3_0_0"));
+    assert_eq!(regs[0].header("User-Agent"), Some("Digium D60 3_1_0"));
     let auth = regs[1].header("Authorization").expect("credentials");
     assert!(auth.contains("username=\"auth100\""), "{auth}");
     assert!(regs[1].header("Contact").unwrap().contains(&format!("sip:100@127.0.0.1:{}", p.handle.local_port())));

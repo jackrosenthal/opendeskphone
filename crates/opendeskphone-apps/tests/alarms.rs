@@ -173,6 +173,14 @@ fn the_tone_dialog_plays_a_tone_and_stops_it() {
     r.key(APP, Key::Down);
     r.softkey(APP, "Play");
     r.softkey(APP, "Cancel");
+    // (The commands are answered on a thread of their own: on a busy
+    // machine, a moment later.)
+    for _ in 0..200 {
+        if audio.lock().unwrap().len() >= 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert_eq!(*audio.lock().unwrap(), [Command::PlayAlarmTone { name: "Buzzer".into() }, Command::StopSound]);
     // Cancel did not take the tone.
     assert_eq!(rows(&r)[2], row("Tone", "Beep"));
