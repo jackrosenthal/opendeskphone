@@ -90,15 +90,22 @@ fn is_time(text: &str) -> bool {
 /// The time spent, as the playing screen shows it.
 fn time_shown(r: &Rig) -> String {
     let texts = r.ui.texts(APP);
-    assert!(texts.first().is_some_and(|t| is_time(t)), "{texts:?}");
-    texts[0].clone()
+    texts[time_at(&texts)].clone()
 }
 
-/// The texts of the playing screen after the time spent, which is the
-/// first of them and goes on.
+/// Where the time spent is among the texts of the playing screen: the
+/// first, or on the touchscreen the second, after the title.
+fn time_at(texts: &[String]) -> usize {
+    let i = usize::from(!texts.first().is_some_and(|t| is_time(t)));
+    assert!(texts.get(i).is_some_and(|t| is_time(t)), "{texts:?}");
+    i
+}
+
+/// The texts of the playing screen after the time spent, which goes on.
 fn beside(r: &Rig) -> Vec<String> {
-    time_shown(r);
-    r.ui.texts(APP).split_off(1)
+    let mut texts = r.ui.texts(APP);
+    let i = time_at(&texts);
+    texts.split_off(i + 1)
 }
 
 fn generating(r: &Rig) -> bool {
@@ -1274,17 +1281,22 @@ fn touch(r: &mut Rig, side: usize, cell: (usize, usize)) {
 fn on_the_touchscreen_a_puzzle_is_played_by_touching_its_cells() {
     let mut r = rig(Model::D80, 7);
     r.launch(APP);
-    // No puzzle yet: the list, whose rows are touched.
+    // No puzzle yet: the list, whose rows are touched.  It has no 14x14:
+    // a cell of that would be 57 pixels, too small for a finger.
     assert_eq!(r.ui.texts(APP), ["New puzzle"]);
+    let kinds: Vec<String> = r.ui.items(APP).into_iter().map(|i| i.0).collect();
+    assert_eq!(kinds, ["7x7 Easy", "7x7 Medium", "7x7 Hard", "10x10 Easy", "10x10 Medium", "10x10 Hard"]);
     r.ui.tap_row(APP, 0);
     r.settle();
     wait(&mut r);
     let puzzle = native(7, Difficulty::Easy, 7);
     assert_eq!(state(&mut r).0, puzzle);
 
-    // The upright window: the time beside the back button, the board
-    // under that line, as wide as the window allows, and under the board
-    // what a touch does, which names no key.  There is no picture of keys.
+    // The upright window: the title, which is the puzzle's kind, with the
+    // time at the right of it, the board under that line, as wide as the
+    // window allows, and under the board what a touch does, which names
+    // no key.  There is no picture of keys.
+    assert_eq!(r.ui.texts(APP)[0], "7x7 Easy");
     let (x, y, width) = board(&r, 7);
     assert_eq!((x, y, width), (0, 96, 7 * 114 + 1));
     assert!(!r.ui.takes_touches(APP, 0));
@@ -1293,8 +1305,8 @@ fn on_the_touchscreen_a_puzzle_is_played_by_touching_its_cells() {
     assert_eq!(texts.len(), 3, "{texts:?}");
     assert!(texts[0].starts_with("Touch a cell"), "{texts:?}");
     assert!(!texts.concat().chars().any(|c| c.is_ascii_digit()), "{texts:?}");
-    // Five softkeys: the phone shows three and "More".
-    assert_eq!(r.ui.softkeys(APP), ["Undo", "Auto", "New", "Help", "Scores"]);
+    // Four softkeys, so that there is no "More" page.
+    assert_eq!(r.ui.softkeys(APP), ["Undo", "Auto", "New", "Help"]);
 
     // A touch puts a light, the next makes it a square, and the third
     // clears the cell; a black cell takes nothing.
@@ -1348,9 +1360,9 @@ fn on_the_touchscreen_a_puzzle_is_played_by_touching_its_cells() {
         touch(&mut r, 7, cell(i));
     }
     let texts = r.ui.texts(APP);
-    assert_eq!(texts.len(), 2, "{texts:?}");
-    assert_eq!(texts[0], "Solved!");
-    assert!(texts[1].starts_with("Time "), "{texts:?}");
+    assert_eq!(texts.len(), 3, "{texts:?}");
+    assert_eq!(texts[1], "Solved!");
+    assert!(texts[2].starts_with("Time "), "{texts:?}");
     assert_eq!(r.ui.softkeys(APP), ["New", "Help", "Scores"]);
     // A solved puzzle does not change.
     let kept = state(&mut r).0;
@@ -1385,12 +1397,16 @@ fn on_the_touchscreen_the_other_screens_name_no_key_and_fit() {
     assert_eq!(state(&mut r), kept);
     assert!(beside(&r)[0].starts_with("Touch a cell"));
 
-    // The tables, and from them the puzzle again.
+    // The tables are a softkey of the list of the kinds ("New"), not of
+    // the puzzle; from them the list, and from that the puzzle again.
+    r.softkey(APP, "New");
     r.softkey(APP, "Scores");
     assert!(r.ui.texts(APP)[0].contains("7x7 Hard"), "{:?}", r.ui.texts(APP));
     r.softkey(APP, "Size");
     assert!(r.ui.texts(APP)[0].contains("10x10 Hard"), "{:?}", r.ui.texts(APP));
     assert_eq!(r.ui.softkeys(APP), ["Size", "Level"]);
+    r.key(APP, Key::Cancel);
+    assert_eq!(r.ui.texts(APP), ["New puzzle"]);
     r.key(APP, Key::Cancel);
     assert_eq!(state(&mut r), kept);
 
@@ -1551,16 +1567,18 @@ fn on_a_d80_the_game_is_drawn_and_touched_on_the_phones_own_screen() {
         p.softkey(1);
         assert_eq!(p.state(), before, "{side}");
         if side == 7 {
-            // The fourth is "More"; then the first is "Help", and the
-            // second "Scores".  The back button leaves either for the
-            // puzzle.
+            // The fourth is "Help", and there is no "More": the tables
+            // are on "New" (the third), the second of its buttons.  The
+            // back button leaves the help for the puzzle, and the tables
+            // for the list of the kinds, and that for the puzzle.
             p.softkey(4);
-            p.softkey(1);
             p.shot("help");
             p.tap(40, 40);
-            p.softkey(4);
+            p.softkey(3);
+            p.shot("new");
             p.softkey(2);
             p.shot("scores");
+            p.tap(40, 40);
             p.tap(40, 40);
             assert_eq!(p.state(), before);
         }
