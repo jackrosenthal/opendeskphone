@@ -192,6 +192,9 @@ pub enum Command {
     ForgetProvisioning,
     /// Continue without a server (`ProvisionPhase::Standalone`).
     SkipProvisioning,
+    /// Stop contacting the server and wait for the user to choose one
+    /// (`ProvisionPhase::AwaitingServer`).
+    CancelProvisioning,
 
     // ---- Network
     RenewDhcp,
@@ -278,7 +281,7 @@ impl Command {
             | SetBacklight { .. } | SetContrast { .. } | ShowScreen { .. } | ResetIdleTimer => Domain::Ui,
             ReloadConfig | SetSettings { .. } | SetTheme { .. } | ReloadContacts => Domain::Config,
             StartProvisioning { .. } | SelectUser { .. } | Reprovision | ForgetProvisioning
-            | SkipProvisioning => Domain::Provisioning,
+            | SkipProvisioning | CancelProvisioning => Domain::Provisioning,
             RenewDhcp | ReconfigureNetwork | SyncTime => Domain::Network,
             LaunchApp { .. } | CloseApp { .. } | InstallApp { .. } | RemoveApp { .. } => {
                 Domain::Apps

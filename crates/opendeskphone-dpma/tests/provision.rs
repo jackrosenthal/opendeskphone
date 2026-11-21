@@ -24,11 +24,16 @@ struct Rig {
 }
 
 fn rig_with(server: Arc<Mutex<FakeServer>>, files: TempFiles, sink: Arc<MemSink>) -> Rig {
+    rig_timed(server, files, sink, Duration::from_millis(500))
+}
+
+/// [`rig_with`], waiting `timeout` for an answer.
+fn rig_timed(server: Arc<Mutex<FakeServer>>, files: TempFiles, sink: Arc<MemSink>, timeout: Duration) -> Rig {
     let store = Store::new(Model::D60);
     let (to_phone, incoming) = mpsc::unbounded_channel();
     let transport = Arc::new(Mem { server: server.clone(), to_phone: to_phone.clone(), down: Mutex::new(false) });
     let mut cfg = DpmaConfig::new("00:0F:D3:AA:BB:CC", "Digium D60 3_0_0");
-    cfg.timeout = Duration::from_millis(500);
+    cfg.timeout = timeout;
     cfg.retry_secs = 1;
     cfg.ping_secs = 0;
     let dpma = opendeskphone_dpma::start(store.clone(), cfg, transport.clone(), incoming, files.files(), sink.clone());
@@ -257,12 +262,45 @@ async fn unreachable_server_retries() {
     r.dpma.network(true, None, Vec::new());
     wait("failure", || matches!(phase(&r.store), ProvisionPhase::Failed { .. }).then_some(())).await;
     assert_eq!(r.store.get::<Provisioning>().server.as_ref().unwrap().source, DiscoverySource::Manual);
+    // What the user is told, and what happened, apart.
+    let ProvisionPhase::Failed { reason, code, detail } = phase(&r.store) else { unreachable!() };
+    assert_eq!(reason, "The server at \u{201c}10.0.0.9:5060\u{201d} did not answer. Check the address and the network cable.");
+    assert_eq!((code, detail.as_str()), (None, "transport: unreachable"));
     // The server comes back; the retry timer provisions without help.
     *r.transport.down.lock().unwrap() = false;
     until(&r.store, "provisioned on retry", ProvisionPhase::Provisioned).await;
     let c = Configurator::parse(&r.sink.configurator.lock().unwrap().clone().unwrap());
     assert_eq!(c.get("config_server_manual"), Some("1"));
     assert_eq!(c.get("config_server_type"), Some("digium"));
+}
+
+/// A server that leaves the Handshake unanswered takes the whole timeout
+/// to give up on; the user cancels that, and the phone lets the server go
+/// at once, waits for a choice, and does not try the server again by
+/// itself.
+#[tokio::test(flavor = "current_thread")]
+async fn contacting_a_server_is_canceled() {
+    let mut s = FakeServer::new();
+    s.config = CONFIG.as_bytes().to_vec();
+    s.token_reqs = "mac".into();
+    s.refuse_chain = true;
+    let r = rig_timed(Arc::new(Mutex::new(s)), TempFiles::default(), Arc::new(MemSink::default()), Duration::from_secs(60));
+    r.dpma.network(true, None, Vec::new());
+    until(&r.store, "awaiting a server", ProvisionPhase::AwaitingServer).await;
+    r.store.send(Command::StartProvisioning { server: Some("sip:proxy@pbx.test:5060".into()) }).await.unwrap();
+    until(&r.store, "contacting", ProvisionPhase::Handshaking).await;
+    let asked = std::time::Instant::now();
+    r.store.send(Command::CancelProvisioning).await.unwrap();
+    assert!(asked.elapsed() < Duration::from_secs(5), "the cancel waited for the timeout");
+    assert_eq!(phase(&r.store), ProvisionPhase::AwaitingServer);
+    // (The retry timer is a second.)
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(phase(&r.store), ProvisionPhase::AwaitingServer);
+    assert_eq!(r.server.lock().unwrap().handshake_certificates.len(), 1, "the server was contacted again");
+    // A choice contacts it again.
+    r.server.lock().unwrap().refuse_chain = false;
+    r.store.send(Command::StartProvisioning { server: Some("sip:proxy@pbx.test:5060".into()) }).await.unwrap();
+    until(&r.store, "provisioned", ProvisionPhase::Provisioned).await;
 }
 
 fn read_file(path: &std::path::Path) -> Vec<u8> {

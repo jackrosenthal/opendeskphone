@@ -570,6 +570,7 @@ fn spawn_handlers(store: &Store, hal: Hal, config: Arc<Mutex<ConfigStore>>) {
                 p.server = None;
                 p.attached = false;
             }),
+            Command::CancelProvisioning => store.update::<st::Provisioning, _>(|p| p.phase = st::ProvisionPhase::AwaitingServer),
             _ => {
                 store.update::<st::Provisioning, _>(|p| p.phase = st::ProvisionPhase::FetchingConfig);
                 let s = store.clone();

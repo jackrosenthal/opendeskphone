@@ -12,6 +12,7 @@ pub const CANCEL: &str = "Cancel";
 /// is another field to go on to.
 pub const DONE: &str = "Done";
 pub const NEXT: &str = "Next";
+pub const CONNECT: &str = "Connect";
 pub const OK: &str = "OK";
 pub const SELECT: &str = "Select";
 pub const SAVE: &str = "Save";
@@ -61,6 +62,22 @@ pub const DISMISS: &str = "Dismiss";
 pub const SNOOZE: &str = "Snooze";
 pub const ALARM: &str = "Alarm";
 pub const ROLLBACK: &str = "Roll back";
+/// Touch: followed by the number called ("Call 1003").
+pub const CALL: &str = "Call";
+pub const RESTART: &str = "Restart";
+/// Touch: the button of the choices a first-time user rarely needs.
+pub const MORE_CHOICES: &str = "More";
+pub const TRY_AGAIN: &str = "Try again";
+pub const NEVER: &str = "Never";
+/// Units after a number ("15 s", "10 min").
+pub const SECONDS_SHORT: &str = "s";
+pub const MINUTES_SHORT: &str = "min";
+/// Touch: the menus' names for what "Status" is on the other models
+/// ("Status" is the presence's).
+pub const PHONE_STATUS: &str = "Phone status";
+pub const NETWORK_STATUS: &str = "Network status";
+pub const NETWORK_SETTINGS: &str = "Network settings";
+pub const ABOUT_PHONE: &str = "About this phone";
 
 // Boot, recovery, provisioning.
 pub const STARTING: &str = "Starting\u{2026}";
@@ -89,6 +106,15 @@ pub const PROV_APPLYING: &str = "Applying configuration\u{2026}";
 pub const PROV_FAILED: &str = "Setup failed";
 pub const PROV_ENTER_MANUALLY: &str = "Enter address\u{2026}";
 pub const PROV_NO_SERVER: &str = "Use without a server";
+/// Touch: the lines under the lists' titles, and the users' filter.
+pub const PROV_SELECT_SERVER_HINT: &str = "Choose your phone system, or enter its address.";
+pub const PROV_SELECT_USER_HINT: &str = "Choose the extension this phone is for.";
+pub const PROV_FILTER: &str = "Find a name or extension";
+pub const PROV_NO_MATCH: &str = "No extension matches";
+pub const PROV_NO_MATCH_HINT: &str = "Check the spelling, or change the search above.";
+pub const PROV_OTHER_ADDRESS: &str = "Enter a different address";
+/// Touch: before the server's error code, under a failure.
+pub const PROV_ERROR: &str = "error";
 
 // Idle.
 pub const NO_ACCOUNTS: &str = "No accounts configured";
@@ -130,16 +156,29 @@ pub const RECEIVED: &str = "Received";
 pub const PLACED: &str = "Placed";
 pub const NO_CALLS: &str = "No calls";
 pub const CLEAR_LOG_Q: &str = "Clear the call log?";
+pub const DURATION: &str = "Duration";
+/// Touch: the call log's empty tabs, its button, and its question.
+pub const NO_MISSED_CALLS: &str = "No missed calls";
+pub const NO_RECEIVED_CALLS: &str = "No received calls";
+pub const NO_PLACED_CALLS: &str = "No placed calls";
+pub const NO_CALLS_HINT: &str = "Calls made, answered, and missed on this phone are listed here.";
+pub const CLEAR_LOG: &str = "Clear call log";
+pub const CLEAR_LOG_SENTENCE: &str = "Every call in the log is removed from this phone.";
 
 // Menu and settings.
 pub const MAIN_MENU: &str = "Menu";
 pub const APPLICATIONS: &str = "Applications";
 pub const NO_APPS: &str = "No applications";
+/// Touch: the empty app launcher.
+pub const NO_APPS_TOUCH: &str = "No apps";
+pub const NO_APPS_HINT: &str = "Apps are added on the phone's web page.";
 pub const CALL_FORWARD: &str = "Call Forward";
 pub const FWD_ALWAYS: &str = "Always";
 pub const FWD_BUSY: &str = "When busy";
 pub const FWD_NO_ANSWER: &str = "No answer";
 pub const FWD_NUMBER: &str = "Forward to";
+/// Touch: the row under a forward rule's switch.
+pub const FWD_CHANGE_NUMBER: &str = "Change number";
 pub const DO_NOT_DISTURB: &str = "Do Not Disturb";
 pub const SETTINGS: &str = "Settings";
 pub const NETWORK: &str = "Network";
@@ -179,6 +218,13 @@ pub const FORGET_SERVER: &str = "Forget server";
 pub const RESTART_Q: &str = "Restart the phone?";
 pub const FACTORY_RESET_Q: &str = "Erase all settings and restart?";
 pub const FORGET_SERVER_Q: &str = "Forget the server and set up again?";
+/// Touch: what the questions' actions do, and their buttons.
+pub const RESTART_SENTENCE: &str = "Any call in progress ends, and the phone starts again.";
+pub const FORGET_SERVER_SENTENCE: &str = "The phone forgets its server and the settings the server gave it, and its setup starts again.";
+pub const FACTORY_RESET_SENTENCE: &str = "Every setting on this phone is erased, and it restarts as it was new.";
+pub const ERASE_AND_RESTART: &str = "Erase and restart";
+pub const ROLLBACK_TITLE: &str = "Roll back firmware";
+pub const ROLLBACK_SENTENCE: &str = "The phone goes back to the firmware it had before, and restarts.";
 pub const MODEL: &str = "Model";
 pub const VERSION: &str = "Version";
 pub const MAC: &str = "MAC";
@@ -208,6 +254,8 @@ pub const PAGE_SENDING: &str = "Paging";
 pub const PAGE_BLOCKED: &str = "Page waiting";
 pub const PAGE_STOP: &str = "Stop";
 pub const NO_PAGE_GROUPS: &str = "No page groups";
+/// Touch: under [`NO_PAGE_GROUPS`].
+pub const NO_PAGE_GROUPS_HINT: &str = "Page groups are set up by your administrator, on the phone system.";
 
 // Volume.
 pub const VOL_HANDSET: &str = "Handset";
@@ -251,13 +299,24 @@ pub const BT_NOT_CONNECTED: &str = "Not connected";
 pub const BT_PAIRING: &str = "Pairing\u{2026}";
 pub const BT_PAIR: &str = "Pair";
 pub const BT_SEARCH: &str = "Search";
-pub const BT_CONNECT: &str = "Connect";
 pub const BT_DISCONNECT: &str = "Disconnect";
 pub const BT_FORGET: &str = "Forget";
 pub const BT_PAIR_WITH: &str = "Pair with";
 pub const BT_COMPARE: &str = "Pair if the headset shows this number.";
 pub const BT_ASKS: &str = "This device asks to pair with the phone.";
 pub const BT_TYPE_PIN: &str = "Type the headset's PIN, which is often 0000.";
+/// Touch: the empty states, the search's button, and a paired headset's
+/// screen.
+pub const BT_NO_CONTROLLER_TOUCH: &str = "Bluetooth is not available";
+pub const BT_NO_CONTROLLER_HINT: &str = "The phone did not find its Bluetooth controller. Restart the phone to try again.";
+pub const BT_PAIRING_MODE_TAP: &str = "Put the headset in pairing mode, then tap Search for devices.";
+pub const BT_SEARCH_DEVICES: &str = "Search for devices";
+pub const BT_SEARCHING_BUTTON: &str = "Searching\u{2026}";
+pub const BT_ADDRESS: &str = "Address";
+pub const BT_FORGET_TITLE: &str = "Forget headset";
+/// After the headset's name.
+pub const BT_FORGET_SENTENCE: &str = "is unpaired from this phone. To use it again, pair it again.";
+pub const BT_FORGET_DEVICE: &str = "Forget this headset";
 
 // Touch (D80): the idle screen, the dialer, and the call screen.
 pub const KEYPAD: &str = "Keypad";

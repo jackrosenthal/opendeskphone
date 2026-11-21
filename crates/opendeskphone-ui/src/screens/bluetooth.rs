@@ -14,11 +14,13 @@
 //! highlighted device, its scroll position, and the PIN being typed.
 //!
 //! On the touch skin (D80) nothing is highlighted: each device's row is
-//! taller, with its state under its name and buttons for what can be done
-//! to it (Pair; Connect or Disconnect, and Forget), and a touch on the row
-//! does what Select does to it.  A finger scrolls the list, and Search is
-//! the one softkey.  The pairing question has its own buttons, and the PIN
-//! is typed in an [`EditScreen`].
+//! taller, with its state under its name and a button for what is done to
+//! it (Pair, Connect, or Disconnect), and a touch on the row does what
+//! Select does to it.  A paired headset's row also has a button for its
+//! own screen ([`DeviceScreen`]), which is where it is forgotten.  A
+//! finger scrolls the list, and a button across the bottom searches.  The
+//! pairing question has its own buttons, and the PIN is typed in an
+//! [`EditScreen`].
 
 use super::*;
 use crate::gfx::{Rgb, mix};
@@ -33,6 +35,8 @@ const SK_FORGET: u32 = 6;
 const SK_ACCEPT: u32 = 7;
 const SK_REFUSE: u32 = 8;
 const SK_ERASE: u32 = 9;
+/// Touch: a paired headset's own screen.
+const SK_DEVICE: u32 = 10;
 
 /// The longest PIN Bluetooth takes.
 const PIN_MAX: usize = 16;
@@ -65,7 +69,7 @@ fn line_h(th: &Theme, line: &Line) -> i32 {
 /// Touch: the PIN, typed for the device at `addr` while it asks for one
 /// (its question may be gone by the time the PIN is typed).
 fn pin_entry(addr: String, typed: &str) -> Box<dyn Screen> {
-    EditScreen::boxed("bluetooth-pin", tr::PROV_ENTER_PIN, typed, InputMode::Numeric, move |cx, pin| {
+    EditScreen::boxed("bluetooth-pin", tr::PROV_ENTER_PIN, typed, InputMode::Digits, move |cx, pin| {
         let pin: String = pin.chars().filter(char::is_ascii_digit).take(PIN_MAX).collect();
         if pin.is_empty() {
             return Nav::Stay;
@@ -75,6 +79,7 @@ fn pin_entry(addr: String, typed: &str) -> Box<dyn Screen> {
         }
         Nav::Pop
     })
+    .action(tr::BT_PAIR)
 }
 
 fn label(d: &BluetoothDevice) -> &str {
@@ -353,8 +358,9 @@ impl BluetoothScreen {
 }
 
 /// Touch: device number `i`, in its row `r`: its icon, its name with its
-/// state under it, and at the right its buttons.  A touch on the row
-/// elsewhere is [`Hit::Row`] `i`.
+/// state under it, and at the right its button, and a paired headset's
+/// way to its own screen.  A touch on the row elsewhere is [`Hit::Row`]
+/// `i`.
 fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
     let th = cx.th;
     let bt = &cx.st.bluetooth;
@@ -367,9 +373,9 @@ fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
                 c.icon_in(ic, icon, th.fg);
             }
             if d.addr == bt.connected {
-                (tr::BT_CONNECTED, th.good, &[(SK_DISCONNECT, tr::BT_DISCONNECT), (SK_FORGET, tr::BT_FORGET)])
+                (tr::BT_CONNECTED, th.good, &[(SK_DISCONNECT, tr::BT_DISCONNECT)])
             } else {
-                (tr::BT_NOT_CONNECTED, th.secondary, &[(SK_CONNECT, tr::BT_CONNECT), (SK_FORGET, tr::BT_FORGET)])
+                (tr::BT_NOT_CONNECTED, th.secondary, &[(SK_CONNECT, tr::CONNECT)])
             }
         }
         Row::Available(d) if d.addr == bt.pairing_with => (tr::BT_PAIRING, th.accent, &[]),
@@ -377,9 +383,19 @@ fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
         Row::Available(_) if !bt.pairing_with.is_empty() => ("", th.secondary, &[]),
         Row::Available(_) => ("", th.secondary, &[(SK_PAIR, tr::BT_PAIR)]),
     };
+    // A paired headset's screen, at the right end (as a call log entry's
+    // details are).
+    let mut right = rest.right() - th.pad;
+    if let Row::Paired(_) = row {
+        let (_, more) = IRect { w: right - rest.x, ..rest }.split_right(th.back_w);
+        if let Some(ic) = th.icon("info") {
+            c.icon_in(ic, more, th.secondary);
+        }
+        c.hit(more, Hit::Custom(SK_DEVICE << 16 | i as u32));
+        right = more.x;
+    }
     // The buttons, from the right.
     let bf = th.font(Font::Bold);
-    let mut right = rest.right() - th.pad;
     for &(id, text) in buttons.iter().rev() {
         let w = (bf.width(text) + th.px(32)).max(th.touch_min);
         let b = IRect::new(right - w, r.y + (r.h - th.touch_min) / 2, w, th.touch_min);
@@ -399,7 +415,11 @@ fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
 }
 
 /// A message in the middle of `r`: a line, and a dimmer hint under it.
+/// (Touch: [`menus::empty_state`].)
 fn message(c: &mut Canvas, th: &Theme, r: IRect, text: &str, hint: &str) {
+    if th.touch() {
+        return menus::empty_state(c, th, r, text, hint);
+    }
     let f = th.font(Font::Normal);
     let inner = r.inset_xy(th.pad * 3, 0);
     let hint_lines = if hint.is_empty() { 0 } else { f.wrap(hint, inner.w).len() as i32 };
@@ -416,7 +436,9 @@ fn searching(c: &mut Canvas, th: &Theme, title: IRect, now_ms: u64) {
     let dots_w = PULSE_DOTS as i32 * (dot + gap) - gap;
     let f = th.font(Font::Normal);
     let tw = f.width(tr::BT_SEARCHING);
-    let x = title.right() - th.title_pad - dots_w - th.pad - tw;
+    // Touch: left of the home button, which is at the bar's right.
+    let right = if th.touch() && c.nav().back { title.right() - th.back_w } else { title.right() - th.title_pad };
+    let x = right - dots_w - th.pad - tw;
     c.text_in(f, IRect::new(x, title.y, tw, title.h), tr::BT_SEARCHING, th.title_fg, HAlign::Left);
     let lit = now_ms / PULSE_MS % PULSE_DOTS;
     // On the text's baseline, as an ellipsis would be.
@@ -451,10 +473,10 @@ impl Screen for BluetoothScreen {
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         let bt = &cx.st.bluetooth;
         if cx.th.touch() {
-            // The rows have their buttons, the question its own, and the
-            // title bar the way back.
-            let search = bt.present && bt.pairing.is_none() && !bt.discovering;
-            return if search { vec![soft(SK_SEARCH, tr::BT_SEARCH)] } else { Vec::new() };
+            // The rows have their buttons, the question its own, the
+            // search the one across the bottom, and the title bar the way
+            // back.
+            return Vec::new();
         }
         let blank = || soft(0, "");
         let back = soft(SK_BACK, tr::BACK);
@@ -475,7 +497,7 @@ impl Screen for BluetoothScreen {
             Some(Row::Paired(d)) if d.addr == bt.connected => {
                 vec![soft(SK_DISCONNECT, tr::BT_DISCONNECT), search, soft(SK_FORGET, tr::BT_FORGET), back]
             }
-            Some(Row::Paired(_)) => vec![soft(SK_CONNECT, tr::BT_CONNECT), search, soft(SK_FORGET, tr::BT_FORGET), back],
+            Some(Row::Paired(_)) => vec![soft(SK_CONNECT, tr::CONNECT), search, soft(SK_FORGET, tr::BT_FORGET), back],
             // One pairing at a time.
             Some(Row::Available(_)) if !bt.pairing_with.is_empty() => vec![blank(), search, blank(), back],
             Some(Row::Available(_)) => vec![soft(SK_PAIR, tr::BT_PAIR), search, blank(), back],
@@ -493,13 +515,8 @@ impl Screen for BluetoothScreen {
             }
             (SK_CONNECT, Some(Row::Paired(d))) => cx.post(Command::BluetoothConnect { addr: d.addr.clone() }),
             (SK_DISCONNECT, Some(Row::Paired(_))) => cx.post(Command::BluetoothDisconnect),
-            (SK_FORGET, Some(Row::Paired(d))) => {
-                let addr = d.addr.clone();
-                return Nav::Push(Confirm::boxed(format!("{} {}?", tr::BT_FORGET, label(d)), move |cx| {
-                    cx.post(Command::BluetoothUnpair { addr: addr.clone() });
-                    Nav::Pop
-                }));
-            }
+            (SK_FORGET, Some(Row::Paired(d))) => return Nav::Push(forget(cx, d)),
+            (SK_DEVICE, Some(Row::Paired(d))) => return Nav::Push(Box::new(DeviceScreen { addr: d.addr.clone() })),
             (SK_SEARCH, _) if !bt.discovering => cx.post(Command::BluetoothDiscovery { on: true }),
             (SK_ACCEPT, _) => return self.answer(cx, true),
             (SK_REFUSE, _) => return self.answer(cx, false),
@@ -609,14 +626,34 @@ impl Screen for BluetoothScreen {
         let th = cx.th;
         let bt = &cx.st.bluetooth;
         c.fill(area, th.bg);
-        let (title, body) = area.split_top(th.title_h);
+        let (title, mut body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, tr::BLUETOOTH);
         if !bt.present {
-            message(c, th, body, tr::BT_NO_CONTROLLER, &sentence(&bt.error));
+            if th.touch() {
+                let hint = if bt.error.is_empty() {
+                    tr::BT_NO_CONTROLLER_HINT.to_string()
+                } else {
+                    format!("{}\n\n{}", tr::BT_NO_CONTROLLER_HINT, sentence(&bt.error))
+                };
+                message(c, th, body, tr::BT_NO_CONTROLLER_TOUCH, &hint);
+            } else {
+                message(c, th, body, tr::BT_NO_CONTROLLER, &sentence(&bt.error));
+            }
             return;
         }
         if bt.discovering {
             searching(c, th, title, cx.now_ms);
+        }
+        // Touch: the search, across the bottom; while one is under way the
+        // button says so and does nothing.
+        if th.touch() {
+            let (rest, buttons) = menus::bottom_buttons(th, body, 1);
+            if bt.discovering {
+                widgets::button_styled(c, th, buttons[0], tr::BT_SEARCHING_BUTTON, widgets::ButtonStyle::Secondary, Hit::Nothing);
+            } else {
+                widgets::button_styled(c, th, buttons[0], tr::BT_SEARCH_DEVICES, widgets::ButtonStyle::Secondary, Hit::Soft(SK_SEARCH));
+            }
+            body = rest;
         }
         // Why the last pairing failed, in a band at the bottom.
         let mut list = body;
@@ -636,7 +673,7 @@ impl Screen for BluetoothScreen {
         } else if bt.discovering {
             message(c, th, list, tr::BT_LOOKING, tr::BT_PAIRING_MODE);
         } else {
-            message(c, th, list, tr::BT_NONE_FOUND, tr::BT_PAIRING_MODE_SEARCH);
+            message(c, th, list, tr::BT_NONE_FOUND, if th.touch() { tr::BT_PAIRING_MODE_TAP } else { tr::BT_PAIRING_MODE_SEARCH });
         }
         if let Some(q) = self.question(bt) {
             // Touch: the question is answered, and nothing else is touched
@@ -651,5 +688,93 @@ impl Screen for BluetoothScreen {
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         // The next step of the searching indicator.
         cx.st.bluetooth.discovering.then(|| (cx.now_ms / PULSE_MS + 1) * PULSE_MS)
+    }
+}
+
+/// The question asked before the paired device `d` is forgotten, and the
+/// forgetting.
+fn forget(cx: &Cx, d: &BluetoothDevice) -> Box<dyn Screen> {
+    let a = menus::Ask {
+        question: format!("{} {}?", tr::BT_FORGET, label(d)),
+        title: tr::BT_FORGET_TITLE,
+        sentence: format!("{} {}", label(d), tr::BT_FORGET_SENTENCE),
+        action: tr::BT_FORGET,
+        destructive: true,
+    };
+    let addr = d.addr.clone();
+    menus::ask(cx, a, move |cx| {
+        cx.post(Command::BluetoothUnpair { addr: addr.clone() });
+        Nav::Pop
+    })
+}
+
+/// Touch: a paired headset's own screen: whether it is connected, and
+/// its address; a button that connects or disconnects it; and at the
+/// bottom, apart from the rest, a red one that forgets it (after asking).
+/// The screen goes once the headset is no longer paired.
+struct DeviceScreen {
+    addr: String,
+}
+
+impl DeviceScreen {
+    fn device<'a>(&self, bt: &'a Bluetooth) -> Option<&'a BluetoothDevice> {
+        bt.paired.iter().find(|d| d.addr == self.addr)
+    }
+}
+
+impl Screen for DeviceScreen {
+    fn name(&self) -> String {
+        "bluetooth-device".into()
+    }
+    fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
+        let bt = &cx.st.bluetooth;
+        let Some(d) = self.device(bt) else { return Nav::Stay };
+        match id {
+            SK_CONNECT => cx.post(Command::BluetoothConnect { addr: d.addr.clone() }),
+            SK_DISCONNECT if bt.connected == d.addr => cx.post(Command::BluetoothDisconnect),
+            SK_FORGET => return Nav::Push(forget(cx, d)),
+            _ => {}
+        }
+        Nav::Stay
+    }
+    fn key(&mut self, _cx: &Cx, key: Key) -> Nav {
+        if key == Key::Cancel { Nav::Pop } else { Nav::Ignored }
+    }
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        let bt = &cx.st.bluetooth;
+        c.fill(area, th.bg);
+        let (title, body) = area.split_top(th.title_h);
+        let Some(d) = self.device(bt) else {
+            widgets::title_bar(c, th, title, tr::BLUETOOTH);
+            return;
+        };
+        widgets::title_bar(c, th, title, label(d));
+        let connected = bt.connected == d.addr;
+        // What it is, as the status pages say it.
+        let rows: [(&str, &str, Rgb); 2] = [
+            (tr::STATUS, if connected { tr::BT_CONNECTED } else { tr::BT_NOT_CONNECTED }, if connected { th.good } else { th.secondary }),
+            (tr::BT_ADDRESS, &d.addr, th.secondary),
+        ];
+        let row_h = th.row_h * 3 / 4;
+        for (i, (k, v, tint)) in rows.iter().enumerate() {
+            let r = IRect::new(body.x + th.title_pad, body.y + i as i32 * row_h, body.w - 2 * th.title_pad, row_h);
+            widgets::key_value(c, th, IRect { h: r.h - 1, ..r }, k, v, th.fg, *tint);
+            c.hline(r.x, r.bottom() - 1, r.w, th.border);
+        }
+        // Forget at the very bottom, and the connection above it with
+        // room between.
+        let (rest, forget) = menus::bottom_buttons(th, body, 1);
+        let (_, connect) = menus::bottom_buttons(th, IRect { h: rest.h - th.row_h / 2, ..rest }, 1);
+        let (id, text) = if connected { (SK_DISCONNECT, tr::BT_DISCONNECT) } else { (SK_CONNECT, tr::CONNECT) };
+        widgets::button_styled(c, th, connect[0], text, widgets::ButtonStyle::Primary, Hit::Soft(id));
+        widgets::button_styled(c, th, forget[0], tr::BT_FORGET_DEVICE, widgets::ButtonStyle::Destructive, Hit::Soft(SK_FORGET));
+    }
+    fn deadline(&self, cx: &Cx) -> Option<u64> {
+        // Forgotten (here or elsewhere): back to the list.
+        self.device(&cx.st.bluetooth).is_none().then_some(cx.now_ms)
+    }
+    fn tick(&mut self, cx: &Cx) -> Nav {
+        if self.device(&cx.st.bluetooth).is_none() { Nav::Pop } else { Nav::Stay }
     }
 }

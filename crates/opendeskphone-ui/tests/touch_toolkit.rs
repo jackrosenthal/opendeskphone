@@ -138,22 +138,23 @@ fn softkey_buttons_share_their_rows_and_leave_no_place_empty() {
 #[test]
 fn a_native_screens_softkeys_are_packed_without_more() {
     let mut r = Rig::new(Model::D80);
-    // The idle screen has seven by default: all on the screen, in two
-    // rows that reach both sides.
+    // The home screen has seven by default: all on the screen, in two
+    // rows that reach both sides of the home screen's own margin.
     let keys = r.softkeys();
     assert_eq!(keys.len(), 7);
     let th = th();
-    assert_eq!(keys.iter().map(|(k, _)| k.x).min(), Some(th.soft_x0));
-    assert_eq!(keys.iter().map(|(k, _)| k.right()).max(), Some(th.width - th.soft_x0));
+    let left = keys.iter().map(|(k, _)| k.x).min().unwrap();
+    assert!(left >= th.soft_x0);
+    assert_eq!(keys.iter().map(|(k, _)| k.right()).max(), Some(th.width - left));
     assert!(keys.iter().all(|(_, id)| *id != u32::MAX));
     // The call log's softkeys on the phones with keys have empty places
-    // between them; here its buttons begin at the left edge.
+    // between them; here it has one button, from side to side.
     r.fill_call_log(3);
     r.show("call_log");
     let keys = r.softkeys();
-    assert!(!keys.is_empty());
-    assert_eq!(keys[0].0.x, th.soft_x0);
-    assert_eq!(keys[keys.len() - 1].0.right(), th.width - th.soft_x0);
+    assert_eq!(keys.len(), 1);
+    assert!(keys[0].0.x >= th.soft_x0 && keys[0].0.x < th.touch_min);
+    assert_eq!(keys[0].0.right(), th.width - keys[0].0.x);
 }
 
 #[test]
@@ -174,10 +175,11 @@ fn a_question_is_a_card_with_cancel_at_the_left() {
     assert!(cancel.h >= th.touch_min && cancel.w >= 2 * th.touch_min);
     assert!(action.x >= cancel.right() + 16, "{cancel:?} {action:?}");
     assert!(cancel.y > th.height / 4 && cancel.bottom() < th.height * 3 / 4, "{cancel:?}");
-    // The card is on the dialogs' fill, and the action is filled.
+    // The card is on the dialogs' fill, and the action is filled: red,
+    // for what clears the log.
     let c = r.ui.canvas();
     assert_eq!(c.pixel(cancel.x - 8, cancel.y - 8), th.modal_bg);
-    assert_eq!(c.pixel(action.x + 12, action.y + 12), ButtonStyle::Primary.colors(th).0);
+    assert_eq!(c.pixel(action.x + 12, action.y + 12), ButtonStyle::Destructive.colors(th).0);
     // Cancel leaves everything as it was.
     r.tap(Hit::Soft(4));
     assert_eq!(r.screen(), "call_log");

@@ -252,7 +252,7 @@ pub enum ButtonStyle {
     /// Ends a call, declines, erases, or deletes: red.
     Destructive,
     /// A mode that is on (mute, the speaker, Do Not Disturb): filled in
-    /// the text's color, with the label in the background's.
+    /// the buttons' label color, with the label in the buttons' own.
     On,
 }
 
@@ -264,7 +264,7 @@ impl ButtonStyle {
             ButtonStyle::Primary => (th.sel_bg, None, th.sel_fg),
             ButtonStyle::Call => (th.sk_go, None, th.sk_fg),
             ButtonStyle::Destructive => (th.sk_stop, None, th.sk_fg),
-            ButtonStyle::On => (th.fg, None, th.bg),
+            ButtonStyle::On => (th.sk_fg, None, th.sk_bg),
         }
     }
 }
