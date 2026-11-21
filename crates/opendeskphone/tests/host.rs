@@ -215,9 +215,9 @@ fn a_d80_is_operated_by_touch() {
     assert!(err.contains("(10, 1280) is not on the 800x1280 screen"), "{err}");
     assert!(state("ui").contains("screen: \"provisioning\""), "{}", state("ui"));
 
-    // The rows are "Enter address..." and "Use without a server", each
-    // 96 pixels high under a title bar of 96: the second is 192 to 288.
-    assert_eq!(diag(&socket, &["touch", "400", "240"]).0, 0);
+    // "Use without a server" is the left one of the two buttons across the
+    // bottom: 96 pixels high, 12 above the bottom edge, from x 20 to 392.
+    assert_eq!(diag(&socket, &["touch", "200", "1220"]).0, 0);
     wait_for("the idle screen", Duration::from_secs(10), || state("ui").contains("screen: \"idle\""));
     assert!(state("provisioning").contains("phase: Standalone"), "{}", state("provisioning"));
     // A drag is taken too.

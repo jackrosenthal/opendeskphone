@@ -20,6 +20,7 @@ struct Rig {
     audio: CommandReceiver,
     apps: CommandReceiver,
     provisioning: CommandReceiver,
+    system: CommandReceiver,
 }
 
 impl Rig {
@@ -47,6 +48,7 @@ impl Rig {
         let handle = |d| store.handle(d);
         let (calls, config, audio, apps, provisioning) =
             (handle(Domain::Calls), handle(Domain::Config), handle(Domain::Audio), handle(Domain::Apps), handle(Domain::Provisioning));
+        let system = handle(Domain::System);
         let cfg = UiConfig {
             backlight_timeout_secs: 0,
             ringtone: "Flutey Phone".into(),
@@ -56,7 +58,7 @@ impl Rig {
         let mut ui = Ui::from_hal(&mut hal, store.clone(), cfg);
         ui.set_fixed_time(Some((5_000_000, 1_794_607_087)));
         ui.pump();
-        Rig { store, ui, sim, calls, config, audio, apps, provisioning }
+        Rig { store, ui, sim, calls, config, audio, apps, provisioning, system }
     }
     fn show(&mut self, screen: &str) {
         let p = self.store.send(Command::ShowScreen { name: screen.into() });
@@ -111,14 +113,22 @@ fn row(row: u32) -> Hit {
 
 /// The main menu's rows on the D80 (which has Bluetooth).
 const MENU_CALL_LOG: u32 = 0;
+const MENU_FORWARD: u32 = 2;
 const MENU_SETTINGS: u32 = 6;
 /// The settings' rows.
 const SETTINGS_NETWORK: u32 = 0;
 const SETTINGS_DISPLAY: u32 = 2;
 const SETTINGS_SOUNDS: u32 = 3;
+const SETTINGS_RESET: u32 = 4;
 
 fn th() -> &'static Theme {
     Theme::for_model(Model::D80)
+}
+
+/// The theme the screens are drawn in: the skin's, in the palette of the
+/// default wallpaper.
+fn shown_th() -> &'static Theme {
+    th().in_wallpaper(opendeskphone_ui::wallpaper::default())
 }
 
 /// Every region at least `touch_min` both ways.
@@ -278,8 +288,22 @@ fn an_app_is_launched_from_the_grid_and_the_grid_scrolls() {
     assert!(taken(&r.apps).is_empty());
 }
 
+/// The setting a command of the configuration's sets.
+fn setting(cmds: Vec<Command>) -> Vec<(String, String)> {
+    cmds.into_iter()
+        .flat_map(|c| match c {
+            Command::SetSettings { settings } => settings,
+            other => panic!("{other:?}"),
+        })
+        .collect()
+}
+
+fn pair(id: &str, value: &str) -> (String, String) {
+    (id.into(), value.into())
+}
+
 #[test]
-fn a_ringtone_is_heard_and_chosen() {
+fn a_ringtone_is_heard_and_chosen_by_a_tap() {
     let mut r = Rig::new();
     r.show("menu");
     r.tap(row(MENU_SETTINGS));
@@ -287,16 +311,26 @@ fn a_ringtone_is_heard_and_chosen() {
     assert_eq!(r.screen(), "sounds");
     r.tap(row(0));
     assert_eq!(r.screen(), "ringtones");
-    // Nothing to choose until one is heard.
-    assert!(r.ui.canvas().hit_rect(Hit::Soft(1)).is_none());
+    // No buttons: a tap sounds the ringtone and makes it the ringtone.
+    assert!(r.regions().iter().all(|(_, h)| !matches!(h, Hit::Soft(_))));
+    let check = |r: &Rig, i: u32| {
+        let at = r.region(row(i));
+        // The check mark, in the accent, at the left of the row.
+        let th = shown_th();
+        (at.x..at.x + th.back_w).any(|x| (at.y..at.bottom()).any(|y| r.ui.canvas().pixel(x, y) == th.accent))
+    };
+    assert!(check(&r, 0) && !check(&r, 1));
     r.tap(row(1));
     assert_eq!(taken(&r.audio), vec![Command::PlaySound { name: "Acheron".into() }]);
+    assert_eq!(setting(taken(&r.config)), vec![pair("default_ringtone", "Acheron")]);
+    assert!(check(&r, 1) && !check(&r, 0));
     r.tap(row(2));
     assert_eq!(taken(&r.audio), vec![Command::PlaySound { name: "Andromeda".into() }]);
+    assert_eq!(setting(taken(&r.config)), vec![pair("default_ringtone", "Andromeda")]);
+    // The back button stops the sound and keeps the ringtone.
+    r.tap(Hit::Key(Key::Cancel));
+    assert_eq!(taken(&r.audio), vec![Command::StopSound]);
     assert!(taken(&r.config).is_empty());
-    r.tap(Hit::Soft(1));
-    assert_eq!(taken(&r.config), vec![Command::SetSettings { settings: vec![("default_ringtone".into(), "Andromeda".into())] }]);
-    assert_eq!(taken(&r.audio), vec![Command::StopSound, Command::StopSound]);
     assert_eq!(r.screen(), "sounds");
 }
 
@@ -344,7 +378,7 @@ fn a_level_is_set_with_its_buttons_and_slider() {
 }
 
 #[test]
-fn a_theme_is_shown_when_touched_and_chosen_with_select() {
+fn a_theme_is_chosen_and_shown_by_a_tap() {
     let mut r = Rig::new();
     r.show("menu");
     r.tap(row(MENU_SETTINGS));
@@ -354,6 +388,8 @@ fn a_theme_is_shown_when_touched_and_chosen_with_select() {
     r.tap(row(3));
     assert_eq!(r.screen(), "theme");
     all_large(&r);
+    // No buttons: a tap is the choice.
+    assert!(r.regions().iter().all(|(_, h)| !matches!(h, Hit::Soft(_))));
     // The idle screen above the sheet is only to be looked at: its lines
     // are not line keys here.
     let line = th().tab_rect(0);
@@ -367,11 +403,171 @@ fn a_theme_is_shown_when_touched_and_chosen_with_select() {
     assert_eq!(r.screen(), "theme");
     let after = r.ui.canvas().pixel(title.right() + 4, title.y + 4);
     assert_ne!(before, after, "the sheet's title bar is not in the theme touched");
-    assert!(taken(&r.config).is_empty());
-    r.tap(Hit::Soft(1));
     let id = opendeskphone_ui::wallpaper::all()[other as usize].id;
     assert_eq!(taken(&r.config), vec![Command::SetTheme { name: id.into() }]);
+    r.tap(Hit::Key(Key::Cancel));
     assert_eq!(r.screen(), "display");
+    assert!(taken(&r.config).is_empty());
+}
+
+#[test]
+fn forwarding_is_switched_and_keeps_its_number() {
+    let mut r = Rig::new();
+    r.store.update::<Features, _>(|f| f.forward.always = "1099".into());
+    r.show("menu");
+    r.tap(row(MENU_FORWARD));
+    assert_eq!(r.screen(), "forward");
+    all_large(&r);
+    // Always (on), its number under it, When busy, No answer: no Do Not
+    // Disturb.
+    assert_eq!(r.rows(), vec![0, 1, 2, 3]);
+    let fwd = |kind, target: &str| Command::SetForward { kind, target: target.into(), no_answer_secs: None };
+    // Off, and on again to the same number.
+    r.tap(row(0));
+    assert_eq!(taken(&r.calls), vec![fwd(ForwardKind::Always, "")]);
+    r.store.update::<Features, _>(|f| f.forward.always.clear());
+    r.ui.pump();
+    assert_eq!(r.rows(), vec![0, 1, 2, 3], "the number is kept");
+    r.tap(row(0));
+    assert_eq!(taken(&r.calls), vec![fwd(ForwardKind::Always, "1099")]);
+    // A rule with no number asks for one, and forwards to it.
+    r.tap(row(2));
+    assert_eq!(r.screen(), "forward_edit");
+    r.type_keys("1234");
+    r.tap(opendeskphone_ui::osk::Cap::Done.hit());
+    assert_eq!(taken(&r.calls), vec![fwd(ForwardKind::Busy, "1234")]);
+    assert_eq!(r.screen(), "forward");
+    // The number of a rule that is off is changed, and kept, and not
+    // forwarded to until the rule is switched on.
+    r.tap(row(1));
+    assert_eq!(r.screen(), "forward_edit");
+    for _ in 0..4 {
+        r.tap(opendeskphone_ui::osk::Cap::Backspace.hit());
+    }
+    r.type_keys("2000");
+    r.tap(opendeskphone_ui::osk::Cap::Done.hit());
+    assert!(taken(&r.calls).is_empty());
+    r.tap(row(0));
+    assert_eq!(taken(&r.calls), vec![fwd(ForwardKind::Always, "2000")]);
+    // That of a rule that is on is forwarded to at once.
+    r.store.update::<Features, _>(|f| f.forward.always = "2000".into());
+    r.ui.pump();
+    r.tap(row(1));
+    r.type_keys("1");
+    r.tap(opendeskphone_ui::osk::Cap::Done.hit());
+    assert_eq!(taken(&r.calls), vec![fwd(ForwardKind::Always, "20001")]);
+}
+
+#[test]
+fn display_settings_are_switched_and_chosen() {
+    let mut r = Rig::new();
+    r.show("menu");
+    r.tap(row(MENU_SETTINGS));
+    r.tap(row(SETTINGS_DISPLAY));
+    // Dim when idle: a switch, which a tap turns.
+    r.tap(row(1));
+    assert_eq!(setting(taken(&r.config)), vec![pair("dim_backlight", "0")]);
+    assert_eq!(r.screen(), "display");
+    // The backlight's timeout: a choice of five, a tap choosing.
+    r.tap(row(2));
+    assert_eq!(r.screen(), "backlight_timeout");
+    all_large(&r);
+    assert_eq!(r.rows(), vec![0, 1, 2, 3, 4]);
+    r.tap(row(3));
+    assert_eq!(setting(taken(&r.config)), vec![pair("backlight_timeout", "300")]);
+    r.tap(row(4));
+    assert_eq!(setting(taken(&r.config)), vec![pair("backlight_timeout", "0")]);
+    r.tap(Hit::Key(Key::Cancel));
+    assert_eq!(r.screen(), "display");
+}
+
+#[test]
+fn addressing_and_vlan_show_their_settings_and_turn_them() {
+    use opendeskphone_ui::osk::Cap;
+    let mut r = Rig::new();
+    r.show("network");
+    // DHCP, and in use: a tap asks for a static address.
+    r.tap(row(0));
+    assert_eq!(setting(taken(&r.config)), vec![pair("network_enable_dhcp", "0")]);
+    // The configuration says so (the network has yet to be applied): the
+    // next tap is back to DHCP.
+    let cfg = UiConfig { network_dhcp: false, vlan_discovery: "LLDP".into(), backlight_timeout_secs: 0, ..Default::default() };
+    r.ui.handle().set_config(cfg);
+    r.ui.pump();
+    r.tap(row(0));
+    assert_eq!(setting(taken(&r.config)), vec![pair("network_enable_dhcp", "1")]);
+    // VLAN discovery by LLDP: next, manual.
+    r.tap(row(6));
+    assert_eq!(setting(taken(&r.config)), vec![pair("network_vlan_discovery_mode", "MANUAL")]);
+    // The VLAN ID is a number, not a secret: the pad of numbers, not of
+    // a PIN.
+    r.tap(row(7));
+    assert_eq!(r.screen(), "setting_edit");
+    assert!(r.ui.canvas().hit_rect(Cap::Char('.').hit()).is_some());
+}
+
+#[test]
+fn factory_reset_is_last_apart_and_red() {
+    let mut r = Rig::new();
+    r.show("menu");
+    r.tap(row(MENU_SETTINGS));
+    r.tap(row(SETTINGS_RESET));
+    assert_eq!(r.screen(), "reset");
+    // Restart, Reconfigure, Forget server, a gap, Factory reset.
+    assert_eq!(r.rows(), vec![0, 1, 2, 3, 4]);
+    r.tap(row(3));
+    assert_eq!(r.screen(), "reset");
+    let at = r.region(row(4));
+    let red = (at.x..at.right()).any(|x| (at.y..at.bottom()).any(|y| r.ui.canvas().pixel(x, y) == shown_th().error));
+    assert!(red, "Factory reset is not red");
+    r.tap(row(4));
+    assert_eq!(r.screen(), "confirm");
+    r.tap(Hit::Soft(1));
+    assert_eq!(taken(&r.system), vec![Command::FactoryReset]);
+}
+
+#[test]
+fn the_call_log_is_today_s_times_a_wide_clear_and_a_green_call() {
+    let mut r = Rig::new();
+    // The fixed clock is 2026-11-13 21:58 UTC.
+    r.store.update::<CallLog, _>(|l| {
+        for (i, start) in [1_794_600_000u64, 1_794_500_000].into_iter().enumerate() {
+            l.entries.push_back(CallLogEntry {
+                id: i as u64,
+                kind: CallLogKind::Received,
+                party: Party { name: format!("Party {i}"), number: format!("20{i}"), uri: String::new() },
+                account: AccountId(0),
+                start_unix: start,
+                duration_secs: 75,
+            });
+        }
+    });
+    r.show("call_log");
+    all_large(&r);
+    let th = shown_th();
+    let clear = r.region(Hit::Soft(3));
+    assert!(clear.w >= th.width * 9 / 10, "{clear:?}");
+    // Today's entry has its time only: it begins farther right than
+    // yesterday's, which has the date before it.
+    let leftmost = |r: &Rig, i: u32| {
+        let at = r.region(row(i));
+        let details = r.region(Hit::Custom(0x1_0000 + i));
+        (at.x + at.w / 2..details.x).find(|x| (at.y..at.bottom()).any(|y| r.ui.canvas().pixel(*x, y) == th.secondary)).expect("a time")
+    };
+    assert!(leftmost(&r, 0) > leftmost(&r, 1) + th.px(40), "{} {}", leftmost(&r, 0), leftmost(&r, 1));
+    // The details: a green button across the bottom calls the number.
+    r.tap(Hit::Custom(0x1_0000));
+    assert_eq!(r.screen(), "call_log_entry");
+    let call = r.region(Hit::Soft(1));
+    assert!(call.w >= th.width * 9 / 10);
+    assert_eq!(r.ui.canvas().pixel(call.x + th.pad, call.y + call.h / 2), th.sk_go, "Call is not green");
+    r.tap(Hit::Soft(1));
+    assert_eq!(taken(&r.calls), vec![Command::Dial { target: "200".into(), account: Some(AccountId(0)), path: None }]);
+    // Empty: a sentence, and no Clear.
+    r.store.update::<CallLog, _>(|l| l.entries.clear());
+    r.show("call_log");
+    assert!(r.ui.canvas().hit_rect(Hit::Soft(3)).is_none());
+    assert!(r.rows().is_empty());
 }
 
 #[test]
@@ -399,6 +595,8 @@ fn every_menu_is_operated_by_touch_alone() {
         &[MENU_SETTINGS, 3],
         &[MENU_SETTINGS, 4],
         &[MENU_SETTINGS, 4, 0],
+        &[MENU_SETTINGS, 4, 2],
+        &[MENU_SETTINGS, 4, 4],
         &[7],
         &[7, 0],
         &[7, 1],

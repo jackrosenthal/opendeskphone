@@ -176,7 +176,7 @@ fn the_count_starts_over_when_the_menu_is_shown_again() {
     assert_eq!(r.commands(), pick(5));
     // The server refuses; the phone is later told to forget it and waits
     // for a server again (stock: `choosePbx.show` once more).
-    r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Failed { reason: "no answer".into(), code: None });
+    r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Failed { reason: "no answer".into(), code: None, detail: String::new() });
     r.at(10_000);
     r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::AwaitingServer);
     r.at(10_001);

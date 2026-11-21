@@ -449,9 +449,14 @@ pub enum ProvisionPhase {
     /// Running on locally configured SIP accounts, with no DPMA server.
     Standalone,
     Failed {
+        /// What went wrong, for the phone's user: a sentence, with what
+        /// to do about it.
         reason: String,
         /// The stock error code, when the server gave one.
         code: Option<i32>,
+        /// What went wrong in technical terms, for an administrator
+        /// (may be empty).
+        detail: String,
     },
 }
 

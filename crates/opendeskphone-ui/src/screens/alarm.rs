@@ -4,8 +4,8 @@
 //!
 //! On the touch skin (D80) Snooze and Dismiss are two large buttons under
 //! the time, Snooze the larger (a hand reaching for a ringing alarm should
-//! find it), and the title bar has no back button: leaving the screen is
-//! not ending the alarm.
+//! find it) and saying for how long, and the title bar has no back
+//! button: leaving the screen is not ending the alarm.
 
 use super::*;
 
@@ -13,6 +13,12 @@ pub(crate) struct AlarmScreen;
 
 const SK_SNOOZE: u32 = 1;
 const SK_DISMISS: u32 = 4;
+
+/// Touch: Snooze with how long it lasts ("Snooze 10 min"), whole minutes
+/// as the alarm clock reports them.
+fn snooze_label(secs: u32) -> String {
+    if secs < 60 { tr::SNOOZE.to_string() } else { format!("{} {} {}", tr::SNOOZE, secs / 60, tr::MINUTES_SHORT) }
+}
 
 /// Touch: a button as large as these: `label` in the large font.
 #[allow(clippy::too_many_arguments)]
@@ -66,7 +72,7 @@ impl Screen for AlarmScreen {
             let buttons = buttons.inset_xy(margin, 0);
             let snooze = IRect::new(buttons.x, buttons.y, buttons.w, th.touch_min * 2 + margin);
             let dismiss = IRect::new(buttons.x, snooze.bottom() + margin, buttons.w, th.touch_min + margin);
-            large_button(c, th, snooze, tr::SNOOZE, th.sel_bg, None, th.sel_fg, SK_SNOOZE);
+            large_button(c, th, snooze, &snooze_label(cx.st.alarms.snooze_secs), th.sel_bg, None, th.sel_fg, SK_SNOOZE);
             large_button(c, th, dismiss, tr::DISMISS, th.sk_bg, Some(th.sk_edge), th.sk_fg, SK_DISMISS);
             rest
         } else {

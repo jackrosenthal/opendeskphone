@@ -156,6 +156,9 @@ fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
     // without one, the Messages key calls the voicemail number.
     out.voicemail_app_account = cfg.appconfig("voicemail").is_some_and(|app| app.child("account").is_some());
     out.park = cfg.setting("parking_lot_extension").is_some_and(|p| !p.is_empty());
+    let network = cfg.network();
+    out.network_dhcp = network.dhcp;
+    out.vlan_discovery = network.vlan_discovery_mode;
     super::wallpaper::apply(cfg, &opendeskphone_config::Nvdata::new(&ctx.paths.nvdata), &mut out);
     let active = cfg.ringtones().active;
     if let Some(name) = out.ringtones.iter().find(|n| n.eq_ignore_ascii_case(&active)) {

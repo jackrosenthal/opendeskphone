@@ -109,6 +109,11 @@ pub struct UiConfig {
     pub voicemail_app_account: bool,
     /// The phone has a parking extension: a call can be parked.
     pub park: bool,
+    /// The network settings the network menu changes, as configured
+    /// (stock `network_enable_dhcp` and `network_vlan_discovery_mode`);
+    /// the network uses them once it is applied.
+    pub network_dhcp: bool,
+    pub vlan_discovery: String,
 }
 
 impl Default for UiConfig {
@@ -137,6 +142,8 @@ impl Default for UiConfig {
             theme_locked: false,
             voicemail_app_account: false,
             park: false,
+            network_dhcp: true,
+            vlan_discovery: String::new(),
         }
     }
 }

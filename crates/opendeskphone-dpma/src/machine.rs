@@ -31,10 +31,36 @@ enum Outcome {
 }
 
 struct Fail {
+    /// What went wrong, in technical terms.
     reason: String,
     code: Option<i32>,
     /// Trying again by itself may help (timeouts, transport).
     retry: bool,
+    /// What the user is told ([`Machine::advice`]).
+    cause: Cause,
+}
+
+/// The kind of a failure, for what the phone's user is told of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cause {
+    /// The server did not answer, or could not be reached.
+    NoAnswer,
+    /// The server answered with an error code (`Fail::code`).
+    Server,
+    /// The server's answer made no sense to the phone.
+    Answer,
+    /// The configuration the server gave could not be used.
+    Config,
+    /// The phone's identity could not be made or kept.
+    Identity,
+}
+
+/// A server's address as a person would write it: without `sip:` and the
+/// user before `@`.
+fn shown_address(address: &str) -> &str {
+    let a = address.trim();
+    let a = a.strip_prefix("sips:").or_else(|| a.strip_prefix("sip:")).unwrap_or(a);
+    a.rsplit_once('@').map_or(a, |(_, host)| host)
 }
 
 /// A `SelectUser` that has not ended yet.
@@ -48,8 +74,11 @@ struct Selection {
 impl From<DpmaError> for Fail {
     fn from(e: DpmaError) -> Fail {
         match e {
-            DpmaError::Server { code, text } => Fail { reason: text, code: Some(code), retry: code == errors::msg::SESSION_TIMEOUT },
-            other => Fail { reason: other.to_string(), code: None, retry: true },
+            DpmaError::Server { code, text } => {
+                Fail { reason: text, code: Some(code), retry: code == errors::msg::SESSION_TIMEOUT, cause: Cause::Server }
+            }
+            e @ (DpmaError::Transport(_) | DpmaError::Timeout) => Fail { reason: e.to_string(), code: None, retry: true, cause: Cause::NoAnswer },
+            other => Fail { reason: other.to_string(), code: None, retry: true, cause: Cause::Answer },
         }
     }
 }
@@ -84,6 +113,10 @@ pub(crate) struct Machine {
     /// The `SelectUser` under way: until it ends, nothing saved for the
     /// user before stands in for what the command named.
     selecting: Option<Selection>,
+    /// The user canceled the contact with a server: the phone waits for
+    /// a choice of server, the saved one too, until a `StartProvisioning`
+    /// or a `Reprovision`.
+    choosing: bool,
 }
 
 /// The two bodies a Handshake can carry (`dpma-proto`'s `cert`).
@@ -141,6 +174,32 @@ impl Machine {
             legacy_only: None,
             resource_task: None,
             selecting: None,
+            choosing: false,
+        }
+    }
+
+    /// What the phone's user is told of a failure: what happened, in a
+    /// sentence, and what to do about it.  (`Fail::reason` says it for an
+    /// administrator.)
+    fn advice(&self, f: &Fail) -> String {
+        use errors::msg;
+        let server = match self.server.as_ref().map(|s| shown_address(&s.address)) {
+            Some(a) if !a.is_empty() => format!("The server at \u{201c}{a}\u{201d}"),
+            _ => "The server".to_string(),
+        };
+        match (f.cause, f.code) {
+            (Cause::NoAnswer, _) => format!("{server} did not answer. Check the address and the network cable."),
+            (Cause::Server, Some(msg::INVALID_PASSWORD)) => "The PIN was not accepted. Try again with the extension's PIN.".into(),
+            (Cause::Server, Some(msg::USER_NOT_FOUND)) => "The server does not know that extension. Try again, or ask your administrator.".into(),
+            (Cause::Server, Some(msg::INVALID_CERTIFICATE)) => format!("{server} did not accept this phone. Ask your administrator to allow it."),
+            (Cause::Server, Some(msg::SESSION_TIMEOUT | msg::INVALID_TOKEN)) => format!("{server} ended the phone's session. Try again."),
+            (Cause::Server, Some(msg::INVALID_CONFIG_PASSWORD | msg::CREDENTIALS_NOT_PROVIDED)) => {
+                format!("{server} asked for a password this phone does not have. Ask your administrator.")
+            }
+            (Cause::Server, _) => format!("{server} turned the phone away. Try again, or ask your administrator."),
+            (Cause::Answer, _) => format!("{server} answered in a way this phone does not understand. Ask your administrator."),
+            (Cause::Config, _) => "The phone could not use the settings from the server. Ask your administrator.".into(),
+            (Cause::Identity, _) => "The phone could not prepare its security certificate. Restart the phone and try again.".into(),
         }
     }
 
@@ -244,8 +303,49 @@ impl Machine {
             while want && self.net_up && !self.standalone {
                 want = false;
                 retry_at = None;
-                let result = self.provision(full).await;
+                // The pass.  A server that does not answer takes most of a
+                // minute to give up on, and the user may cancel that: a
+                // `CancelProvisioning` ends the pass where it is.  Other
+                // commands wait for the end of the pass, as they always
+                // have.
+                let mut held = Vec::new();
+                let result = {
+                    let pass = self.provision(full);
+                    tokio::pin!(pass);
+                    let mut open = true;
+                    loop {
+                        tokio::select! {
+                            r = &mut pass => break Some(r),
+                            env = commands.next(), if open => match env {
+                                Some(env) => {
+                                    let cancel = matches!(env.command, Command::CancelProvisioning);
+                                    held.push(env);
+                                    if cancel {
+                                        break None;
+                                    }
+                                }
+                                None => open = false,
+                            },
+                        }
+                    }
+                };
                 full = true;
+                let Some(result) = result else {
+                    // Canceled: what the pass began is let go, a user
+                    // being chosen goes back to the one before, and the
+                    // command has the user choose a server.
+                    log::info!("dpma: provisioning canceled");
+                    self.link.forget();
+                    self.attached = false;
+                    if let Some(selection) = self.selecting.take() {
+                        let canceled = Fail { reason: "canceled".into(), code: None, retry: false, cause: Cause::NoAnswer };
+                        self.selected(selection, &Err(canceled));
+                    }
+                    for env in held {
+                        want |= self.command(env);
+                    }
+                    continue;
+                };
                 match &result {
                     Ok(Outcome::Provisioned) => {
                         self.attached = true;
@@ -256,9 +356,10 @@ impl Machine {
                     Err(f) => {
                         log::warn!("dpma: provisioning failed: {} (code {:?})", f.reason, f.code);
                         self.attached = false;
+                        let reason = self.advice(f);
                         self.store.update::<Provisioning, _>(|p| {
                             p.attached = false;
-                            p.phase = ProvisionPhase::Failed { reason: f.reason.clone(), code: f.code };
+                            p.phase = ProvisionPhase::Failed { reason, code: f.code, detail: f.reason.clone() };
                         });
                         if f.retry {
                             retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(self.cfg.retry_secs));
@@ -271,6 +372,9 @@ impl Machine {
                     // The assignment the phone had comes back.
                     retry_at = None;
                     want = true;
+                }
+                for env in held {
+                    want |= self.command(env);
                 }
             }
         }
@@ -286,7 +390,24 @@ impl Machine {
                     self.manual = Some(s);
                 }
                 self.standalone = false;
+                self.choosing = false;
                 start = true;
+                Ok(Reply::Done)
+            }
+            Command::CancelProvisioning => {
+                // (A pass under way was ended before this came here.)
+                // The server named in this session is let go, and the
+                // phone waits for the user's choice.
+                self.manual = None;
+                self.choosing = true;
+                self.attached = false;
+                self.link.forget();
+                let (_, found) = self.pick_server();
+                self.store.update::<Provisioning, _>(|p| {
+                    p.attached = false;
+                    p.discovered = found;
+                    p.phase = ProvisionPhase::AwaitingServer;
+                });
                 Ok(Reply::Done)
             }
             Command::SelectUser { id, pin } => {
@@ -308,6 +429,7 @@ impl Machine {
             }
             Command::Reprovision => {
                 self.standalone = false;
+                self.choosing = false;
                 start = true;
                 Ok(Reply::Done)
             }
@@ -323,6 +445,7 @@ impl Machine {
                 self.userlist_reqs.clear();
                 self.legacy_only = None;
                 self.selecting = None;
+                self.choosing = false;
                 self.stop_resources();
                 let _ = std::fs::remove_file(&self.files.identity_cert);
                 let _ = std::fs::remove_file(&self.files.identity_key);
@@ -447,7 +570,9 @@ impl Machine {
     /// with neither, as after a factory reset, lists what discovery found
     /// and waits for a `StartProvisioning`.  The server menu sends it: for
     /// the user's choice, or by itself for a lone entry after stock's
-    /// six-second countdown (`choosePbx.js`, `startSingleCountdown`).
+    /// six-second countdown (`choosePbx.js`, `startSingleCountdown`).  So
+    /// does a phone whose user canceled the contact with its server, with
+    /// the saved server listed first.
     fn pick_server(&self) -> (Option<DiscoveredServer>, Vec<DiscoveredServer>) {
         let mut found = Vec::new();
         if let Some(o) = self.option66.as_deref().map(str::trim).filter(|o| o.starts_with("sip:") || o.starts_with("sips:")) {
@@ -461,7 +586,15 @@ impl Machine {
             return (Some(server), found);
         }
         if let Some(url) = self.configurator().saved_server() {
-            return (Some(DiscoveredServer { source: DiscoverySource::Saved, name: url.to_string(), address: url.to_string() }), found);
+            let saved = DiscoveredServer { source: DiscoverySource::Saved, name: url.to_string(), address: url.to_string() };
+            // After a cancel, the saved server is one of the choices.
+            if self.choosing {
+                if !found.iter().any(|f| f.address == saved.address) {
+                    found.insert(0, saved);
+                }
+                return (None, found);
+            }
+            return (Some(saved), found);
         }
         (None, found)
     }
@@ -470,7 +603,7 @@ impl Machine {
     /// into `dpma-proto`, and kept under `/nvdata/opendeskphone/`.  Stock's
     /// own `phonekey.pem`/`phonecert.pem` are never touched.
     fn identity(&self) -> Result<PhoneIdentity, Fail> {
-        let fail = |reason: String| Fail { reason, code: None, retry: false };
+        let fail = |reason: String| Fail { reason, code: None, retry: false, cause: Cause::Identity };
         if let (Ok(cert), Ok(key)) = (std::fs::read(&self.files.identity_cert), std::fs::read(&self.files.identity_key)) {
             if let Ok(private_key) = rsa::RsaPrivateKey::from_pkcs1_pem(&String::from_utf8_lossy(&key)) {
                 return Ok(PhoneIdentity { certificate_pem: cert, private_key });
@@ -539,6 +672,7 @@ impl Machine {
                         reason: "no HandshakeResponse (server unreachable, or it refused the phone certificate)".into(),
                         code: None,
                         retry: true,
+                        cause: Cause::NoAnswer,
                     });
                 }
                 Err(other) => return Err(other.into()),
@@ -577,7 +711,7 @@ impl Machine {
             self.userlist_reqs.clear();
             let resp = self.handshake(&identity, &server_uri).await?;
             if resp.error != 0 {
-                return Err(Fail { reason: errors::msg_error_text(resp.error).into(), code: Some(resp.error), retry: true });
+                return Err(Fail { reason: errors::msg_error_text(resp.error).into(), code: Some(resp.error), retry: true, cause: Cause::Server });
             }
             self.link.accept_handshake(&resp, &identity.private_key)?;
             self.token_reqs = header_text(&resp, headers::TOKEN_AUTH_REQUIREMENTS).to_ascii_lowercase();
@@ -630,7 +764,7 @@ impl Machine {
                     return Ok(Outcome::Provisioned);
                 }
             } else if resp.error == errors::msg::SESSION_TIMEOUT {
-                return Err(Fail { reason: "session timeout".into(), code: Some(resp.error), retry: true });
+                return Err(Fail { reason: "session timeout".into(), code: Some(resp.error), retry: true, cause: Cause::Server });
             } else {
                 log::info!("dpma: the saved token was refused ({}); asking for a new one", resp.error);
                 self.link.set_token(None);
@@ -691,10 +825,11 @@ impl Machine {
                     reason: errors::msg_error_text(resp.error).into(),
                     code: Some(resp.error),
                     retry: resp.error == errors::msg::SESSION_TIMEOUT,
+                    cause: Cause::Server,
                 });
             }
             if resp.config_token.is_empty() {
-                return Err(Fail { reason: "the TokenResponse has no token".into(), code: None, retry: true });
+                return Err(Fail { reason: "the TokenResponse has no token".into(), code: None, retry: true, cause: Cause::Answer });
             }
             self.link.set_token(Some(&resp.config_token));
             // The PBX took the user: there is no going back to the one
@@ -740,11 +875,12 @@ impl Machine {
                 reason: errors::msg_error_text(resp.error).into(),
                 code: Some(resp.error),
                 retry: matches!(resp.error, errors::msg::INVALID_TOKEN | errors::msg::SESSION_TIMEOUT),
+                cause: Cause::Server,
             });
         }
         let config = body_of(&resp);
         if config.is_empty() {
-            return Err(Fail { reason: "the ConfigResponse is empty".into(), code: None, retry: true });
+            return Err(Fail { reason: "the ConfigResponse is empty".into(), code: None, retry: true, cause: Cause::Answer });
         }
         // Stock stores the server's digest verbatim when it sends one, and
         // otherwise the MD5 of the downloaded bytes.
@@ -767,7 +903,7 @@ impl Machine {
             p.offered_firmware = offered;
             p.phase = ProvisionPhase::Applying;
         });
-        self.sink.apply(&content, &md5).map_err(|e| Fail { reason: format!("cannot apply the configuration: {e}"), code: None, retry: false })?;
+        self.sink.apply(&content, &md5).map_err(|e| Fail { reason: format!("cannot apply the configuration: {e}"), code: None, retry: false, cause: Cause::Config })?;
         // Applying tells the integrator, which reports the setting now in
         // effect; `check_firmware` goes by that.
         if !ignore {

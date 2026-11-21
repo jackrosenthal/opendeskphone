@@ -185,17 +185,51 @@ fn an_update_takes_no_touch() {
 
 // ------------------------------------------------------------ provisioning
 
+/// The setup's actions (the softkeys' on the other models, and the touch
+/// skin's own).
+const SK_RETRY: Hit = Hit::Soft(2);
+const SK_MANUAL: Hit = Hit::Soft(3);
+const SK_SKIP: Hit = Hit::Soft(5);
+const SK_MORE: Hit = Hit::Soft(7);
+const SK_CANCEL: Hit = Hit::Soft(8);
+
+/// The buttons of the screen that are as wide as it, or half as wide.
+fn wide(r: &Rig, hit: Hit) -> bool {
+    let th = Theme::for_model(Model::D80);
+    r.region(hit).w >= th.width * 2 / 5
+}
+
+/// More, from the setup screen on: its rows, and each one's screen.
+fn more_leads_to(r: &mut Rig, rows: &[&str]) {
+    r.tap(SK_MORE);
+    assert_eq!(r.screen(), "provision-more");
+    assert!(!r.has(row(rows.len() as u32)));
+    for (i, name) in rows.iter().enumerate() {
+        r.tap(row(i as u32));
+        assert_eq!(r.screen(), *name);
+        if *name != "provisioning" {
+            r.tap(Hit::Key(Key::Cancel));
+            assert_eq!(r.screen(), "provision-more");
+        }
+    }
+    r.tap(Hit::Key(Key::Cancel));
+    assert_eq!(r.screen(), "provisioning");
+}
+
 #[test]
 fn a_server_is_chosen_by_touching_it() {
     let mut r = awaiting_server(vec![server(1), server(2)]);
     assert_eq!(r.screen(), "provisioning");
-    // Two servers, "Enter address", and "Use without a server", and no
-    // way back; the softkeys are Network and Status (no Select).
-    for n in 0..4 {
+    // Two servers and "Enter address", and no way back; "Use without a
+    // server" is a button of its own across the bottom, beside More.
+    for n in 0..3 {
         assert!(r.has(row(n)), "row {n}");
     }
+    assert!(!r.has(row(3)));
     assert!(!r.has(Hit::Key(Key::Cancel)));
     assert_eq!(r.softkeys().len(), 2);
+    assert!(wide(&r, SK_SKIP) && wide(&r, SK_MORE));
+    assert!(r.region(SK_SKIP).y > r.region(row(2)).bottom() + Theme::for_model(Model::D80).row_h);
     r.large_enough();
     r.tap(row(1));
     assert_eq!(r.commands(), vec![Command::StartProvisioning { server: Some(server(2).address) }]);
@@ -204,14 +238,10 @@ fn a_server_is_chosen_by_touching_it() {
     assert_eq!(r.screen(), "provision-server");
     r.tap(Hit::Key(Key::Cancel));
     assert_eq!(r.screen(), "provisioning");
-    r.tap(row(3));
+    r.tap(SK_SKIP);
     assert_eq!(r.commands(), vec![Command::SkipProvisioning]);
-    // Network and Status.
-    r.soft(0);
-    assert_eq!(r.screen(), "network");
-    r.tap(Hit::Key(Key::Cancel));
-    r.soft(1);
-    assert_eq!(r.screen(), "about");
+    // More: the network's settings, and the phone's details.
+    more_leads_to(&mut r, &["network", "about"]);
 }
 
 #[test]
@@ -265,37 +295,128 @@ fn a_user_is_chosen_by_touching_it_and_a_pin_is_typed() {
     assert_eq!(r.commands(), vec![Command::SelectUser { id: "100".into(), pin: String::new() }]);
     r.tap(row(1));
     assert_eq!(r.screen(), "provision-pin");
+    r.tap(Hit::Key(Key::Cancel));
+    more_leads_to(&mut r, &["network", "about"]);
 }
 
 #[test]
-fn a_failed_setup_and_the_search_have_their_buttons() {
+fn the_users_are_narrowed_by_what_is_typed() {
+    use opendeskphone_ui::osk::Cap;
     let mut r = Rig::new(|s| {
         s.update::<System, _>(|s| s.phase = Phase::Provisioning);
-        s.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Failed { reason: "The server did not answer".into(), code: Some(-398) });
+        s.update::<Provisioning, _>(|p| {
+            p.phase = ProvisionPhase::AwaitingUser;
+            p.users = (0..40).map(|i| ProvisionUser { id: format!("1{i:03}"), name: format!("User {i}"), needs_pin: false }).collect();
+            p.users.push(ProvisionUser { id: "2000".into(), name: "Jordan Example".into(), needs_pin: false });
+        });
     });
-    // Retry, Manual, Skip, Network, Status.
-    assert_eq!(r.softkeys().len(), 5);
+    const FILTER: Hit = Hit::Custom(2);
+    // No keyboard until the field is touched; More is at the bottom.
+    assert!(!r.has(Cap::Done.hit()));
+    assert!(r.has(SK_MORE));
     r.large_enough();
-    r.soft(0);
+    r.tap(FILTER);
+    assert!(r.has(Cap::Done.hit()) && !r.has(SK_MORE));
+    // By name, in any case: the one row, chosen by a touch.
+    for ch in "jor".chars() {
+        r.tap(Cap::Char(ch).hit());
+    }
+    assert!(r.has(row(0)) && !r.has(row(1)));
+    r.tap(row(0));
+    assert_eq!(r.commands(), vec![Command::SelectUser { id: "2000".into(), pin: String::new() }]);
+    // By extension: 1020 to 1029, with the keyboard put away.
+    for _ in 0..3 {
+        r.tap(Cap::Backspace.hit());
+    }
+    r.tap(Cap::Symbols.hit());
+    for ch in "102".chars() {
+        r.tap(Cap::Char(ch).hit());
+    }
+    r.tap(Cap::Done.hit());
+    assert!(!r.has(Cap::Done.hit()));
+    r.tap(row(3));
+    assert_eq!(r.commands(), vec![Command::SelectUser { id: "1023".into(), pin: String::new() }]);
+    // Nothing matches: no rows, and the field is still there.
+    r.tap(FILTER);
+    r.tap(Cap::Char('z').hit());
+    assert!(!r.has(row(0)) && r.has(FILTER));
+}
+
+#[test]
+fn a_failed_setup_says_what_to_do_and_has_its_buttons() {
+    let mut r = Rig::new(|s| {
+        s.update::<System, _>(|s| s.phase = Phase::Provisioning);
+        s.update::<Provisioning, _>(|p| {
+            p.phase = ProvisionPhase::Failed {
+                reason: "The server at \u{201c}tu\u{201d} did not answer. Check the address and the network cable.".into(),
+                code: None,
+                detail: "transport: the MESSAGE was refused: 408".into(),
+            }
+        });
+    });
+    // Try again, Enter a different address, and More, one under the
+    // other across the screen.
+    assert_eq!(r.softkeys().len(), 3);
+    r.large_enough();
+    for hit in [SK_RETRY, SK_MANUAL, SK_MORE] {
+        assert!(r.region(hit).w >= Theme::for_model(Model::D80).width * 9 / 10, "{hit:?}");
+    }
+    assert!(r.region(SK_RETRY).bottom() <= r.region(SK_MANUAL).y && r.region(SK_MANUAL).bottom() <= r.region(SK_MORE).y);
+    r.tap(SK_RETRY);
     assert_eq!(r.commands(), vec![Command::StartProvisioning { server: None }]);
-    r.soft(2);
-    assert_eq!(r.commands(), vec![Command::SkipProvisioning]);
-    r.soft(1);
+    r.tap(SK_MANUAL);
     assert_eq!(r.screen(), "provision-server");
     r.tap(Hit::Key(Key::Cancel));
-    r.soft(3);
+    // More: going on without a server too.
+    r.tap(SK_MORE);
+    r.tap(row(1));
     assert_eq!(r.screen(), "network");
     r.tap(Hit::Key(Key::Cancel));
-    r.soft(4);
+    r.tap(row(2));
     assert_eq!(r.screen(), "about");
-    // Looking for a server: Manual, Network, Skip, Status.
     r.tap(Hit::Key(Key::Cancel));
-    r.update::<Provisioning>(|p| p.phase = ProvisionPhase::Discovering);
-    assert_eq!(r.softkeys().len(), 4);
-    r.soft(2);
+    r.tap(row(0));
     assert_eq!(r.commands(), vec![Command::SkipProvisioning]);
-    r.soft(0);
+    assert_eq!(r.screen(), "provisioning");
+
+    // Looking for a server: an address, going on without a server, and
+    // More.
+    r.update::<Provisioning>(|p| p.phase = ProvisionPhase::Discovering);
+    assert_eq!(r.softkeys().len(), 3);
+    r.large_enough();
+    r.tap(SK_SKIP);
+    assert_eq!(r.commands(), vec![Command::SkipProvisioning]);
+    r.tap(SK_MANUAL);
     assert_eq!(r.screen(), "provision-server");
+    r.tap(Hit::Key(Key::Cancel));
+    more_leads_to(&mut r, &["network", "about"]);
+}
+
+#[test]
+fn contacting_a_server_is_canceled_and_its_list_does_not_count_again() {
+    // A lone server, chosen by the count.
+    let mut r = awaiting_server(vec![server(5)]);
+    r.at(6_000);
+    assert_eq!(r.commands(), vec![Command::StartProvisioning { server: Some(server(5).address) }]);
+    r.update::<Provisioning>(|p| {
+        p.phase = ProvisionPhase::Handshaking;
+        p.server = Some(server(5));
+    });
+    // Contacting it: one button, Cancel.
+    assert_eq!(r.softkeys().len(), 1);
+    assert!(wide(&r, SK_CANCEL));
+    r.large_enough();
+    r.tap(SK_CANCEL);
+    assert_eq!(r.commands(), vec![Command::CancelProvisioning]);
+    // The list again, with the same lone server: it is not chosen again
+    // by itself.
+    r.update::<Provisioning>(|p| p.phase = ProvisionPhase::AwaitingServer);
+    r.at(7_000);
+    r.at(20_000);
+    assert!(r.commands().is_empty());
+    // A touch on it still chooses it.
+    r.tap(row(0));
+    assert_eq!(r.commands(), vec![Command::StartProvisioning { server: Some(server(5).address) }]);
 }
 
 // --------------------------------------------------------------- Bluetooth
@@ -340,24 +461,29 @@ fn buttons_of(r: &Rig, i: u32) -> Vec<IRect> {
     v
 }
 
+/// The Bluetooth search's button (the action of the Search softkey).
+const SEARCH: Hit = Hit::Soft(5);
+
 #[test]
 fn bluetooth_devices_are_operated_by_their_rows_and_buttons() {
+    let th = Theme::for_model(Model::D80);
     let mut r = bluetooth();
     r.large_enough();
-    // Search is the one softkey; the title bar has the way back.
+    // The search is the one button, across the bottom; the title bar has
+    // the way back.
     assert_eq!(r.softkeys().len(), 1);
+    assert!(r.region(SEARCH).w >= th.width * 9 / 10);
     assert!(r.has(Hit::Key(Key::Cancel)));
-    // The connected headset: Disconnect and Forget.
+    // The connected headset: Disconnect, and the way to its own screen.
     assert_eq!(buttons_of(&r, 0).len(), 2);
     r.tap_in(buttons_of(&r, 0)[0]);
     assert_eq!(r.commands(), vec![Command::BluetoothDisconnect]);
-    // The other: Connect and Forget.
+    // The other: Connect, and its screen.
     r.tap_in(buttons_of(&r, 1)[0]);
     assert_eq!(r.commands(), vec![Command::BluetoothConnect { addr: OFFICE.into() }]);
     r.tap_in(buttons_of(&r, 1)[1]);
-    assert_eq!(r.screen(), "confirm");
-    r.soft(0);
-    assert_eq!(r.commands(), vec![Command::BluetoothUnpair { addr: OFFICE.into() }]);
+    assert_eq!(r.screen(), "bluetooth-device");
+    r.tap(Hit::Key(Key::Cancel));
     assert_eq!(r.screen(), "bluetooth");
     // The one found: Pair, which stops the search first.
     assert_eq!(buttons_of(&r, 2).len(), 1);
@@ -373,14 +499,63 @@ fn bluetooth_devices_are_operated_by_their_rows_and_buttons() {
     assert!(buttons_of(&r, 2).is_empty());
     r.tap(row(2));
     assert!(r.commands().is_empty());
-    // Search.
-    r.soft(0);
+    // Search: while it searches, the button stays, and does nothing.
+    r.tap(SEARCH);
     assert_eq!(r.commands(), vec![Command::BluetoothDiscovery { on: true }]);
     r.update::<Bluetooth>(|b| b.discovering = true);
     assert!(r.softkeys().is_empty());
+    r.tap_at(400, 1200);
+    assert!(r.commands().is_empty());
     // Back.
     r.tap(Hit::Key(Key::Cancel));
     assert_eq!(r.screen(), "idle");
+}
+
+#[test]
+fn a_headset_is_forgotten_from_its_own_screen() {
+    let th = Theme::for_model(Model::D80);
+    let mut r = bluetooth();
+    r.tap_in(buttons_of(&r, 0)[1]);
+    assert_eq!(r.screen(), "bluetooth-device");
+    r.large_enough();
+    // Connected: Disconnect; and Forget at the bottom, apart, in red.
+    const DISCONNECT: Hit = Hit::Soft(3);
+    const CONNECT: Hit = Hit::Soft(2);
+    const FORGET: Hit = Hit::Soft(6);
+    assert!(!r.has(CONNECT));
+    let (disconnect, forget) = (r.region(DISCONNECT), r.region(FORGET));
+    assert!(forget.w >= th.width * 9 / 10 && forget.y >= disconnect.bottom() + th.row_h / 2);
+    let red = r.ui.canvas().pixel(forget.x + th.pad, forget.y + forget.h / 2);
+    assert_eq!(red, th.in_wallpaper(opendeskphone_ui::wallpaper::default()).sk_stop, "Forget is not red");
+    r.tap(DISCONNECT);
+    assert_eq!(r.commands(), vec![Command::BluetoothDisconnect]);
+    r.update::<Bluetooth>(|b| b.connected.clear());
+    r.tap(CONNECT);
+    assert_eq!(r.commands(), vec![Command::BluetoothConnect { addr: VOYAGER.into() }]);
+    // Forget asks first; No leaves it.
+    r.tap(FORGET);
+    assert_eq!(r.screen(), "confirm");
+    r.tap(Hit::Soft(4));
+    assert_eq!(r.screen(), "bluetooth-device");
+    r.tap(FORGET);
+    r.tap(Hit::Soft(1));
+    assert_eq!(r.commands(), vec![Command::BluetoothUnpair { addr: VOYAGER.into() }]);
+    assert_eq!(r.screen(), "bluetooth-device");
+    // Once it is no longer paired, back to the list.
+    r.update::<Bluetooth>(|b| b.paired.retain(|d| d.addr != VOYAGER));
+    r.ui.pump();
+    assert_eq!(r.screen(), "bluetooth");
+}
+
+#[test]
+fn bluetooth_without_a_controller_says_what_to_do() {
+    let mut r = Rig::running();
+    r.show("bluetooth");
+    assert_eq!(r.screen(), "bluetooth");
+    // Nothing to touch but the ways back and home.
+    assert_eq!(r.hits().len(), 2, "{:?}", r.hits());
+    assert!(r.has(Hit::Key(Key::Cancel)));
+    assert!(r.has(Hit::Home));
 }
 
 #[test]

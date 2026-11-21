@@ -3,8 +3,7 @@
 
 use super::*;
 use opendeskphone_state::{
-    AddrSource, AudioPath, CallLogKind, DspStatus, ForwardKind, Registration, TrialBoot, VlanSource,
-    VolumeTarget,
+    AddrSource, AudioPath, CallLogKind, DspStatus, ForwardKind, Registration, TrialBoot, VolumeTarget,
 };
 
 fn set(cx: &Cx, id: &str, value: impl Into<String>) {
@@ -13,19 +12,24 @@ fn set(cx: &Cx, id: &str, value: impl Into<String>) {
 
 pub(crate) fn main_menu() -> Box<dyn Screen> {
     Menu::boxed("menu", tr::MAIN_MENU, |cx| {
+        // Touch: the words of the home screen's buttons ("Apps"), and
+        // "Status" kept for presence.
+        let touch = cx.th.touch();
+        let dnd = cx.st.features.dnd;
         let mut v = vec![
             Item::new(tr::CALL_LOG, |_| Nav::Push(call_log())).icon("calllog"),
-            Item::new(tr::APPLICATIONS, |_| Nav::Push(launcher())).icon("apps"),
+            Item::new(if touch { tr::APPS } else { tr::APPLICATIONS }, |_| Nav::Push(launcher())).icon("apps"),
             Item::new(tr::CALL_FORWARD, |_| Nav::Push(forward_menu())).icon("forward"),
             Item::new(tr::DO_NOT_DISTURB, |cx| {
                 cx.post(Command::SetDnd { on: !cx.st.features.dnd });
                 Nav::Stay
             })
-            .value(if cx.st.features.dnd { tr::ON } else { tr::OFF })
+            .value(if dnd { tr::ON } else { tr::OFF })
+            .switch(dnd)
             .icon("dnd"),
             Item::new(tr::PAGING_TITLE, |_| Nav::Push(paging())).icon("page"),
             Item::new(tr::SETTINGS, |_| Nav::Push(settings())).icon("settings"),
-            Item::new(tr::STATUS, |_| Nav::Push(status_menu())).icon("info"),
+            Item::new(if touch { tr::PHONE_STATUS } else { tr::STATUS }, move |_| Nav::Push(status_menu(touch))).icon("info"),
         ];
         if cx.st.system.model.bluetooth() {
             v.insert(5, Item::new(tr::BLUETOOTH, |_| Nav::Push(bluetooth::screen())).icon("headset"));
@@ -41,8 +45,8 @@ pub(crate) fn main_menu() -> Box<dyn Screen> {
 ///
 /// Touch: the filters are tabs under the title bar, a tap on an entry
 /// dials it, and the button at the right of an entry shows its details
-/// (from which it can be dialed too).  Clear, below, asks before it
-/// clears the log.
+/// (from which it can be dialed too).  An entry of today shows its time
+/// only.  The button across the bottom asks before it clears the log.
 struct CallLogScreen {
     filter: Option<CallLogKind>,
     st: ListState,
@@ -67,12 +71,43 @@ const LOG_FILTERS: [Option<CallLogKind>; 4] =
 const LOG_TAB: u32 = 1;
 const LOG_DETAILS: u32 = 0x1_0000;
 
+/// Touch: the region of the button that clears the log (the softkey's
+/// action).
+const LOG_CLEAR: u32 = 3;
+
 fn filter_name(filter: Option<CallLogKind>) -> &'static str {
     match filter {
         None => tr::ALL,
         Some(CallLogKind::Missed) => tr::MISSED,
         Some(CallLogKind::Received) => tr::RECEIVED,
         Some(CallLogKind::Placed) => tr::PLACED,
+    }
+}
+
+/// Touch: what an empty log says under the tab of `filter`.
+fn no_calls(filter: Option<CallLogKind>) -> &'static str {
+    match filter {
+        None => tr::NO_CALLS,
+        Some(CallLogKind::Missed) => tr::NO_MISSED_CALLS,
+        Some(CallLogKind::Received) => tr::NO_RECEIVED_CALLS,
+        Some(CallLogKind::Placed) => tr::NO_PLACED_CALLS,
+    }
+}
+
+/// The time of day of `civil`, with AM or PM in 12-hour mode (`5:11 PM`).
+fn time_of_day(civil: &crate::time::Civil, h24: bool) -> String {
+    let m = civil.meridiem(h24);
+    if m.is_empty() { civil.time(h24) } else { format!("{} {m}", civil.time(h24)) }
+}
+
+/// The question asked before the log is cleared.
+fn clear_log_ask() -> Ask {
+    Ask {
+        question: tr::CLEAR_LOG_Q.into(),
+        title: tr::CLEAR_LOG,
+        sentence: tr::CLEAR_LOG_SENTENCE.into(),
+        action: tr::CLEAR_LOG,
+        destructive: true,
     }
 }
 
@@ -131,12 +166,10 @@ impl Screen for CallLogScreen {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: an entry is touched to dial it, its button shows its
-        // details, and the title bar has the way back.
+        // details, the button across the bottom clears the log, and the
+        // title bar has the way back.
         if cx.th.touch() {
-            if cx.st.call_log.entries.is_empty() {
-                return Vec::new();
-            }
-            return vec![soft(0, ""), soft(0, ""), soft(0, ""), soft(3, tr::CLEAR)];
+            return Vec::new();
         }
         vec![soft(1, tr::DIAL), soft(2, tr::DETAILS), soft(3, tr::CLEAR), soft(4, tr::BACK)]
     }
@@ -177,9 +210,9 @@ impl Screen for CallLogScreen {
                                 CallLogKind::Placed => tr::PLACED,
                             }
                             .to_string(),
-                            format!("{} {}", civil.date(), civil.short(cx.cfg.time_24h)),
+                            format!("{} {}", civil.date(), time_of_day(&civil, cx.cfg.time_24h)),
                         ),
-                        (tr::TIME.to_string(), crate::time::duration(e.duration_secs as u64)),
+                        (tr::DURATION.to_string(), crate::time::duration(e.duration_secs as u64)),
                     ]
                 });
                 if touch {
@@ -188,7 +221,7 @@ impl Screen for CallLogScreen {
                     Nav::Push(info)
                 }
             }
-            3 => Nav::Push(Confirm::boxed(tr::CLEAR_LOG_Q, |cx| {
+            LOG_CLEAR => Nav::Push(ask(cx, clear_log_ask(), |cx| {
                 cx.post(Command::ClearCallLog);
                 Nav::Pop
             })),
@@ -238,19 +271,30 @@ impl Screen for CallLogScreen {
             let (tabs, rest) = body.split_top(th.row_h);
             self.draw_tabs(c, th, tabs);
             body = rest;
+            // The log is cleared from any tab, while it has anything.
+            if !cx.st.call_log.entries.is_empty() {
+                let (rest, buttons) = bottom_buttons(th, body, 1);
+                action_button(c, th, buttons[0], tr::CLEAR_LOG, Role::Secondary, Hit::Soft(LOG_CLEAR));
+                body = rest;
+            }
         } else {
             widgets::title_bar(c, th, title, &format!("{}  \u{2013}  {}", tr::CALL_LOG, filter_name(self.filter)));
         }
         let rows = self.rows(cx);
         if rows.is_empty() {
-            c.text_in(th.font(Font::Normal), body, tr::NO_CALLS, th.secondary, HAlign::Center);
+            if th.touch() {
+                empty_state(c, th, body, no_calls(self.filter), tr::NO_CALLS_HINT);
+            } else {
+                c.text_in(th.font(Font::Normal), body, tr::NO_CALLS, th.secondary, HAlign::Center);
+            }
             return;
         }
         let h24 = cx.cfg.time_24h;
         let off = cx.cfg.utc_offset_secs;
         if th.touch() {
+            let today = cx.civil();
             widgets::list(c, th, body, rows.len(), &mut self.st, th.row_h, false, |c, r, i, _, fg| {
-                touch_log_row(c, th, r, rows[i], i, fg, h24, off);
+                touch_log_row(c, th, r, rows[i], i, fg, h24, off, &today);
             });
             return;
         }
@@ -288,9 +332,20 @@ fn log_icon(kind: CallLogKind) -> &'static str {
 }
 
 /// Touch: one entry of the call log in `r`: the kind's icon, the name
-/// over the number, the time, and the details button (entry `i`'s).
+/// over the number, the time (with the date, unless it is `today`), and
+/// the details button (entry `i`'s).
 #[allow(clippy::too_many_arguments)]
-fn touch_log_row(c: &mut Canvas, th: &Theme, r: IRect, e: &opendeskphone_state::CallLogEntry, i: usize, fg: crate::gfx::Rgb, h24: bool, off: i32) {
+fn touch_log_row(
+    c: &mut Canvas,
+    th: &Theme,
+    r: IRect,
+    e: &opendeskphone_state::CallLogEntry,
+    i: usize,
+    fg: crate::gfx::Rgb,
+    h24: bool,
+    off: i32,
+    today: &crate::time::Civil,
+) {
     let (ic, rest) = r.split_left(th.back_w);
     let (text, details) = rest.split_right(th.back_w);
     if let Some(ico) = th.icon(log_icon(e.kind)) {
@@ -300,7 +355,9 @@ fn touch_log_row(c: &mut Canvas, th: &Theme, r: IRect, e: &opendeskphone_state::
         c.icon_in(ico, details, th.secondary);
     }
     c.hit(details, Hit::Custom(LOG_DETAILS + i as u32));
-    let when = crate::time::Civil::from_unix(e.start_unix, off).short(h24);
+    let civil = crate::time::Civil::from_unix(e.start_unix, off);
+    let same_day = (civil.year, civil.month, civil.day) == (today.year, today.month, today.day);
+    let when = if same_day { time_of_day(&civil, h24) } else { civil.short(h24) };
     let name = e.party.display();
     // The name over the number; the number alone (or "Unknown") where
     // there is no name.
@@ -324,25 +381,23 @@ fn touch_log_row(c: &mut Canvas, th: &Theme, r: IRect, e: &opendeskphone_state::
     c.text_in(small, right, &when, th.secondary, HAlign::Right);
 }
 
-/// Touch: the details of a call log entry ([`Info`]), with a button that
-/// dials it.
+/// Touch: the details of a call log entry ([`Info`]), with a green
+/// button across the bottom that calls the number ("Call 1003").
 struct EntryDetails {
     info: Box<dyn Screen>,
     entry: opendeskphone_state::CallLogEntry,
 }
 
+/// Touch: the region of [`EntryDetails`]' button (the Dial softkey's
+/// action).
+const DETAILS_CALL: u32 = 1;
+
 impl Screen for EntryDetails {
     fn name(&self) -> String {
         self.info.name()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
-        if self.entry.party.number.is_empty() {
-            return Vec::new();
-        }
-        vec![soft(1, tr::DIAL)]
-    }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
-        if id == 1 { dial_entry(cx, &self.entry) } else { Nav::Stay }
+        if id == DETAILS_CALL { dial_entry(cx, &self.entry) } else { Nav::Stay }
     }
     fn key(&mut self, cx: &Cx, key: Key) -> Nav {
         self.info.key(cx, key)
@@ -351,7 +406,13 @@ impl Screen for EntryDetails {
         self.info.drag(cx, from, dx, dy)
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
-        self.info.draw(cx, c, area)
+        let number = &self.entry.party.number;
+        if number.is_empty() {
+            return self.info.draw(cx, c, area);
+        }
+        let (rest, buttons) = bottom_buttons(cx.th, area, 1);
+        self.info.draw(cx, c, rest);
+        action_button(c, cx.th, buttons[0], &format!("{} {number}", tr::CALL), Role::Call, Hit::Soft(DETAILS_CALL));
     }
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         self.info.deadline(cx)
@@ -544,10 +605,14 @@ impl Screen for Launcher {
         let th = cx.th;
         c.fill(area, th.bg);
         let (title, body) = area.split_top(th.title_h);
-        widgets::title_bar(c, th, title, tr::APPLICATIONS);
+        widgets::title_bar(c, th, title, if th.touch() { tr::APPS } else { tr::APPLICATIONS });
         let apps = visible_apps(cx);
         if apps.is_empty() {
-            c.text_in(th.font(Font::Normal), body, tr::NO_APPS, th.secondary, HAlign::Center);
+            if th.touch() {
+                empty_state(c, th, body, tr::NO_APPS_TOUCH, tr::NO_APPS_HINT);
+            } else {
+                c.text_in(th.font(Font::Normal), body, tr::NO_APPS, th.secondary, HAlign::Center);
+            }
             return;
         }
         if th.touch() {
@@ -610,7 +675,173 @@ impl Screen for Launcher {
 
 // --------------------------------------------------------------- forward
 
+/// The forward rules, in the order shown.
+const FORWARD_RULES: [(ForwardKind, &str); 3] =
+    [(ForwardKind::Always, tr::FWD_ALWAYS), (ForwardKind::Busy, tr::FWD_BUSY), (ForwardKind::NoAnswer, tr::FWD_NO_ANSWER)];
+
+/// The number a forward rule forwards to now (empty: off).
+fn forward_target(f: &opendeskphone_state::Forward, kind: ForwardKind) -> &str {
+    match kind {
+        ForwardKind::Always => &f.always,
+        ForwardKind::Busy => &f.busy,
+        ForwardKind::NoAnswer => &f.no_answer,
+    }
+}
+
+/// Call forwarding.  On the phones with keys, a menu of the three rules,
+/// each with its number or Off (Select types the number, and an empty
+/// number turns the rule off), and Do Not Disturb.
+///
+/// Touch: each rule is a switch, and under a rule that has a number is a
+/// row that changes it.  The screen keeps the number of a rule switched
+/// off, and switching the rule on again forwards to it; switching on a
+/// rule with no number asks for one first.  (Do Not Disturb is in the
+/// menu, and on the home screen.)
 pub(crate) fn forward_menu() -> Box<dyn Screen> {
+    Box::new(ForwardScreen { keys: keyed_forward_menu(), numbers: Default::default(), st: ListState::default() })
+}
+
+struct ForwardScreen {
+    /// The menu of the phones with keys.
+    keys: Box<dyn Screen>,
+    /// Touch: the last number of each rule, in the order of
+    /// [`FORWARD_RULES`], kept while the rule is off; shared with the
+    /// entry of a number.
+    numbers: std::sync::Arc<std::sync::Mutex<[String; 3]>>,
+    st: ListState,
+}
+
+/// Touch: a row of [`ForwardScreen`]: rule `i`'s switch, or the row under
+/// it that changes its number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ForwardRow {
+    Rule(usize),
+    Number(usize),
+}
+
+impl ForwardScreen {
+    /// Touch: the numbers kept, with the ones forwarded to now.
+    fn numbers(&self, cx: &Cx) -> [String; 3] {
+        let mut kept = self.numbers.lock().unwrap_or_else(|p| p.into_inner());
+        for (i, (kind, _)) in FORWARD_RULES.iter().enumerate() {
+            let now = forward_target(&cx.st.features.forward, *kind);
+            if !now.is_empty() {
+                kept[i] = now.to_string();
+            }
+        }
+        kept.clone()
+    }
+
+    fn rows(&self, cx: &Cx) -> Vec<ForwardRow> {
+        let numbers = self.numbers(cx);
+        let mut v = Vec::new();
+        for (i, number) in numbers.iter().enumerate() {
+            v.push(ForwardRow::Rule(i));
+            if !number.is_empty() {
+                v.push(ForwardRow::Number(i));
+            }
+        }
+        v
+    }
+
+    /// Touch: the entry of rule `i`'s number.  The number typed is kept,
+    /// and forwarded to if the rule is on, or `switching_on`; an empty
+    /// one turns the rule off.
+    fn entry(&self, i: usize, switching_on: bool) -> Box<dyn Screen> {
+        let (kind, label) = FORWARD_RULES[i];
+        let numbers = self.numbers.clone();
+        let current = numbers.lock().unwrap_or_else(|p| p.into_inner())[i].clone();
+        EditScreen::boxed("forward_edit", format!("{}: {}", tr::FWD_NUMBER, label), &current, InputMode::Dial, move |cx, text| {
+            let text = text.trim().to_string();
+            numbers.lock().unwrap_or_else(|p| p.into_inner())[i] = text.clone();
+            if switching_on || !forward_target(&cx.st.features.forward, kind).is_empty() {
+                cx.post(Command::SetForward { kind, target: text, no_answer_secs: None });
+            }
+            Nav::Pop
+        })
+    }
+
+    /// Touch: rule `i` switched the other way.
+    fn toggle(&self, cx: &Cx, i: usize) -> Nav {
+        let kind = FORWARD_RULES[i].0;
+        let number = self.numbers(cx)[i].clone();
+        if !forward_target(&cx.st.features.forward, kind).is_empty() {
+            cx.post(Command::SetForward { kind, target: String::new(), no_answer_secs: None });
+        } else if !number.is_empty() {
+            cx.post(Command::SetForward { kind, target: number, no_answer_secs: None });
+        } else {
+            return Nav::Push(self.entry(i, true));
+        }
+        Nav::Stay
+    }
+}
+
+impl Screen for ForwardScreen {
+    fn name(&self) -> String {
+        "forward".into()
+    }
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        if cx.th.touch() { Vec::new() } else { self.keys.softkeys(cx) }
+    }
+    fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
+        self.keys.softkey(cx, id)
+    }
+    fn key(&mut self, cx: &Cx, key: Key) -> Nav {
+        if !cx.th.touch() {
+            return self.keys.key(cx, key);
+        }
+        if key == Key::Cancel { Nav::Pop } else { Nav::Ignored }
+    }
+    fn list_state(&mut self, cx: &Cx) -> Option<(&mut ListState, usize)> {
+        if !cx.th.touch() {
+            return None;
+        }
+        let len = self.rows(cx).len();
+        Some((&mut self.st, len))
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, x: i32, y: i32) -> Nav {
+        if !cx.th.touch() {
+            return self.keys.tap(cx, hit, x, y);
+        }
+        let Hit::Row { row, .. } = hit else { return Nav::Ignored };
+        match self.rows(cx).get(row as usize) {
+            Some(ForwardRow::Rule(i)) => self.toggle(cx, *i),
+            Some(ForwardRow::Number(i)) => Nav::Push(self.entry(*i, false)),
+            None => Nav::Stay,
+        }
+    }
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        if !th.touch() {
+            return self.keys.draw(cx, c, area);
+        }
+        c.fill(area, th.bg);
+        let (title, body) = area.split_top(th.title_h);
+        widgets::title_bar(c, th, title, tr::CALL_FORWARD);
+        let rows = self.rows(cx);
+        let numbers = self.numbers(cx);
+        let f = th.font(Font::Normal);
+        let fwd = &cx.st.features.forward;
+        widgets::list(c, th, widgets::body_rows(th, body), rows.len(), &mut self.st, th.row_h, false, |c, r, i, _, fg| {
+            let r = IRect { x: r.x + th.title_pad, w: r.w - th.title_pad - th.pad, ..r };
+            match rows[i] {
+                ForwardRow::Rule(k) => {
+                    let (kind, label) = FORWARD_RULES[k];
+                    let (text, at) = r.split_right(SWITCH_W);
+                    c.text_in(f, text, label, fg, HAlign::Left);
+                    switch(c, th, at, !forward_target(fwd, kind).is_empty());
+                }
+                // Under its rule, set in.
+                ForwardRow::Number(k) => {
+                    let r = IRect { x: r.x + th.title_pad, w: r.w - th.title_pad, ..r };
+                    widgets::key_value(c, th, r, tr::FWD_CHANGE_NUMBER, &numbers[k], fg, th.secondary);
+                }
+            }
+        });
+    }
+}
+
+fn keyed_forward_menu() -> Box<dyn Screen> {
     fn rule(label: &'static str, kind: ForwardKind, current: &str) -> Item {
         let cur = current.to_string();
         Item::new(label, move |_| {
@@ -641,7 +872,48 @@ pub(crate) fn forward_menu() -> Box<dyn Screen> {
 /// Multicast paging: the page in progress (select it to stop it), the
 /// groups this phone can page (select one to page it), and any SIP paging
 /// calls.
+///
+/// Touch: with none of those, a sentence says so and where groups come
+/// from.
 pub(crate) fn paging() -> Box<dyn Screen> {
+    Box::new(PagingScreen { menu: paging_menu() })
+}
+
+struct PagingScreen {
+    menu: Box<dyn Screen>,
+}
+
+impl Screen for PagingScreen {
+    fn name(&self) -> String {
+        self.menu.name()
+    }
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        self.menu.softkeys(cx)
+    }
+    fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
+        self.menu.softkey(cx, id)
+    }
+    fn key(&mut self, cx: &Cx, key: Key) -> Nav {
+        self.menu.key(cx, key)
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, x: i32, y: i32) -> Nav {
+        self.menu.tap(cx, hit, x, y)
+    }
+    fn drag(&mut self, cx: &Cx, from: Option<Hit>, dx: i32, dy: i32) -> Nav {
+        self.menu.drag(cx, from, dx, dy)
+    }
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        self.menu.draw(cx, c, area);
+        let p = &cx.st.paging;
+        let idle = p.activity == opendeskphone_state::PageActivity::Idle;
+        if cx.th.touch() && idle && p.broadcasts.is_empty() && p.error.is_empty() && !cx.st.calls.live().any(|c| c.paging) {
+            let (_, body) = area.split_top(cx.th.title_h);
+            empty_state(c, cx.th, body, tr::NO_PAGE_GROUPS, tr::NO_PAGE_GROUPS_HINT);
+        }
+    }
+}
+
+fn paging_menu() -> Box<dyn Screen> {
     use opendeskphone_state::PageActivity;
     Menu::boxed("paging", tr::PAGING_TITLE, |cx| {
         let mut items = Vec::new();
@@ -681,7 +953,8 @@ pub(crate) fn paging() -> Box<dyn Screen> {
         if !paging.error.is_empty() {
             items.push(Item::new(paging.error.clone(), |_| Nav::Stay));
         }
-        if items.is_empty() {
+        // (Touch: the screen says so in a sentence.)
+        if items.is_empty() && !cx.th.touch() {
             items.push(Item::new(tr::NO_PAGE_GROUPS, |_| Nav::Stay));
         }
         items
@@ -713,36 +986,41 @@ fn edit_setting(label: &'static str, id: &'static str, current: String, mode: In
     .value(current)
 }
 
+/// The network settings.  Addressing and VLAN discovery show the settings
+/// as they are configured, which a touch changes; the network uses them
+/// once it is applied (the last but one item), and until then the
+/// addresses are the ones in use.
 pub(crate) fn network_menu() -> Box<dyn Screen> {
     Menu::boxed("network", tr::NETWORK, |cx| {
         let n = &cx.st.network;
-        let is_static = n.ipv4.source == AddrSource::Static;
+        let dhcp = cx.cfg.network_dhcp;
         let ip = n.ipv4.address.map(|a| a.to_string()).unwrap_or_default();
         let mask = if n.ipv4.address.is_some() { prefix_to_mask(n.ipv4.prefix_len) } else { String::new() };
         let gw = n.ipv4.gateway.map(|a| a.to_string()).unwrap_or_default();
         let dns = |i: usize| n.dns.get(i).map(|a| a.to_string()).unwrap_or_default();
-        let vlan_mode = match n.vlan.source {
-            VlanSource::Config => tr::VLAN_MANUAL,
-            VlanSource::Lldp => tr::VLAN_LLDP,
+        // Stock's vocabulary; anything but these two is no VLAN.
+        let vlan = cx.cfg.vlan_discovery.to_ascii_uppercase();
+        let vlan_mode = match vlan.as_str() {
+            "MANUAL" => tr::VLAN_MANUAL,
+            "LLDP" => tr::VLAN_LLDP,
             _ => tr::VLAN_NONE,
         };
         let mut v = vec![Item::new(tr::ADDRESSING, move |cx| {
-            set(cx, "network_enable_dhcp", if is_static { "1" } else { "0" });
+            set(cx, "network_enable_dhcp", if dhcp { "0" } else { "1" });
             Nav::Stay
         })
-        .value(if is_static { tr::STATIC } else { tr::DHCP })];
+        .value(if dhcp { tr::DHCP } else { tr::STATIC })];
         v.push(edit_setting(tr::IP_ADDRESS, "network_static_ip_address", ip, InputMode::Numeric));
         v.push(edit_setting(tr::SUBNET_MASK, "network_subnet_mask", mask, InputMode::Numeric));
         v.push(edit_setting(tr::GATEWAY, "network_default_gateway", gw, InputMode::Numeric));
         v.push(edit_setting(tr::DNS1, "network_primary_dns_server", dns(0), InputMode::Numeric));
         v.push(edit_setting(tr::DNS2, "network_secondary_dns_server", dns(1), InputMode::Numeric));
-        let src = n.vlan.source;
         v.push(
             Item::new(tr::VLAN_MODE, move |cx| {
                 // Cycle NONE -> LLDP -> MANUAL (the stock vocabulary).
-                let next = match src {
-                    VlanSource::Lldp => "MANUAL",
-                    VlanSource::Config => "NONE",
+                let next = match vlan.as_str() {
+                    "LLDP" => "MANUAL",
+                    "MANUAL" => "NONE",
                     _ => "LLDP",
                 };
                 set(cx, "network_vlan_discovery_mode", next);
@@ -754,13 +1032,13 @@ pub(crate) fn network_menu() -> Box<dyn Screen> {
             tr::VLAN_ID,
             "network_vlan_id",
             n.vlan.voice_id.map(|v| v.to_string()).unwrap_or_default(),
-            InputMode::Pin,
+            InputMode::Numeric,
         ));
         v.push(Item::new(tr::APPLY_NETWORK, |cx| {
             cx.post(Command::ReconfigureNetwork);
             Nav::Pop
         }));
-        v.push(Item::new(tr::STATUS, |_| Nav::Push(network_status())));
+        v.push(Item::new(if cx.th.touch() { tr::NETWORK_STATUS } else { tr::STATUS }, |_| Nav::Push(network_status())));
         v
     })
 }
@@ -882,9 +1160,16 @@ fn display_menu() -> Box<dyn Screen> {
                 set(cx, "dim_backlight", if dim { "0" } else { "1" });
                 Nav::Stay
             })
-            .value(if dim { tr::ON } else { tr::OFF }),
+            .value(if dim { tr::ON } else { tr::OFF })
+            .switch(dim),
         );
-        v.push(edit_setting(tr::BACKLIGHT_TIMEOUT, "backlight_timeout", cx.cfg.backlight_timeout_secs.to_string(), InputMode::Pin));
+        // Touch: a choice of a few times; the other skins type the seconds.
+        let timeout = cx.cfg.backlight_timeout_secs;
+        if cx.th.touch() {
+            v.push(Item::new(tr::BACKLIGHT_TIMEOUT, |_| Nav::Push(backlight_timeouts())).value(timeout_text(timeout)));
+        } else {
+            v.push(edit_setting(tr::BACKLIGHT_TIMEOUT, "backlight_timeout", timeout.to_string(), InputMode::Numeric));
+        }
         // Gray screens have no themes.
         if !cx.th.gray {
             v.push(
@@ -896,6 +1181,87 @@ fn display_menu() -> Box<dyn Screen> {
     })
 }
 
+/// Touch: the backlight timeouts to choose from, in seconds (0: the
+/// backlight does not dim).
+const BACKLIGHT_TIMEOUTS: [u32; 5] = [15, 30, 60, 300, 0];
+
+/// Touch: a backlight timeout in words: `15 s`, `1 min`, `Never`.
+fn timeout_text(secs: u32) -> String {
+    match secs {
+        0 => tr::NEVER.into(),
+        s if s % 60 == 0 => format!("{} {}", s / 60, tr::MINUTES_SHORT),
+        s => format!("{s} {}", tr::SECONDS_SHORT),
+    }
+}
+
+/// Touch: the choice of the backlight timeout.
+fn backlight_timeouts() -> Box<dyn Screen> {
+    Box::new(Choices {
+        name: "backlight_timeout",
+        title: tr::BACKLIGHT_TIMEOUT,
+        choices: BACKLIGHT_TIMEOUTS.iter().map(|s| timeout_text(*s)).collect(),
+        current: Box::new(|cx| BACKLIGHT_TIMEOUTS.iter().position(|s| *s == cx.cfg.backlight_timeout_secs)),
+        choose: Box::new(|cx, i| set(cx, "backlight_timeout", BACKLIGHT_TIMEOUTS[i].to_string())),
+        chosen: None,
+        st: ListState::default(),
+    })
+}
+
+/// Touch: a setting with a few values: a list of them, the one in effect
+/// with a check mark.  A tap makes one the setting at once; the title
+/// bar's back button leaves.
+struct Choices {
+    name: &'static str,
+    title: &'static str,
+    choices: Vec<String>,
+    /// The choice in effect, if the setting is one of them.
+    current: Box<dyn Fn(&Cx) -> Option<usize> + Send>,
+    choose: Box<dyn Fn(&Cx, usize) + Send>,
+    /// The choice tapped last, checked before the setting catches up.
+    chosen: Option<usize>,
+    st: ListState,
+}
+
+impl Screen for Choices {
+    fn name(&self) -> String {
+        self.name.into()
+    }
+    fn list_state(&mut self, _cx: &Cx) -> Option<(&mut ListState, usize)> {
+        Some((&mut self.st, self.choices.len()))
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Row { row, .. } if (row as usize) < self.choices.len() => {
+                self.chosen = Some(row as usize);
+                (self.choose)(cx, row as usize);
+                Nav::Stay
+            }
+            _ => Nav::Ignored,
+        }
+    }
+    fn key(&mut self, _cx: &Cx, key: Key) -> Nav {
+        if key == Key::Cancel { Nav::Pop } else { Nav::Ignored }
+    }
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        c.fill(area, th.bg);
+        let (title, body) = area.split_top(th.title_h);
+        widgets::title_bar(c, th, title, self.title);
+        let checked = self.chosen.or_else(|| (self.current)(cx));
+        let f = th.font(Font::Normal);
+        let choices = &self.choices;
+        widgets::list(c, th, widgets::body_rows(th, body), choices.len(), &mut self.st, th.row_h, false, |c, r, i, _, fg| {
+            let (mark, rest) = r.split_left(th.back_w);
+            if Some(i) == checked
+                && let Some(icon) = th.icon("ok")
+            {
+                c.icon_in(icon, mark, th.accent);
+            }
+            c.text_in(f, rest, &choices[i], fg, HAlign::Left);
+        });
+    }
+}
+
 /// The theme selector: the idle screen itself (its clock, status icons,
 /// and line-key tabs, drawn by the idle screen's code) over the wallpaper
 /// of the theme the selection is on, in that theme's palette, with one
@@ -905,9 +1271,15 @@ fn display_menu() -> Box<dyn Screen> {
 /// ends; Select saves, Back leaves the setting as it was.
 ///
 /// Touch: in place of the bubble, a sheet over the lower part of the
-/// screen with a title bar (whose back button leaves the setting as it
-/// was) and the themes in rows, the one in use with a check mark.  A tap
-/// on a theme shows the screen in it; the Select button below saves it.
+/// screen with a title bar and the themes in rows, the one in use with a
+/// check mark.  A tap on a theme makes it the theme, at once, and the
+/// screen above the sheet shows it.  (A theme the provisioning server
+/// fixed is shown, and not saved.)
+///
+/// The themes are rows and not a grid of pictures of their wallpapers:
+/// there are forty-odd, each wallpaper is drawn from its description at
+/// the size it is shown, and the idle screen above shows each one whole,
+/// in its colors, which a small picture would not.
 struct Themes {
     selected: usize,
     /// Touch: the rows of the sheet.
@@ -968,14 +1340,16 @@ impl Themes {
             self.follow = false;
             self.st.top = self.selected.saturating_sub(1).min(all.len().saturating_sub(THEME_ROWS as usize));
         }
-        let current = crate::wallpaper::find_or_default(&cx.cfg.theme).id;
+        // The theme touched last is the one in use (or, fixed by the
+        // server, the one shown); there is no highlight to move.
+        let checked = if cx.cfg.theme_locked { crate::wallpaper::find_or_default(&cx.cfg.theme).id } else { self.selected().id };
         let f = th.font(Font::Normal);
-        widgets::list(c, th, rows, all.len(), &mut self.st, th.row_h, true, |c, r, i, _, fg| {
+        widgets::list(c, th, rows, all.len(), &mut self.st, th.row_h, false, |c, r, i, _, fg| {
             let (mark, rest) = r.split_left(th.back_w);
-            if all[i].id == current
+            if all[i].id == checked
                 && let Some(icon) = th.icon("ok")
             {
-                c.icon_in(icon, mark, fg);
+                c.icon_in(icon, mark, th.accent);
             }
             c.text_in(f, rest, all[i].name, fg, HAlign::Left);
         });
@@ -996,9 +1370,9 @@ impl Screen for Themes {
         Some(self.selected())
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
-        // Touch: the sheet's title bar has the way back.
+        // Touch: a tap saves, and the sheet's title bar has the way back.
         if cx.th.touch() {
-            return if cx.cfg.theme_locked { Vec::new() } else { vec![soft(1, tr::SELECT)] };
+            return Vec::new();
         }
         // A theme the provisioning server fixed can be looked at only.
         let select = if cx.cfg.theme_locked { soft(0, "") } else { soft(1, tr::SELECT) };
@@ -1007,11 +1381,14 @@ impl Screen for Themes {
     fn list_state(&mut self, _cx: &Cx) -> Option<(&mut ListState, usize)> {
         Some((&mut self.st, crate::wallpaper::all().len()))
     }
-    fn tap(&mut self, _cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
         match hit {
-            // Shown in the theme; Select saves it.
+            // Shown in the theme, and saved.
             Hit::Row { row, .. } if (row as usize) < crate::wallpaper::all().len() => {
                 self.selected = row as usize;
+                if !cx.cfg.theme_locked {
+                    cx.post(Command::SetTheme { name: self.selected().id.into() });
+                }
                 Nav::Stay
             }
             _ => Nav::Ignored,
@@ -1089,11 +1466,12 @@ fn sounds_menu() -> Box<dyn Screen> {
 /// The ringtones, the one in use with a check mark.  Play sounds the
 /// selected one; Select makes it the ringtone.
 ///
-/// Touch: a tap on a ringtone sounds it and marks it; the Select button
-/// below makes the one marked the ringtone.
+/// Touch: a tap on a ringtone sounds it and makes it the ringtone, and
+/// the check mark moves to it.
 struct Ringtones {
     st: ListState,
-    /// Touch: the ringtone tapped last, which Select chooses.
+    /// Touch: the ringtone tapped last, checked before the setting
+    /// catches up.
     picked: Option<usize>,
 }
 
@@ -1109,19 +1487,22 @@ impl Screen for Ringtones {
         "ringtones".into()
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
-        // Touch: a tap plays, and the title bar has the way back; Select
-        // once there is a ringtone to choose.
+        // Touch: a tap plays and chooses, and the title bar has the way
+        // back.
         if cx.th.touch() {
-            return if self.picked.is_some() { vec![soft(1, tr::SELECT)] } else { Vec::new() };
+            return Vec::new();
         }
         vec![soft(1, tr::SELECT), soft(2, tr::PLAY), soft(0, ""), soft(4, tr::BACK)]
     }
     fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
         match hit {
             Hit::Row { row, .. } if (row as usize) < cx.cfg.ringtones.len() => {
+                let name = cx.cfg.ringtones[row as usize].clone();
                 self.picked = Some(row as usize);
                 self.st.selected = row as usize;
-                self.softkey(cx, 2)
+                cx.post(Command::PlaySound { name: name.clone() });
+                set(cx, "default_ringtone", name);
+                Nav::Stay
             }
             _ => Nav::Ignored,
         }
@@ -1166,15 +1547,19 @@ impl Screen for Ringtones {
         widgets::title_bar(c, th, title, tr::RINGTONE);
         let f = th.font(Font::Normal);
         let tones = &cx.cfg.ringtones;
-        // Touch: the ringtone marked is the one tapped, if any (there is
-        // no cursor).
-        let focused = !th.touch() || self.picked.is_some();
-        let mark_w = if th.touch() { th.back_w } else { th.icon + 2 * th.pad };
-        widgets::list(c, th, widgets::body_rows(th, body), tones.len(), &mut self.st, th.row_h, focused, |c, r, i, _, fg| {
+        // Touch: no highlight (there is no cursor), and the check mark on
+        // the ringtone tapped last.
+        let touch = th.touch();
+        let mark_w = if touch { th.back_w } else { th.icon + 2 * th.pad };
+        let checked = |i: usize| match self.picked {
+            Some(p) if touch => p == i,
+            _ => tones[i] == cx.cfg.ringtone,
+        };
+        widgets::list(c, th, widgets::body_rows(th, body), tones.len(), &mut self.st, th.row_h, !touch, |c, r, i, _, fg| {
             let (mark, rest) = r.split_left(mark_w);
-            if tones[i] == cx.cfg.ringtone
+            if checked(i)
                 && let Some(icon) = th.icon("ok") {
-                    c.icon_in(icon, mark, fg);
+                    c.icon_in(icon, mark, if touch { th.accent } else { fg });
                 }
             c.text_in(f, rest, &tones[i], fg, HAlign::Left);
         });
@@ -1184,10 +1569,22 @@ impl Screen for Ringtones {
     }
 }
 
+/// The question asked before the phone restarts.
+pub(crate) fn restart_ask() -> Ask {
+    Ask {
+        question: tr::RESTART_Q.into(),
+        title: tr::RESTART_PHONE,
+        sentence: tr::RESTART_SENTENCE.into(),
+        action: tr::RESTART,
+        destructive: false,
+    }
+}
+
+/// The reset menu.  Touch: factory reset last, set apart, in red.
 fn reset_menu() -> Box<dyn Screen> {
     Menu::boxed("reset", tr::RESET, |cx| {
-        let mut v = vec![Item::new(tr::RESTART_PHONE, |_| {
-            Nav::Push(Confirm::boxed(tr::RESTART_Q, |cx| {
+        let mut v = vec![Item::new(tr::RESTART_PHONE, |cx| {
+            Nav::Push(ask(cx, restart_ask(), |cx| {
                 cx.post(Command::Reboot { reason: "menu".into() });
                 Nav::Home
             }))
@@ -1196,25 +1593,56 @@ fn reset_menu() -> Box<dyn Screen> {
             cx.post(Command::Reprovision);
             Nav::Home
         }));
-        v.push(Item::new(tr::FORGET_SERVER, |_| {
-            Nav::Push(Confirm::boxed(tr::FORGET_SERVER_Q, |cx| {
+        v.push(Item::new(tr::FORGET_SERVER, |cx| {
+            let a = Ask {
+                question: tr::FORGET_SERVER_Q.into(),
+                title: tr::FORGET_SERVER,
+                sentence: tr::FORGET_SERVER_SENTENCE.into(),
+                action: tr::FORGET_SERVER,
+                destructive: true,
+            };
+            Nav::Push(ask(cx, a, |cx| {
                 cx.post(Command::ForgetProvisioning);
                 Nav::Home
             }))
         }));
-        v.push(Item::new(tr::FACTORY_RESET, |_| {
-            Nav::Push(Confirm::boxed(tr::FACTORY_RESET_Q, |cx| {
+        let factory_reset = Item::new(tr::FACTORY_RESET, |cx| {
+            let a = Ask {
+                question: tr::FACTORY_RESET_Q.into(),
+                title: tr::FACTORY_RESET,
+                sentence: tr::FACTORY_RESET_SENTENCE.into(),
+                action: tr::ERASE_AND_RESTART,
+                destructive: true,
+            };
+            Nav::Push(ask(cx, a, |cx| {
                 cx.post(Command::FactoryReset);
                 Nav::Home
             }))
-        }));
+        })
+        .destructive();
+        let mut factory_reset = Some(factory_reset);
+        if !cx.th.touch() {
+            v.extend(factory_reset.take());
+        }
         if matches!(cx.st.update.trial, TrialBoot::Pending { .. }) {
-            v.push(Item::new(tr::ROLLBACK, |_| {
-                Nav::Push(Confirm::boxed(format!("{}?", tr::ROLLBACK), |cx| {
+            v.push(Item::new(tr::ROLLBACK, |cx| {
+                let a = Ask {
+                    question: format!("{}?", tr::ROLLBACK),
+                    title: tr::ROLLBACK_TITLE,
+                    sentence: tr::ROLLBACK_SENTENCE.into(),
+                    action: tr::ROLLBACK,
+                    destructive: false,
+                };
+                Nav::Push(ask(cx, a, |cx| {
                     cx.post(Command::Rollback);
                     Nav::Home
                 }))
             }));
+        }
+        if let Some(factory_reset) = factory_reset {
+            // Touch: a row of nothing between the rest and it.
+            v.push(Item::new("", |_| Nav::Stay));
+            v.push(factory_reset);
         }
         v
     })
@@ -1222,8 +1650,8 @@ fn reset_menu() -> Box<dyn Screen> {
 
 // ---------------------------------------------------------------- status
 
-fn status_menu() -> Box<dyn Screen> {
-    Menu::boxed("status", tr::STATUS, |_| {
+fn status_menu(touch: bool) -> Box<dyn Screen> {
+    Menu::boxed("status", if touch { tr::PHONE_STATUS } else { tr::STATUS }, |_| {
         vec![
             Item::new(tr::ABOUT, |_| Nav::Push(about())).icon("info"),
             Item::new(tr::NETWORK, |_| Nav::Push(network_status())).icon("network"),
@@ -1279,4 +1707,105 @@ pub(crate) fn about() -> Box<dyn Screen> {
         }
         v
     })
+}
+
+// --------------------------------------------------------- touch controls
+//
+// Drawn here until the shared widgets have them: a switch, and buttons in
+// their roles.  Each is replaced in one place.
+
+/// Touch: the width [`switch`] takes at the right of a row.
+pub(crate) const SWITCH_W: i32 = 128;
+
+/// Touch: a switch at the right end of `r`, in its middle: a track with
+/// round ends, filled when it is on, and a knob at the end it is at.
+pub(crate) fn switch(c: &mut Canvas, th: &Theme, r: IRect, on: bool) {
+    let (w, h) = (th.px(48), th.px(28));
+    let track = IRect::new(r.right() - w, r.y + (r.h - h) / 2, w, h);
+    c.fill_round_aa(track, h / 2, if on { th.sel_bg } else { th.border });
+    let knob = h - th.px(6);
+    let x = if on { track.right() - th.px(3) - knob } else { track.x + th.px(3) };
+    c.fill_round_aa(IRect::new(x, track.y + th.px(3), knob, knob), knob / 2, if on { th.sel_fg } else { th.secondary });
+}
+
+/// Touch: what a button is for, which is how it looks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    /// The screen's main action: filled.
+    Primary,
+    /// Places a call: green.
+    Call,
+    /// Erases or forgets something: red.
+    Destructive,
+    /// Any other action: outlined.
+    Secondary,
+}
+
+/// Touch: a button in `r` that looks as its `role` is.
+pub(crate) fn action_button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, role: Role, hit: Hit) {
+    let (fill, edge, fg) = match role {
+        Role::Primary => (th.sel_bg, None, th.sel_fg),
+        Role::Call => (th.sk_go, None, th.sk_fg),
+        Role::Destructive => (th.sk_stop, None, th.sk_fg),
+        Role::Secondary => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
+    };
+    widgets::button(c, th, r, label, fill, edge, fg, hit);
+}
+
+/// Touch: the places of `n` buttons as wide as the screen, one above the
+/// other at the bottom of `area` (the last at the bottom), and what is
+/// left of `area` above them.
+pub(crate) fn bottom_buttons(th: &Theme, area: IRect, n: usize) -> (IRect, Vec<IRect>) {
+    let (side, below, gap) = (th.px(10), th.px(6), th.pad);
+    let n = n as i32;
+    let band = n * th.row_h + (n - 1).max(0) * gap + below + gap;
+    let (rest, band) = area.split_bottom(band);
+    let rects = (0..n).map(|i| IRect::new(band.x + side, band.y + gap + i * (th.row_h + gap), band.w - 2 * side, th.row_h)).collect();
+    (rest, rects)
+}
+
+/// Touch: `r` (one of [`bottom_buttons`]) as two buttons side by side.
+pub(crate) fn halves(th: &Theme, r: IRect) -> (IRect, IRect) {
+    let gap = th.pad;
+    let (left, right) = r.split_left((r.w - gap) / 2);
+    (left, IRect { x: right.x + gap, w: right.w - gap, ..right })
+}
+
+/// Touch: a list with nothing in it, said in `r`: what is not there, and
+/// under it, dimmer, a sentence on what to do about it.  In the upper
+/// third, where the eye is.
+pub(crate) fn empty_state(c: &mut Canvas, th: &Theme, r: IRect, title: &str, hint: &str) {
+    let f = th.font(Font::Normal);
+    let inner = r.inset_xy(th.pad * 3, 0);
+    let hint_lines = if hint.is_empty() { 0 } else { f.wrap(hint, inner.w).len() as i32 };
+    let block = th.line_h + th.pad + hint_lines * th.line_h;
+    let y = r.y + (r.h / 3 - block / 2).max(th.pad * 2);
+    c.text_in(th.font(Font::Bold), IRect::new(inner.x, y, inner.w, th.line_h), title, th.fg, HAlign::Center);
+    let hint_r = IRect::new(inner.x, y + th.line_h + th.pad, inner.w, hint_lines * th.line_h);
+    c.text_wrapped(f, hint_r, hint, th.secondary, HAlign::Center, th.line_h);
+}
+
+/// A question asked before an action: what [`Confirm`] shows.  Each
+/// caller's words are in one of these, and [`ask`] is the one place that
+/// gives them to `Confirm`.
+pub(crate) struct Ask {
+    /// The question as the phones with keys ask it.
+    pub question: String,
+    /// Touch: the dialog's title.
+    pub title: &'static str,
+    /// Touch: what the action does, in a sentence.
+    pub sentence: String,
+    /// Touch: the verb on the button that does it.
+    pub action: &'static str,
+    /// Touch: the action erases or forgets something (a red button).
+    pub destructive: bool,
+}
+
+/// The screen that asks `a`, and does `yes` when the answer is yes.
+pub(crate) fn ask(cx: &Cx, a: Ask, yes: impl Fn(&Cx) -> Nav + Send + 'static) -> Box<dyn Screen> {
+    // `Confirm` as it is on main takes the question only.  Once it takes a
+    // title, a verb, and whether the action is destructive, they go there,
+    // with the sentence in place of the question on touch.
+    let _ = (cx.th.touch(), a.title, &a.sentence, a.action, a.destructive);
+    Confirm::boxed(a.question, yes)
 }
