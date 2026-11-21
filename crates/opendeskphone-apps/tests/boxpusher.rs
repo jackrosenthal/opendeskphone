@@ -592,3 +592,166 @@ fn a_phone_that_gets_another_user_keeps_each_users_progress_apart() {
     files.sort();
     assert_eq!(files, ["pbx", "progress"]);
 }
+
+// ------------------------------------------------------ the touchscreen
+
+/// Where the middle of a square of level 1 is in the D80's window: the
+/// level is 7 by 3 squares of 72 pixels, in the middle of a board of 11 by
+/// 7 that is 4 pixels from the left and 376 from the top.
+fn square(column: i32, row: i32) -> (i32, i32) {
+    (4 + 2 * 72 + column * 72 + 36, 376 + 2 * 72 + row * 72 + 36)
+}
+
+#[test]
+fn a_finger_moves_the_figure_where_there_are_no_keys() {
+    let mut r = Rig::with_root(staged(), FakeConfig::default(), Model::D80);
+    r.launch(APP);
+    // The panel is a line across the top, and no key is named.
+    assert_eq!(panel(&r), ["Level 1", "Moves 0", "Pushes 0", "Swipe to move"]);
+    assert!(r.ui.takes_touches(APP, 0));
+    // The board is as wide as the upright window allows, under the line
+    // with the back button.
+    let (bounds, _) = r.ui.drawings(APP).remove(0);
+    assert_eq!((bounds.x, bounds.y, bounds.width, bounds.height), (4, 376, 792, 504));
+    let start = pieces(&r);
+    let swipe = |r: &mut Rig, from: (i32, i32), to: (i32, i32)| {
+        r.ui.drag(APP, from, to);
+        r.settle();
+    };
+    let touch = |r: &mut Rig, at: (i32, i32)| {
+        r.ui.tap(APP, at.0, at.1);
+        r.settle();
+    };
+
+    // A swipe, anywhere, is a step the way it went.
+    swipe(&mut r, (300, 1000), (420, 1030));
+    assert_eq!(panel(&r)[1..3], ["Moves 1", "Pushes 0"]);
+    assert_ne!(pieces(&r), start);
+    // Into a wall, or too short to be meant: nothing.
+    swipe(&mut r, (300, 900), (310, 700));
+    swipe(&mut r, (300, 900), (310, 1100));
+    swipe(&mut r, (300, 900), (315, 905));
+    assert_eq!(panel(&r)[1..3], ["Moves 1", "Pushes 0"]);
+    swipe(&mut r, (600, 200), (450, 260));
+    assert_eq!(panel(&r)[1..3], ["Moves 2", "Pushes 0"]);
+    assert_eq!(pieces(&r), start, "back where it started");
+
+    // A touch beside the figure (it is in the second square of the row)
+    // is a step toward the touch; a touch on it is none.
+    touch(&mut r, square(1, 1));
+    assert_eq!(panel(&r)[1..3], ["Moves 2", "Pushes 0"]);
+    touch(&mut r, square(4, 1));
+    assert_eq!(panel(&r)[1..3], ["Moves 3", "Pushes 0"]);
+    touch(&mut r, square(5, 1));
+    assert_eq!(panel(&r)[1..3], ["Moves 4", "Pushes 1"]);
+    // Above it is a wall.
+    touch(&mut r, square(3, 0));
+    assert_eq!(panel(&r)[1..3], ["Moves 4", "Pushes 1"]);
+    // The softkeys are as on every phone.
+    r.softkey(APP, "Undo");
+    assert_eq!(panel(&r)[1..3], ["Moves 3", "Pushes 0"]);
+
+    // Two more steps solve the level; the next one is a softkey, and a
+    // level of the list is touched.
+    touch(&mut r, square(6, 1));
+    swipe(&mut r, (100, 500), (300, 500));
+    assert_eq!(panel(&r), ["Level 1 solved!", "Moves: 5", "Pushes: 2", "Fewest pushes: 2"]);
+    assert!(!r.ui.takes_touches(APP, 0));
+    touch(&mut r, square(6, 1));
+    assert_eq!(panel(&r)[0], "Level 1 solved!");
+    r.softkey(APP, "Next");
+    assert_eq!(panel(&r), ["Level 2", "Moves 0", "Pushes 0", "Swipe to move"]);
+    r.softkey(APP, "Levels");
+    r.ui.tap_row(APP, 0);
+    r.settle();
+    assert_eq!(panel(&r), ["Level 1", "Moves 0", "Pushes 0", "Swipe to move"]);
+    // The back button is Cancel: from the levels to the game, and from
+    // the game out.
+    r.softkey(APP, "Levels");
+    r.key(APP, Key::Cancel);
+    assert_eq!(panel(&r)[0], "Level 1");
+    r.key(APP, Key::Cancel);
+    assert_eq!(r.ui.top(), None);
+}
+
+#[test]
+fn drawn_on_the_touchscreen() {
+    use opendeskphone_apps::engine::Target;
+    use opendeskphone_apps::testutil::{FakePbx, services_with_store};
+    use opendeskphone_apps::uishell::UiShell;
+    use opendeskphone_apps::{AppManager, ManagerConfig};
+    use opendeskphone_state::{Phase, Store, System};
+    use opendeskphone_ui::{Hit, Ui, UiConfig};
+
+    // The phone UI on the simulator's display, and the manager with the
+    // real app.
+    let model = Model::D80;
+    let dir = common::temp_dir("boxpusher-phone");
+    let mut hal = opendeskphone_hal::Hal::sim(model);
+    let sim = hal.sim.clone().unwrap();
+    let store = Store::new(model);
+    let mut ui = Ui::from_hal(&mut hal, store.clone(), UiConfig { theme: "harbor".into(), ..UiConfig::default() });
+    store.update::<System, _>(|s| s.phase = Phase::Running);
+    let mut cfg = ManagerConfig::rooted(staged(), &dir.0.join("nvdata"));
+    cfg.target = Target::Pulley64;
+    let services = services_with_store(&FakePbx::default(), FakeConfig::default(), &FakeStore::default());
+    let mut mgr = AppManager::new(cfg, store.clone(), Box::new(UiShell::new(ui.handle(), model)), services).expect("engine");
+    mgr.scan();
+    let settle = |ui: &mut Ui, mgr: &mut AppManager| {
+        for _ in 0..4 {
+            ui.pump();
+            mgr.pump();
+        }
+        ui.pump();
+    };
+    settle(&mut ui, &mut mgr);
+    mgr.launch(APP).unwrap();
+    settle(&mut ui, &mut mgr);
+    assert_eq!(ui.screen_name(), "app:boxpusher");
+
+    let pixels = |ui: &Ui| -> Vec<u32> {
+        let c = ui.canvas();
+        (0..1280).flat_map(|y| (0..800).map(move |x| (x, y))).map(|(x, y)| c.pixel(x, y)).collect()
+    };
+    let shot = |ui: &Ui, name: &str| {
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("box-pusher");
+        std::fs::create_dir_all(&dir).unwrap();
+        let rgb: Vec<u8> = pixels(ui).iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8]).collect();
+        let file = std::io::BufWriter::new(std::fs::File::create(dir.join(format!("D80-{name}.png"))).unwrap());
+        let mut enc = png::Encoder::new(file, 800, 1280);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&rgb).unwrap();
+    };
+    shot(&ui, "1-play");
+    let start = pixels(&ui);
+    // The game's own colors: the floor and the walls of the level.
+    let count = |p: &[u32], color: u32| p.iter().filter(|c| **c == color).count();
+    assert!(count(&start, 0xD9_D0BA) > 5 * 72 * 72 / 2, "the floor");
+    assert!(count(&start, 0x5F_6E8C) > 16 * 72 * 72 / 2, "the walls");
+    // The phone's back button and the four softkeys are there to touch.
+    let back = ui.canvas().hit_rect(Hit::Key(Key::Cancel)).expect("a back button");
+    assert_eq!((back.x, back.y, back.w, back.h), (0, 0, 96, 96));
+    for n in 1..=4 {
+        assert!(ui.canvas().hit_rect(Hit::Key(Key::Soft(n))).is_some(), "softkey {n}");
+    }
+
+    // A swipe on the glass moves the figure; a touch beside it pushes the
+    // box; one more swipe pushes it home.
+    sim.touch_drag((300, 1000), (450, 1010), 4);
+    settle(&mut ui, &mut mgr);
+    let moved = pixels(&ui);
+    assert_ne!(moved, start);
+    let (x, y) = square(4, 1);
+    sim.touch_tap(x as u16, y as u16);
+    settle(&mut ui, &mut mgr);
+    assert_ne!(pixels(&ui), moved);
+    shot(&ui, "2-pushed");
+    sim.touch_drag((100, 300), (300, 300), 2);
+    settle(&mut ui, &mut mgr);
+    shot(&ui, "3-solved");
+    // The back button leaves.
+    sim.touch_tap(48, 48);
+    settle(&mut ui, &mut mgr);
+    assert_ne!(ui.screen_name(), "app:boxpusher");
+}

@@ -3,7 +3,9 @@
 //! one; this is the app around it: the screens, the keys, and the progress,
 //! kept on the phone and on the PBX.
 //!
-//! The arrow keys, or 2, 4, 6, and 8, move the figure.  A level's floor,
+//! The arrow keys, or 2, 4, 6, and 8, move the figure.  On a touchscreen,
+//! which has no keys, a swipe moves it a step the way of the swipe, and so
+//! does a touch beside it, toward the touch.  A level's floor,
 //! walls, and targets are drawn once on one canvas; the boxes and the
 //! figure are on a second canvas over it, the only thing drawn again
 //! after a step.  The app makes no sound and uses no timer, and like any
@@ -23,6 +25,22 @@ use boxpusher_game::{Dir, Game, LEVELS, Level, Step};
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::StorageLocation::{Local, PbxPrivate};
 use opendeskphone_app_sdk::{Align, Font, canvas, log_warn, read_string};
+
+/// The least length of a swipe, in pixels.
+const SWIPE: i32 = 24;
+
+/// The way a finger went, or the way from the figure to a touch: the
+/// direction of the longer of the two distances, if that is at least
+/// `least` pixels.
+fn toward(dx: i32, dy: i32, least: i32) -> Option<Dir> {
+    if dx.abs().max(dy.abs()) < least {
+        None
+    } else if dx.abs() > dy.abs() {
+        Some(if dx > 0 { Dir::Right } else { Dir::Left })
+    } else {
+        Some(if dy > 0 { Dir::Down } else { Dir::Up })
+    }
+}
 
 const SK_UNDO: u32 = 1;
 const SK_RESTART: u32 = 2;
@@ -359,7 +377,13 @@ impl BoxPusher {
     /// in the display's colors.
     fn painter(&mut self) -> (&Painter, Layout) {
         let m = ui::get_metrics();
-        let layout = Layout::new(m.width, m.height);
+        // The touchscreen is upright: the panel is a line across the top,
+        // as high as a title, beside the phone's back button.
+        let layout = if m.skin == Skin::Touch {
+            Layout::upright(m.width, m.height, m.title_height)
+        } else {
+            Layout::new(m.width, m.height)
+        };
         let painter = self.painter.get_or_insert_with(|| {
             let palette = if m.color {
                 Palette::color()
@@ -404,16 +428,42 @@ impl BoxPusher {
             draw(scenery, painter.scenery(game.level()));
         }
 
-        // The panel: three lines in the middle of its height.
-        let gap = (l.tile / 2) as i16;
-        let (x, width) = (l.panel_x + gap, l.panel_width - gap as u16);
-        let top = (m.height.saturating_sub(3 * m.line_height) / 2) as i16;
-        let line = |n: u16| Rect::new(x, top + (n * m.line_height) as i16, width, m.line_height);
-        text(line(0), Font::Bold, Align::Left, &format!("Level {number}"));
-        let board = Board {
-            pieces,
-            moves: text(line(1), Font::Normal, Align::Left, ""),
-            pushes: text(line(2), Font::Normal, Align::Left, ""),
+        let board = if m.skin == Skin::Touch {
+            // The panel: one line, after the back button; the level takes
+            // the left of it, and the counts share the rest.
+            let x = l.panel_x + m.back_width as i16;
+            let width = l.panel_width.saturating_sub(m.back_width);
+            let (level, count) = (width * 3 / 8, width * 5 / 16);
+            let part = |x: i16, width: u16| Rect::new(x, 0, width, m.title_height);
+            text(part(x, level), Font::Title, Align::Left, &format!("Level {number}"));
+            let board = Board {
+                pieces,
+                moves: text(part(x + level as i16, count), Font::Normal, Align::Left, ""),
+                pushes: text(part(x + (level + count) as i16, count), Font::Normal, Align::Left, ""),
+            };
+            // There are no keys: a finger moves the figure, anywhere in
+            // the window.
+            ui::claim_touch(ROOT, true);
+            let below = l.board_y + l.board_height as i16 + m.line_height as i16;
+            text(
+                Rect::new(0, below, m.width, m.line_height),
+                Font::Normal,
+                Align::Center,
+                "Swipe to move",
+            );
+            board
+        } else {
+            // The panel: three lines in the middle of its height.
+            let gap = (l.tile / 2) as i16;
+            let (x, width) = (l.panel_x + gap, l.panel_width - gap as u16);
+            let top = (m.height.saturating_sub(3 * m.line_height) / 2) as i16;
+            let line = |n: u16| Rect::new(x, top + (n * m.line_height) as i16, width, m.line_height);
+            text(line(0), Font::Bold, Align::Left, &format!("Level {number}"));
+            Board {
+                pieces,
+                moves: text(line(1), Font::Normal, Align::Left, ""),
+                pushes: text(line(2), Font::Normal, Align::Left, ""),
+            }
         };
         ui::set_softkeys(
             ROOT,
@@ -450,6 +500,22 @@ impl BoxPusher {
             Step::Moved => self.update(false),
             Step::Pushed if solved => self.show_solved(),
             Step::Pushed => self.update(true),
+        }
+    }
+
+    /// A touch at a place of the window: a step from the figure toward
+    /// it, unless it is on the figure.
+    fn touched(&mut self, at: Point) {
+        let (_, l) = self.painter();
+        let (Some(painter), Some(game)) = (&self.painter, &self.game) else {
+            return;
+        };
+        let (x, y) = painter.corner(game.level(), game.player());
+        let half = i32::from(l.tile / 2);
+        let dx = i32::from(at.x) - (i32::from(l.board_x) + i32::from(x) + half);
+        let dy = i32::from(at.y) - (i32::from(l.board_y) + i32::from(y) + half);
+        if let Some(dir) = toward(dx, dy, half + 1) {
+            self.step(dir);
         }
     }
 
@@ -556,7 +622,10 @@ impl App for BoxPusher {
     }
 
     fn handle(&mut self, event: Event) {
-        if matches!(event, Event::Softkey(_) | Event::Key(_) | Event::Widget(_)) {
+        if matches!(
+            event,
+            Event::Softkey(_) | Event::Key(_) | Event::Widget(_) | Event::Touch(_)
+        ) {
             self.played = true;
         }
         match event {
@@ -594,6 +663,13 @@ impl App for BoxPusher {
                 if let Some(game) = &mut self.game {
                     game.restart();
                     self.update(true);
+                }
+            }
+            Event::Touch((_, Touch::Tap(at))) if self.screen == Screen::Play => self.touched(at),
+            Event::Touch((_, Touch::DragEnd((from, to)))) if self.screen == Screen::Play => {
+                let (dx, dy) = (i32::from(to.x) - i32::from(from.x), i32::from(to.y) - i32::from(from.y));
+                if let Some(dir) = toward(dx, dy, SWIPE) {
+                    self.step(dir);
                 }
             }
             Event::Key(key) => match (key, &self.screen) {
