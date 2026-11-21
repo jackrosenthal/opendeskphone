@@ -1300,3 +1300,28 @@ fn the_keyboard_is_put_away_for_hotdesking_s_softkeys() {
     p.settle();
     assert_ne!(p.ui.screen_name(), "app:hotdesking");
 }
+
+#[test]
+fn the_calendar_on_the_touchscreen_in_a_picture() {
+    // The evening of November 13, 2026, seven hours west.
+    let clock = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_794_618_000));
+    let mut p = TouchPhone::with(FakeConfig { utc_offset: -7 * 3600, wall_time: Some(clock), ..FakeConfig::dasp() });
+    p.mgr.launch("calendar").unwrap();
+    p.settle();
+    assert_eq!(p.ui.screen_name(), "app:calendar");
+    p.shot("calendar");
+    // The mark on today (Friday the 13th: the sixth column, the second
+    // row of days) is a square in the middle of the day's place, and the
+    // six rows of days end well above the softkey buttons: the upright
+    // screen has more height than a month wants.
+    let c = p.ui.canvas();
+    let col = 800 / 7;
+    let (x0, y0) = (5 * col + col / 2, 374);
+    let mark = c.pixel(x0, y0 - 30);
+    assert_ne!(mark, c.pixel(x0, 110), "today is marked");
+    let run = |dx: i32, dy: i32| (1..400).take_while(|i| c.pixel(x0 + dx * i, y0 - 30 + dy * i) == mark).count();
+    let (width, height) = (run(-1, 0) + run(1, 0) + 1, run(0, -1) + run(0, 1) + 1);
+    assert_eq!((width, height), (95, 95));
+    let ground = c.pixel(400, 1100);
+    assert!((0..800).all(|x| (1000..1160).all(|y| c.pixel(x, y) == ground)), "nothing under the sixth row");
+}
