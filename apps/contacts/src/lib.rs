@@ -1,6 +1,10 @@
 //! Contacts: the provisioned contact lists (the stock XML under
 //! `/nvdata/contact_lists/`), by group, with search, presence, details,
 //! and dialing.
+//!
+//! On the touchscreen, which has no keys, touching a contact shows its
+//! details, and touching a number there dials it; there are no softkeys
+//! for a highlighted row.
 
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::xml;
@@ -271,24 +275,15 @@ impl Contacts {
         self.view = view;
         let r = screen(&title);
         if self.view.is_empty() {
-            let t = ui::create(
-                WidgetKind::Text,
-                ROOT,
-                Rect::new(4, r.y + 2, r.width - 8, r.height - 4),
-            );
-            ui::set_wrap(t, true);
-            ui::set_text(t, "There are no contacts.");
+            opendeskphone_app_sdk::nav::note(r, "There are no contacts.");
             ui::set_softkeys(ROOT, &[Softkey::new(SK_EXIT, "Exit")]);
             self.screen = Screen::None;
             return;
         }
         let list = ui::create(WidgetKind::TextList, ROOT, r);
         ui::set_items(list, &Self::rows(&self.view));
-        let mut keys = vec![
-            Softkey::new(SK_DIAL, "Dial"),
-            Softkey::new(SK_DETAILS, "Details"),
-            Softkey::new(SK_SEARCH, "Search"),
-        ];
+        let mut keys = Self::row_keys();
+        keys.push(Softkey::new(SK_SEARCH, "Search"));
         if self.groups.len() > 1 {
             keys.push(Softkey::new(SK_GROUPS, "Groups"));
         }
@@ -296,6 +291,19 @@ impl Contacts {
         ui::set_softkeys(ROOT, &keys);
         ui::set_focus(list);
         self.screen = Screen::List(list);
+    }
+
+    /// The softkeys for the highlighted contact.  Touch: none; touching a
+    /// contact shows its details.
+    fn row_keys() -> Vec<Softkey> {
+        if has_keys() {
+            vec![
+                Softkey::new(SK_DIAL, "Dial"),
+                Softkey::new(SK_DETAILS, "Details"),
+            ]
+        } else {
+            Vec::new()
+        }
     }
 
     fn show_search(&mut self) {
@@ -314,14 +322,9 @@ impl Contacts {
                 r.height.saturating_sub(h + 2),
             ),
         );
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_DIAL, "Dial"),
-                Softkey::new(SK_DETAILS, "Details"),
-                Softkey::new(SK_BACK, "Back"),
-            ],
-        );
+        let mut keys = Self::row_keys();
+        keys.push(Softkey::new(SK_BACK, "Back"));
+        ui::set_softkeys(ROOT, &keys);
         ui::set_focus(input);
         self.screen = Screen::Search { list };
         self.filter();
@@ -367,10 +370,12 @@ impl Contacts {
             })
             .collect();
         ui::set_items(list, &items);
-        ui::set_softkeys(
-            ROOT,
-            &[Softkey::new(SK_DIAL, "Dial"), Softkey::new(SK_BACK, "Back")],
-        );
+        // Touch: touching a number dials it.
+        let mut keys = vec![Softkey::new(SK_BACK, "Back")];
+        if has_keys() {
+            keys.insert(0, Softkey::new(SK_DIAL, "Dial"));
+        }
+        ui::set_softkeys(ROOT, &keys);
         ui::set_focus(list);
         self.detail = Some(c);
         self.screen = Screen::Details(list);
@@ -448,6 +453,11 @@ impl App for Contacts {
                     self.show_list();
                 }
                 Screen::Details(_) => self.dial_current(),
+                Screen::List(l) | Screen::Search { list: l } if l == w && !has_keys() => {
+                    if let Some(c) = self.view.get(i as usize).cloned() {
+                        self.show_details(c);
+                    }
+                }
                 Screen::List(l) | Screen::Search { list: l } if l == w => self.dial_current(),
                 _ => {}
             },

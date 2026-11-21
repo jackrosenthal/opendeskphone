@@ -102,13 +102,7 @@ impl Queues {
     fn draw_list(&mut self) {
         let r = screen("Queues");
         if self.queues.is_empty() {
-            let t = ui::create(
-                WidgetKind::Text,
-                ROOT,
-                Rect::new(4, r.y + 2, r.width - 8, r.height - 4),
-            );
-            ui::set_wrap(t, true);
-            ui::set_text(t, "You are not a member of any queue.");
+            opendeskphone_app_sdk::nav::note(r, "You are not a member of any queue.");
             ui::set_softkeys(ROOT, &[Softkey::new(SK_EXIT, "Exit")]);
             self.screen = Screen::Error;
             return;
@@ -264,6 +258,10 @@ impl App for Queues {
                 self.selected = i as usize;
                 ui::set_softkeys(ROOT, &self.softkeys());
             }
+            // Touch: the touch that activates a queue is the one that
+            // highlights it, and the softkeys are for the highlighted
+            // one.  "Details" shows it.
+            Event::Widget((_, WidgetEvent::Activated(_))) if !has_keys() => {}
             Event::Widget((_, WidgetEvent::Activated(i))) => {
                 self.selected = i as usize;
                 self.show_details();

@@ -38,13 +38,7 @@ impl Parking {
     fn draw(&mut self) {
         let r = screen("Parked Calls");
         if self.calls.is_empty() {
-            let t = ui::create(
-                WidgetKind::Text,
-                ROOT,
-                Rect::new(4, r.y + 2, r.width - 8, r.height - 4),
-            );
-            ui::set_wrap(t, true);
-            ui::set_text(t, "No calls are parked.");
+            opendeskphone_app_sdk::nav::note(r, "No calls are parked.");
             ui::set_softkeys(
                 ROOT,
                 &[
