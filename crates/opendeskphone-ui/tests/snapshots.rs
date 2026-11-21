@@ -706,3 +706,122 @@ fn alarm_clock() {
         r.shot("71-alarm-ringing");
     }
 }
+
+/// The region registered with `hit` in the picture on the screen.
+fn region(r: &Rig, hit: opendeskphone_ui::Hit) -> opendeskphone_ui::gfx::IRect {
+    r.ui.canvas().hit_rect(hit).unwrap_or_else(|| panic!("no region {hit:?} on {}", r.ui.screen_name()))
+}
+
+/// A finger down and up on the region registered with `hit`.
+fn touch(r: &mut Rig, hit: opendeskphone_ui::Hit) {
+    let rect = region(r, hit);
+    r.sim.touch_tap((rect.x + rect.w / 2) as u16, (rect.y + rect.h / 2) as u16);
+    r.ui.pump();
+}
+
+/// The D80's menus and text entry, operated by touch: the on-screen
+/// keyboard's layouts, the call log's filters and details, the app grid,
+/// the level slider, the theme and ringtone choosers, and the settings.
+#[test]
+fn d80_touch() {
+    use opendeskphone_ui::osk::Cap;
+    use opendeskphone_ui::Hit;
+    let row = |row: u32| Hit::Row { list: 0, row };
+    let mut r = Rig::new(Model::D80);
+
+    // The keyboard of text: the provisioning server's address.
+    r.store.update::<System, _>(|s| s.phase = Phase::Provisioning);
+    r.store.update::<Provisioning, _>(|p| {
+        p.phase = ProvisionPhase::AwaitingServer;
+        p.discovered = vec![
+            DiscoveredServer { source: DiscoverySource::Mdns, name: "Office PBX".into(), address: "198.18.15.2:5060".into() },
+            DiscoveredServer { source: DiscoverySource::DhcpOption66, name: String::new(), address: "pbx.example.invalid".into() },
+        ];
+    });
+    r.ui.pump();
+    touch(&mut r, row(2));
+    assert_eq!(r.ui.screen_name(), "provision-server");
+    for ch in "pbx.example".chars() {
+        touch(&mut r, Cap::Char(ch).hit());
+    }
+    r.shot("t01-osk-letters");
+    touch(&mut r, Cap::Shift.hit());
+    r.shot("t02-osk-shift");
+    touch(&mut r, Cap::Symbols.hit());
+    r.shot("t03-osk-symbols");
+    touch(&mut r, Cap::More.hit());
+    r.shot("t04-osk-more");
+    touch(&mut r, Hit::Key(Key::Cancel));
+    r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Provisioned);
+
+    // Menus.
+    r.running();
+    r.show("menu");
+    r.shot("t10-menu");
+    r.show("call_log");
+    r.shot("t11-call-log");
+    touch(&mut r, Hit::Custom(2));
+    r.shot("t12-call-log-missed");
+    touch(&mut r, Hit::Custom(1));
+    touch(&mut r, Hit::Custom(0x1_0000 + 2));
+    assert_eq!(r.ui.screen_name(), "call_log_entry");
+    r.shot("t13-call-log-details");
+    r.show("apps");
+    r.shot("t14-apps");
+    r.show("forward");
+    touch(&mut r, row(0));
+    assert_eq!(r.ui.screen_name(), "forward_edit");
+    for ch in "1099".chars() {
+        touch(&mut r, Cap::Char(ch).hit());
+    }
+    r.shot("t15-osk-dial");
+    r.show("network");
+    touch(&mut r, row(1));
+    assert_eq!(r.ui.screen_name(), "setting_edit");
+    r.shot("t16-osk-numeric");
+    r.show("network");
+    touch(&mut r, row(7));
+    r.shot("t17-osk-pin");
+    r.show("settings");
+    r.shot("t20-settings");
+    touch(&mut r, row(1));
+    r.shot("t21-accounts");
+    touch(&mut r, Hit::Key(Key::Cancel));
+    touch(&mut r, row(2));
+    r.shot("t22-display");
+    touch(&mut r, row(0));
+    assert_eq!(r.ui.screen_name(), "level");
+    touch(&mut r, Hit::Custom(2));
+    r.shot("t23-brightness");
+    touch(&mut r, Hit::Key(Key::Cancel));
+    touch(&mut r, row(3));
+    assert_eq!(r.ui.screen_name(), "theme");
+    r.shot("t24-theme");
+    // The sheet shows the theme in use, second, after the one before it.
+    let first = r.ui.canvas().hits().iter().find_map(|(_, h)| if let Hit::Row { row, .. } = h { Some(*row) } else { None });
+    touch(&mut r, row(first.unwrap()));
+    r.shot("t25-theme-preview");
+    touch(&mut r, Hit::Key(Key::Cancel));
+    touch(&mut r, Hit::Key(Key::Cancel));
+    touch(&mut r, row(3));
+    r.shot("t26-sounds");
+    touch(&mut r, row(0));
+    assert_eq!(r.ui.screen_name(), "ringtones");
+    r.shot("t27-ringtones");
+    touch(&mut r, row(1));
+    r.shot("t28-ringtone-picked");
+    touch(&mut r, Hit::Key(Key::Cancel));
+    touch(&mut r, row(1));
+    r.shot("t29-ringer-volume");
+    r.show("settings");
+    touch(&mut r, row(4));
+    r.shot("t30-reset");
+    touch(&mut r, row(3));
+    r.shot("t31-confirm");
+    r.show("menu");
+    touch(&mut r, row(7));
+    assert_eq!(r.ui.screen_name(), "status");
+    r.shot("t32-status");
+    r.show("paging");
+    r.shot("t33-paging");
+}
