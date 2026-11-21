@@ -20,6 +20,13 @@
 //! - [`osk`] is the touch skin's on-screen keyboard, for any screen that
 //!   takes text.
 //!
+//! The touch skin is the feature `touch`, which is on by default.  Without
+//! it (the firmware of the phones with keys, which have little flash) the
+//! build has none of that skin's fonts, icons, and artwork, and
+//! [`skin::Theme::touch`] is false at compile time, so the compiler leaves
+//! out what the screens do only by touch, [`osk`] included.  The API is
+//! the same either way.
+//!
 //! Fonts and artwork are rasterized at build time (`build.rs`) from
 //! `assets/`; drawing at run time uses no floating point.  The one file
 //! format read at run time is PNG ([`image`]), for the icons and pictures

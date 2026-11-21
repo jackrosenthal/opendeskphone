@@ -1175,7 +1175,7 @@ impl Ui {
             let delta = if key == Key::VolumeUp { 1 } else { -1 };
             self.store.post(Command::AdjustVolume { target: VolumeTarget::Current, delta });
             // (Touch: long enough to reach for the popup's own buttons.)
-            self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch { 4000 } else { 2000 } });
+            self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch() { 4000 } else { 2000 } });
             self.needs_draw = true;
             return;
         }
@@ -1229,7 +1229,7 @@ impl Ui {
     /// top screen.
     pub fn touch(&mut self, phase: TouchPhase, x: u16, y: u16, source: InputSource) {
         self.store.emit(Event::Touch { phase, x, y, source });
-        if !self.th.touch {
+        if !self.th.touch() {
             return;
         }
         let dark = !self.backlight_on;
@@ -1375,7 +1375,7 @@ impl Ui {
                 Ok(Reply::Done)
             }
             Command::InjectTouch { phase, x, y } => {
-                if self.th.touch {
+                if self.th.touch() {
                     self.touch(phase, x, y, InputSource::Injected);
                     Ok(Reply::Done)
                 } else {
@@ -1547,7 +1547,7 @@ impl Ui {
                     Pass::Shown if top.wallpaper() => serial = c.wallpaper(th.bg, backdrop),
                     Pass::Shown => c.clear(th.bg),
                 }
-                if top.softkey_bar(&cx) && th.touch {
+                if top.softkey_bar(&cx) && th.touch() {
                     // Buttons: an app's four softkeys are the four keys
                     // (and its window keeps its size, whatever they are);
                     // a native screen's are its actions, in as many rows
@@ -1594,11 +1594,11 @@ impl Ui {
                 let (w, h) = if th.gray { (bounds.w * 3 / 4, th.line_h * 2 + 12) } else { (th.px(300), th.px(84)) };
                 // Touch: a touch beside the popup takes it down, and one
                 // on it does nothing.
-                if th.touch {
+                if th.touch() {
                     c.hit(bounds, Hit::Dismiss);
                 }
                 let inner = widgets::modal(c, th, bounds, w, h);
-                if th.touch {
+                if th.touch() {
                     c.hit(inner.inset(-th.pad), Hit::Nothing);
                 }
                 let (head, rest) = inner.split_top(th.line_h);
@@ -1609,7 +1609,7 @@ impl Ui {
                 c.text_in(th.font(crate::appview::Font::Bold), text, label, th.fg, HAlign::Left);
                 let mh = if th.gray { 8 } else { th.px(18) };
                 // Touch: the volume keys, at the two ends of the meter.
-                let rest = if th.touch {
+                let rest = if th.touch() {
                     let (minus, rest) = rest.split_left(th.touch_min);
                     let (rest, plus) = rest.split_right(th.touch_min);
                     for (r, label, key) in [(minus, "\u{2013}", Key::VolumeDown), (plus, "+", Key::VolumeUp)] {
@@ -1636,7 +1636,7 @@ impl Ui {
                 let h = (lines + 1) * th.line_h + 2 * th.pad + 2;
                 // Touch: a touch anywhere takes the notice down, as Select,
                 // Cancel, and the softkeys do.
-                if th.touch {
+                if th.touch() {
                     c.hit(bounds, Hit::Dismiss);
                 }
                 let inner = widgets::modal(c, th, bounds, w, h);

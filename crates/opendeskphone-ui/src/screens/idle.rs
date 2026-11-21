@@ -147,7 +147,7 @@ pub(crate) fn draw_status_icons(cx: &Cx, c: &mut Canvas, r: IRect, fg: Rgb) {
         }
         // Touch: the message-waiting icon is the Messages key of a phone
         // that has one.
-        if th.touch && name == "voicemail" {
+        if th.touch() && name == "voicemail" {
             let w = (x - x0 + 2 * gap).max(th.touch_min);
             c.hit(IRect::new(((x0 + x - w) / 2).max(0), r.y, w, r.h.max(th.touch_min)), Hit::Key(Key::Messages));
         }
@@ -173,7 +173,7 @@ pub(crate) fn draw_tabs(cx: &Cx, c: &mut Canvas, x: i32) {
         }
         // Touching a line does what its line key does on a phone that
         // has one.
-        if th.touch {
+        if th.touch() {
             c.hit(r, crate::touch::Hit::Key(Key::Line(i as u8 + 1)));
         }
         // The tab is open to the right edge of the screen and to the tab
@@ -275,7 +275,7 @@ pub(crate) fn idle_app_h(th: &Theme) -> i32 {
 /// width left of the tabs, and on the touch skin, which has its lines
 /// below, the screen's.
 pub(crate) fn idle_app_w(th: &Theme) -> i32 {
-    if th.touch { th.width } else { th.idle_tab_x }
+    if th.touch() { th.width } else { th.idle_tab_x }
 }
 
 // ----------------------------------------------------------------- touch
@@ -568,7 +568,7 @@ impl Screen for Idle {
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, area);
         }
         // The background (wallpaper) is already painted.
@@ -629,7 +629,7 @@ impl Screen for Idle {
         let into = cx.unix % 60;
         let minute = cx.now_ms + (60 - into) * 1000 + 50;
         // Touch: and when a line's lamp next blinks.
-        let lamps = if cx.th.touch { lamps_deadline(&lines(cx), cx.now_ms) } else { None };
+        let lamps = if cx.th.touch() { lamps_deadline(&lines(cx), cx.now_ms) } else { None };
         Some(lamps.map_or(minute, |at| at.min(minute)))
     }
 }

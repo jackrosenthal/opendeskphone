@@ -143,7 +143,7 @@ impl Screen for Dialer {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the screen has its own buttons for these.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         match self.purpose {
@@ -286,7 +286,7 @@ impl Screen for Dialer {
             Purpose::Conference(_) => tr::CONFERENCE_WITH,
             _ => tr::NEW_CALL_TITLE,
         };
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, area, label);
         }
         call_header(cx, c, label, &[]);
@@ -689,7 +689,7 @@ impl Screen for CallScreen {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the screen has its own buttons for these.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         let Some(call) = self.selected(cx) else { return Vec::new() };
@@ -833,7 +833,7 @@ impl Screen for CallScreen {
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, area);
         }
         let Some(sel) = self.selected(cx) else { return };
@@ -888,7 +888,7 @@ impl Screen for CallScreen {
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         let timer = cx.st.calls.live().any(|c| c.connected_mono_ms.is_some()).then(|| cx.now_ms + 1000 - cx.now_ms % 1000);
         // Touch: and when a line's lamp next blinks.
-        let lamps = if cx.th.touch { idle::lamps_deadline(&idle::lines(cx), cx.now_ms) } else { None };
+        let lamps = if cx.th.touch() { idle::lamps_deadline(&idle::lines(cx), cx.now_ms) } else { None };
         match (timer, lamps) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

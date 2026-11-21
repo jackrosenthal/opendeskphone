@@ -16,7 +16,16 @@ name = "dphone"
 path = "src/main.rs"
 
 [features]
-default = ["web"]
+default = ["web", "d80"]
+# The D80: its touch skin (`opendeskphone-ui`'s feature `touch`).  On by
+# default, so that the simulator and the tests have every model.  The
+# firmware images of the phones with keys (D40 to D70) are built without
+# it (`--no-default-features --features web`): their flash has no room for
+# the D80's fonts and artwork, and `dphone` built so does not start as a
+# D80.  The Nix build fails if that binary has the touch skin
+# (nix/workspace.nix).  See "Phone families" in
+# docs/src/content/docs/dev-guide/building.md.
+d80 = ["opendeskphone-ui/touch"]
 # The web UI.  A feature only so that the rest can be built and tested while
 # that crate is being reworked; every image carries it.
 web = ["dep:opendeskphone-web"]
@@ -37,7 +46,8 @@ opendeskphone-dpma = { path = "../opendeskphone-dpma" }
 async-trait = "0.1"
 opendeskphone-apps = { path = "../opendeskphone-apps", features = ["ui", "compile"] }
 opendeskphone-web = { path = "../opendeskphone-web", optional = true }
-opendeskphone-ui = { path = "../opendeskphone-ui" }
+# Without its default features: the touch skin is this crate's `d80`.
+opendeskphone-ui = { path = "../opendeskphone-ui", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 opendeskphone-vpm = { path = "../opendeskphone-vpm" }

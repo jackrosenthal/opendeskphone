@@ -91,11 +91,11 @@ impl Screen for AppScreen {
         self.view.take_dirty();
         self.area = area;
         let mut tree = self.view.batch_quiet();
-        if cx.th.touch {
+        if cx.th.touch() {
             c.hit(area, Hit::Custom(0));
         }
         appview_impl::render(&mut tree, c, cx.th, area, cx.now_ms);
-        if cx.th.touch {
+        if cx.th.touch() {
             // There is no X key: the way back is a button, over the
             // corner of the view that `Metrics::back_width` tells the app
             // to keep free.  It is the `Cancel` key, the app's if claimed.

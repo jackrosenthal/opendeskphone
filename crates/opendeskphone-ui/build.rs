@@ -6,6 +6,12 @@
 //! (Floating point is used here, on the build host.)
 //!
 //! Output: `$OUT_DIR/assets_gen.rs` plus one blob per table.
+//!
+//! The touch skin's tables (`FONTS_TOUCH`, `ICONS_TOUCH`, and
+//! `ICON_DATA_TOUCH`) are made only with the feature `touch`: a build
+//! without it has nothing of that skin.  Its icon data begins with
+//! [`TOUCH_MARK`], by which a program that has the skin is told from one
+//! that has not.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -116,6 +122,14 @@ const CLASSES: [(&str, [u32; 4], bool, bool); 3] = [
 const FMT_MASK4: u8 = 0;
 const FMT_GRAY2: u8 = 1;
 const FMT_RGBA_RLE: u8 = 2;
+
+/// The first bytes of the touch skin's icon data, before the first icon
+/// (no record points at them).  A program has these bytes exactly when it
+/// has the touch skin; the Nix build looks for them in the firmware binary
+/// (`touchSkinMark` in nix/workspace.nix, which must say the same), so
+/// that the binary of the phones with keys cannot come to carry the skin
+/// unnoticed.
+const TOUCH_MARK: &[u8] = b"opendeskphone-ui touch skin icons";
 
 fn charset() -> Vec<char> {
     let mut v: Vec<char> = (32u32..127).chain(160..256).filter_map(char::from_u32).collect();
@@ -323,6 +337,12 @@ fn encode(rgba: &[u8], fmt: u8, invert: bool, on_white: bool) -> Vec<u8> {
     }
 }
 
+/// True for a skin this build has: every skin but the touch skin, which
+/// is the feature `touch`.
+fn built(skin: &str) -> bool {
+    skin != "TOUCH" || env::var_os("CARGO_FEATURE_TOUCH").is_some()
+}
+
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let assets = manifest.join("../../assets");
@@ -345,7 +365,7 @@ fn main() {
     // Fonts (deduplicated by file and size; the outline fonts' tables are
     // named after their skin).
     let mut done: Vec<(&str, u32, bool, String)> = Vec::new();
-    for (si, skin) in SKINS.iter().enumerate() {
+    for (si, skin) in SKINS.iter().enumerate().filter(|(_, skin)| built(skin)) {
         let mut names: Vec<String> = Vec::new();
         for (file, px, digits) in FONTS[si] {
             let key = (file, px as u32, digits);
@@ -379,8 +399,10 @@ fn main() {
             }
         }
     }
-    for (si, skin) in SKINS.iter().enumerate() {
-        let mut blob: Vec<u8> = Vec::new();
+    for (si, skin) in SKINS.iter().enumerate().filter(|(_, skin)| built(skin)) {
+        // (The icons' offsets are counted from the start of the blob,
+        // mark and all.)
+        let mut blob: Vec<u8> = if *skin == "TOUCH" { TOUCH_MARK.to_vec() } else { Vec::new() };
         let mut recs = String::new();
         // (name, file, pixel height or `None` for the file's own, format,
         // invert, blend with white).

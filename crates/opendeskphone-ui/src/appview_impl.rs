@@ -154,7 +154,7 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
             let mut sy = node.scroll_y as i32;
             // Follow the focused descendant.  (Touch: once, when the
             // focus has moved; after that a finger scrolls.)
-            if (!th.touch || tree.follow_focus)
+            if (!th.touch() || tree.follow_focus)
                 && let Some(f) = tree.focus.filter(|f| *f != id && is_descendant(tree, *f, id))
             {
                 let top = offset_within(tree, f, id);
@@ -260,7 +260,7 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
                     x += widths[ci];
                     match cells.get(ci) {
                         Some(Cell::Text(t)) => {
-                            c.text_in(th.font(col.font), cr.inset_xy(if th.touch { th.pad } else { th.pad.min(4) }, 0), t, row_fg, halign(col.align))
+                            c.text_in(th.font(col.font), cr.inset_xy(if th.touch() { th.pad } else { th.pad.min(4) }, 0), t, row_fg, halign(col.align))
                         }
                         Some(Cell::Icon(name)) => {
                             if let Some(icon) = th.icon(name) {

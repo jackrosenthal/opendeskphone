@@ -258,6 +258,13 @@ async fn run_async(opts: Options) -> i32 {
     }
     paths.apps = opts.apps_root.clone();
     let model = resolve_model(&opts);
+    // The firmware of the phones with keys is built without the D80's
+    // touch skin (the feature `d80`), and has nothing to draw a D80's
+    // screen with.
+    if model.family() == crate::model::Family::Touch && !cfg!(feature = "d80") {
+        error!("this dphone is built for the phones with keys (without the feature `d80`): it cannot run as a {model}");
+        return 1;
+    }
     let recovery = opts.recovery.clone().filter(|v| !v.is_empty());
     let beat_fd = opts.heartbeat_fd;
     // The descriptor is ours alone; children must not inherit it.
