@@ -1,8 +1,18 @@
 //! The dialer and the call screen.
+//!
+//! On the touch skin (D80) both are made of buttons ([`dialpad`]), and
+//! have no softkeys.  The dialer has a dial pad whose keys are the digit
+//! keys, the number with a button that deletes, the accounts to choose
+//! from, and the buttons that call.  The call screen has a card for each
+//! call (a touch selects the call), the lines, and a button for each
+//! thing a key does during a call on a phone that has keys: where there
+//! is such a key the button is that key ([`Hit::Key`]), so that what it
+//! does is in one place.
 
+use super::dialpad::Look;
 use super::*;
 use crate::gfx::Rgb;
-use opendeskphone_state::{AccountId, AudioPath, Call, CallId, CallState, Direction, EndCause, Tone};
+use opendeskphone_state::{AccountId, AudioPath, Call, CallId, CallState, Direction, EndCause, LampColor, Tone};
 
 /// Why the dialer is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,7 +138,11 @@ impl Screen for Dialer {
     fn tag(&self) -> Tag {
         Tag::Dialer
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the screen has its own buttons for these.
+        if cx.th.touch {
+            return Vec::new();
+        }
         match self.purpose {
             Purpose::Transfer(_) => vec![soft(1, tr::TRANSFER), soft(2, tr::CONSULT), soft(3, tr::DELETE), soft(4, tr::CANCEL)],
             _ => vec![
@@ -214,6 +228,29 @@ impl Screen for Dialer {
             _ => Nav::Ignored,
         }
     }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Custom(HIT_DELETE) => self.softkey(cx, 3),
+            Hit::Custom(n) if n >= HIT_ACCOUNT => {
+                if let Some(a) = cx.st.accounts.accounts.get((n - HIT_ACCOUNT) as usize) {
+                    self.account = Some(a.id);
+                }
+                Nav::Stay
+            }
+            _ => Nav::Ignored,
+        }
+    }
+    fn long_press(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            // A finger that stays on the delete button deletes it all.
+            Hit::Custom(HIT_DELETE) => {
+                self.text.clear();
+                self.last_key_ms = cx.now_ms;
+                Nav::Stay
+            }
+            _ => Nav::Ignored,
+        }
+    }
     fn hook(&mut self, cx: &Cx, off_hook: bool) -> Nav {
         if off_hook {
             if self.text.is_empty() {
@@ -239,13 +276,16 @@ impl Screen for Dialer {
     fn wallpaper(&self) -> bool {
         true
     }
-    fn draw(&mut self, cx: &Cx, c: &mut Canvas, _area: IRect) {
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
         let label = match self.purpose {
             Purpose::Transfer(_) => tr::TRANSFER_TO,
             Purpose::Conference(_) => tr::CONFERENCE_WITH,
             _ => tr::NEW_CALL_TITLE,
         };
+        if th.touch {
+            return self.draw_touch(cx, c, area, label);
+        }
         call_header(cx, c, label, &[]);
         idle::draw_tabs(cx, c, th.tab_x);
         // Stock: the digits appear on the first line of a call card.
@@ -287,7 +327,101 @@ impl Screen for Dialer {
     }
 }
 
+/// Touch: the regions of the dialer's own ([`Hit::Custom`]): the delete
+/// button, and, from `HIT_ACCOUNT`, the accounts in their order.
+const HIT_DELETE: u32 = 1;
+const HIT_ACCOUNT: u32 = 100;
+
 impl Dialer {
+    /// The touch skin's dialer: under the title bar (whose back button
+    /// leaves), the accounts when there is more than one, the number, the
+    /// dial pad, and the buttons that call.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, area: IRect, label: &str) {
+        let th = cx.th;
+        let m = dialpad::MARGIN;
+        let (title, body) = area.split_top(th.title_h);
+        widgets::title_bar(c, th, title, label);
+        if !matches!(self.purpose, Purpose::Transfer(_)) {
+            let w = th.px(116);
+            let r = IRect::new(title.right() - m - w, title.y + th.px(2), w, title.h - th.px(4));
+            dialpad::control(c, th, r, "contacts", tr::CONTACTS, Look::Plain, Hit::Soft(5));
+        }
+        let inner = IRect::new(body.x + m, body.y + th.pad, body.w - 2 * m, body.h - th.pad - m);
+
+        // The account the call goes out on, when there is one to choose.
+        let accounts = &cx.st.accounts.accounts;
+        let chosen = self
+            .account
+            .or(cx.st.accounts.default_account)
+            .filter(|id| cx.st.accounts.get(*id).is_some())
+            .or(accounts.first().map(|a| a.id));
+        let mut y = inner.y;
+        if accounts.len() > 1 {
+            let row = IRect::new(inner.x, y, inner.w, th.touch_min);
+            for (i, (a, r)) in accounts.iter().zip(dialpad::columns(row, accounts.len(), th.px(6))).enumerate() {
+                let label = if a.label.is_empty() { &a.user } else { &a.label };
+                let look = if Some(a.id) == chosen { Look::On } else { Look::Plain };
+                dialpad::control(c, th, r, "", label, look, Hit::Custom(HIT_ACCOUNT + i as u32));
+            }
+            y = row.bottom() + th.pad;
+        }
+
+        // The number, as on a call card, with the delete button at its
+        // right.
+        let field = IRect::new(inner.x, y, inner.w, th.px(64));
+        c.fill_round_aa(field, th.px(6), th.card);
+        let (text, del) = field.split_right(th.px(52));
+        let text = IRect { x: text.x + th.pad, w: text.w - th.pad, ..text };
+        // The large digits while they fit, then the smaller ones, and then
+        // the end of the number.
+        let f = if th.font(Font::Large).width(&self.text) < text.w - th.px(4) { th.font(Font::Large) } else { th.number_font() };
+        let mut shown: &str = &self.text;
+        while f.width(shown) > text.w - th.px(4) && !shown.is_empty() {
+            shown = &shown[shown.chars().next().map(|c| c.len_utf8()).unwrap_or(1)..];
+        }
+        let base = text.y + (text.h - f.height()) / 2 + f.ascent as i32;
+        let w = c.text(f, text.x, base, shown, th.fg);
+        c.fill(IRect::new(text.x + w + th.px(1), text.y + text.h / 4, th.px(1), text.h / 2), th.fg);
+        if let Some(icon) = th.icon("backspace") {
+            let dim = crate::gfx::mix(th.card, th.fg, 3);
+            c.icon_in(icon, del, if self.text.is_empty() { dim } else { th.fg });
+        }
+        if !self.text.is_empty() {
+            c.hit(IRect { x: del.x - th.px(4), w: del.w + th.px(4), ..del }, Hit::Custom(HIT_DELETE));
+        }
+
+        // The buttons that call, at the bottom, and the pad between.
+        let actions = IRect::new(inner.x, inner.bottom() - th.px(56), inner.w, th.px(56));
+        let gap = th.pad;
+        let empty = self.text.is_empty();
+        let go = |on: bool| if on { Look::Go } else { Look::Off };
+        match self.purpose {
+            Purpose::Transfer(_) => {
+                let cols = dialpad::columns(actions, 2, gap);
+                dialpad::control(c, th, cols[0], "transfer", tr::TRANSFER, go(!empty), Hit::Soft(1));
+                let look = if empty { Look::Off } else { Look::Plain };
+                dialpad::control(c, th, cols[1], "phone-out", tr::CONSULT, look, Hit::Soft(2));
+            }
+            Purpose::Conference(_) => dialpad::control(c, th, actions, "phone", tr::DIAL, go(!empty), Hit::Soft(1)),
+            Purpose::Call => {
+                // Speaker and headset are the keys: with a number they
+                // call it there, and without one they go off-hook there.
+                let side = th.px(80);
+                let (speaker, rest) = actions.split_left(side);
+                let (call, headset) = rest.split_right(side);
+                let call = call.inset_xy(gap, 0);
+                let look = |path| if self.live == Some(path) { Look::On } else { Look::Plain };
+                dialpad::control(c, th, speaker, "speaker", tr::VOL_SPEAKER, look(AudioPath::Speaker), Hit::Key(Key::Speaker));
+                dialpad::control(c, th, headset, "headset", tr::VOL_HEADSET, look(AudioPath::Headset), Hit::Key(Key::Headset));
+                dialpad::control(c, th, call, "phone", if empty { tr::REDIAL } else { tr::DIAL }, Look::Go, Hit::Soft(1));
+            }
+        }
+        let space = IRect::new(inner.x, field.bottom() + gap, inner.w, actions.y - gap - (field.bottom() + gap));
+        let key_h = ((space.h - 3 * th.pad) / 4).min(th.px(84));
+        let h = dialpad::pad_h(th, key_h);
+        dialpad::pad(c, th, IRect::new(space.x, space.y + (space.h - h) / 2, space.w, h));
+    }
+
     fn dial_or_switch(&mut self, cx: &Cx, path: AudioPath) -> Nav {
         if self.text.is_empty() {
             if self.live.is_none() {
@@ -351,8 +485,12 @@ pub(crate) fn call_status(call: &Call, now_ms: u64) -> (String, &'static str) {
 /// (x 0..295, y 0..39 on color, with a black line under it; the black bar
 /// on gray).  `flags` are icons drawn at its right end.
 pub(crate) fn call_header(cx: &Cx, c: &mut Canvas, text: &str, flags: &[&str]) {
+    call_header_in(cx, c, cx.th.header_rect(), text, flags);
+}
+
+/// [`call_header`], in `r` (the touch skin's is as wide as the screen).
+fn call_header_in(cx: &Cx, c: &mut Canvas, r: IRect, text: &str, flags: &[&str]) {
     let th = cx.th;
-    let r = th.header_rect();
     if th.gray {
         idle::gray_header(cx, c, r, Some(text));
     } else {
@@ -495,7 +633,17 @@ pub(crate) struct CallScreen {
     /// The call the softkeys act on (follows the focused call until the
     /// user moves it).
     sel: Option<CallId>,
+    /// Touch: the dial pad is shown in place of the buttons, for DTMF.
+    keypad: bool,
+    /// Touch: the digits sent since the dial pad was shown.
+    dtmf: String,
 }
+
+/// Touch: the regions of the call screen's own ([`Hit::Custom`]): the
+/// button that shows and hides the dial pad, and, from `HIT_CARD`, the
+/// card of the call with that id.
+const HIT_KEYPAD: u32 = 1;
+const HIT_CARD: u32 = 1000;
 
 impl CallScreen {
     fn selected<'a>(&self, cx: &'a Cx) -> Option<&'a Call> {
@@ -535,6 +683,10 @@ impl Screen for CallScreen {
         Tag::Call
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the screen has its own buttons for these.
+        if cx.th.touch {
+            return Vec::new();
+        }
         let Some(call) = self.selected(cx) else { return Vec::new() };
         let other = self.other(cx, call.id).is_some();
         match &call.state {
@@ -617,7 +769,11 @@ impl Screen for CallScreen {
                 _ => {}
             },
             Key::Digit(_) | Key::Star | Key::Pound if call.state.has_media() => {
-                cx.post(Command::Dtmf { call: cid, digit: key.dial_char().unwrap_or('0') });
+                let digit = key.dial_char().unwrap_or('0');
+                cx.post(Command::Dtmf { call: cid, digit });
+                if self.keypad && self.dtmf.len() < 64 {
+                    self.dtmf.push(digit);
+                }
             }
             Key::Digit(_) | Key::Star | Key::Pound if call.state.is_held() => {
                 let mut d = Dialer::new(Purpose::Conference(cid), Some(call.account));
@@ -639,11 +795,35 @@ impl Screen for CallScreen {
         }
         Nav::Stay
     }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Custom(HIT_KEYPAD) => {
+                self.keypad = !self.keypad;
+                self.dtmf.clear();
+                Nav::Stay
+            }
+            // A call's card: the buttons act on that call from now on.
+            Hit::Custom(n) if n >= HIT_CARD => {
+                let id = CallId(n - HIT_CARD);
+                if cx.st.calls.live().any(|c| c.id == id) {
+                    if self.sel != Some(id) {
+                        self.dtmf.clear();
+                    }
+                    self.sel = Some(id);
+                }
+                Nav::Stay
+            }
+            _ => Nav::Ignored,
+        }
+    }
     fn wallpaper(&self) -> bool {
         true
     }
-    fn draw(&mut self, cx: &Cx, c: &mut Canvas, _area: IRect) {
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
+        if th.touch {
+            return self.draw_touch(cx, c, area);
+        }
         let Some(sel) = self.selected(cx) else { return };
         let (label, _, _) = call_parts(sel, cx.now_ms);
         let mut flags: Vec<&str> = Vec::new();
@@ -694,6 +874,222 @@ impl Screen for CallScreen {
         }
     }
     fn deadline(&self, cx: &Cx) -> Option<u64> {
-        cx.st.calls.live().any(|c| c.connected_mono_ms.is_some()).then(|| cx.now_ms + 1000 - cx.now_ms % 1000)
+        let timer = cx.st.calls.live().any(|c| c.connected_mono_ms.is_some()).then(|| cx.now_ms + 1000 - cx.now_ms % 1000);
+        // Touch: and when a line's lamp next blinks.
+        let lamps = if cx.th.touch { idle::lamps_deadline(&idle::lines(cx), cx.now_ms) } else { None };
+        match (timer, lamps) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+/// Touch: the number and the name a call's card shows (stock: the number
+/// on the first line, the name on the second; a call with no name shows
+/// the number alone).
+fn card_lines(call: &Call) -> (String, String) {
+    let name = party_name(call);
+    let number = if call.remote.number.is_empty() { name.clone() } else { call.remote.number.clone() };
+    let second = if name == number { String::new() } else { name };
+    (number, second)
+}
+
+/// Touch: the card of `call` in `r`: its icon, number, and name, and at
+/// the right its state and timer.  `marked` outlines it as the call the
+/// buttons act on.
+fn touch_card(cx: &Cx, c: &mut Canvas, r: IRect, call: &Call, marked: bool) {
+    let th = cx.th;
+    let fill = match call.state {
+        CallState::Ringing => th.card_ringing,
+        CallState::Held { .. } => th.card_held,
+        _ => th.card,
+    };
+    let rad = th.px(6);
+    if marked {
+        c.fill_round_aa(r, rad, th.fg);
+        c.fill_round_aa(r.inset(th.px(2)), rad - th.px(2), fill);
+    } else {
+        c.fill_round_aa(r, rad, fill);
+    }
+    let (label, icon, timer) = call_parts(call, cx.now_ms);
+    let (ic, rest) = r.inset_xy(th.pad, th.px(6)).split_left(th.px(32));
+    if let Some(i) = th.icon(icon) {
+        c.icon_in(i, ic, th.fg);
+    }
+    // At the right: the state over the timer.
+    let small = th.font(Font::Small);
+    let side_w = small.width(&label).max(th.number_font().width(timer.as_deref().unwrap_or(""))).min(rest.w / 2);
+    let (text, side) = rest.split_right(side_w);
+    let text = IRect { x: text.x + th.px(4), w: text.w - th.pad - th.px(4), ..text };
+    match &timer {
+        Some(t) => {
+            let (top, bottom) = side.split_top(side.h / 2);
+            c.text_in(small, top, &label, th.fg, HAlign::Right);
+            c.text_in(th.number_font(), bottom, t, th.fg, HAlign::Right);
+        }
+        None => c.text_in(small, side, &label, th.fg, HAlign::Right),
+    }
+    let (number, name) = card_lines(call);
+    let big = if th.font(Font::Large).width(&number) <= text.w { th.font(Font::Large) } else { th.number_font() };
+    if name.is_empty() {
+        c.text_in(big, text, &number, th.fg, HAlign::Left);
+    } else {
+        let bold = th.font(Font::Bold);
+        let block = big.height() + bold.height();
+        let top = text.y + (text.h - block) / 2;
+        c.text_in(big, IRect::new(text.x, top, text.w, big.height()), &number, th.fg, HAlign::Left);
+        c.text_in(bold, IRect::new(text.x, top + big.height(), text.w, bold.height()), &name, th.fg, HAlign::Left);
+    }
+}
+
+impl CallScreen {
+    /// The touch skin's call screen.  From the top: the state of the
+    /// selected call, the lines, and the calls' cards; from the bottom:
+    /// the buttons that answer or end, and above them the buttons for
+    /// what the keys of a phone that has keys do during a call, or, when
+    /// it is asked for, the dial pad.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        let st = cx.st;
+        let m = dialpad::MARGIN;
+        let Some(sel) = self.selected(cx) else { return };
+        let (label, _, _) = call_parts(sel, cx.now_ms);
+        let mut flags: Vec<&str> = Vec::new();
+        if st.audio.muted || sel.muted {
+            flags.push("mute");
+        }
+        if sel.srtp {
+            flags.push("lock");
+        }
+        let (header, body) = area.split_top(th.header_h);
+        call_header_in(cx, c, header, &label, &flags);
+        let inner = IRect::new(body.x + m, body.y + th.px(4), body.w - 2 * m, body.h - th.px(4) - m);
+        let gap = th.pad;
+        let state = &sel.state;
+        let held = state.is_held();
+        let ringing = *state == CallState::Ringing;
+        let established = state.is_established();
+        let can_type = state.has_media() || held;
+        let keypad = self.keypad && can_type;
+
+        // The lines: what a line key does during a call (to the call on
+        // it, a new call on a free line, a watched contact) is a touch.
+        let mut y = inner.y;
+        let lines = idle::lines(cx);
+        if !lines.is_empty() {
+            idle::lines_strip(cx, c, IRect::new(inner.x, y, inner.w, th.touch_min), &lines);
+            y += th.touch_min + th.px(6);
+        }
+
+        // One card per call, the selected one first; with the dial pad
+        // there is room for that one only.
+        let mut calls: Vec<&Call> = vec![sel];
+        calls.extend(st.calls.live().filter(|c| c.id != sel.id));
+        let fit = if keypad { 1 } else { 3 };
+        let many = calls.len() > 1;
+        for call in calls.iter().take(fit) {
+            let r = IRect::new(inner.x, y, inner.w, th.px(80));
+            touch_card(cx, c, r, call, many && call.id == sel.id);
+            c.hit(r, Hit::Custom(HIT_CARD.saturating_add(call.id.0)));
+            y = r.bottom() + th.px(6);
+        }
+        if calls.len() > fit {
+            let f = th.font(Font::Small);
+            let s = format!("+{}", calls.len() - fit);
+            let w = f.width(&s);
+            let x = header.right() - m - w - flags.len() as i32 * (th.icon + th.pad);
+            c.text_in(f, IRect::new(x, header.y, w, header.h), &s, th.title_fg, HAlign::Left);
+        }
+
+        // The bottom row: a ringing call is answered, silenced, or
+        // refused; any other is ended.
+        let bottom = IRect::new(inner.x, inner.bottom() - th.px(60), inner.w, th.px(60));
+        if keypad {
+            // What was sent, the pad, and the way back to the buttons.
+            let sent = IRect::new(inner.x, y, inner.w, th.px(32));
+            let f = th.number_font();
+            let mut shown: &str = &self.dtmf;
+            while f.width(shown) > sent.w && !shown.is_empty() {
+                shown = &shown[1..];
+            }
+            c.text_in(f, sent, shown, th.wallpaper_fg, HAlign::Center);
+            let space = IRect::new(inner.x, sent.bottom(), inner.w, bottom.y - gap - sent.bottom());
+            let key_h = ((space.h - 3 * th.pad) / 4).min(th.px(84));
+            let h = dialpad::pad_h(th, key_h);
+            dialpad::pad(c, th, IRect::new(space.x, space.y + (space.h - h) / 2, space.w, h));
+            let cols = dialpad::columns(bottom, 2, gap);
+            dialpad::control(c, th, cols[0], "keypad", tr::HIDE_KEYPAD, Look::Plain, Hit::Custom(HIT_KEYPAD));
+            dialpad::control(c, th, cols[1], "phone", tr::END_CALL, Look::Stop, Hit::Soft(10));
+            return;
+        }
+        if ringing {
+            let cols = dialpad::columns(bottom, 3, gap);
+            dialpad::control(c, th, cols[0], "phone", tr::ANSWER, Look::Go, Hit::Soft(1));
+            dialpad::control(c, th, cols[1], "", tr::IGNORE, Look::Plain, Hit::Soft(2));
+            dialpad::control(c, th, cols[2], "", tr::REJECT, Look::Stop, Hit::Soft(3));
+        } else {
+            dialpad::control(c, th, bottom, "phone", tr::END_CALL, Look::Stop, Hit::Soft(10));
+        }
+
+        // The buttons, three to a row.  The audio buttons show what the
+        // lamps of the keys show.
+        let (speaker, headset, _) = opendeskphone_state::audio_lamps(&st.audio, &st.calls);
+        let look = |on: bool, enabled: bool| match (enabled, on) {
+            (false, _) => Look::Off,
+            (true, true) => Look::On,
+            (true, false) => Look::Plain,
+        };
+        let other = self.other(cx, sel.id).is_some();
+        let (cell_h, rows) = (th.px(58), 3);
+        let grid = IRect::new(inner.x, bottom.y - gap - rows * cell_h - (rows - 1) * gap, inner.w, rows * cell_h + (rows - 1) * gap);
+        let cells: Vec<IRect> = (0..rows)
+            .flat_map(|row| dialpad::columns(IRect::new(grid.x, grid.y + row * (cell_h + gap), grid.w, cell_h), 3, gap))
+            .collect();
+        dialpad::control(c, th, cells[0], "mute", tr::MUTE, look(st.audio.muted || sel.muted, true), Hit::Key(Key::Mute));
+        dialpad::control(c, th, cells[1], "keypad", tr::KEYPAD, look(false, can_type), Hit::Custom(HIT_KEYPAD));
+        dialpad::control(
+            c,
+            th,
+            cells[2],
+            "speaker",
+            tr::VOL_SPEAKER,
+            look(speaker.color != LampColor::Off, true),
+            Hit::Key(Key::Speaker),
+        );
+        dialpad::control(
+            c,
+            th,
+            cells[3],
+            "hold",
+            if held { tr::RESUME } else { tr::HOLD },
+            look(held, held || *state == CallState::Active),
+            Hit::Key(Key::Hold),
+        );
+        if other {
+            dialpad::control(c, th, cells[4], "", tr::SWAP, Look::Plain, Hit::Soft(14));
+        } else {
+            dialpad::control(c, th, cells[4], "phone-out", tr::NEW_CALL, look(false, established), Hit::Soft(15));
+        }
+        dialpad::control(
+            c,
+            th,
+            cells[5],
+            "headset",
+            tr::VOL_HEADSET,
+            look(headset.color != LampColor::Off, true),
+            Hit::Key(Key::Headset),
+        );
+        dialpad::control(c, th, cells[6], "transfer", tr::TRANSFER, look(false, established || ringing), Hit::Key(Key::Transfer));
+        if sel.in_conference && *state == CallState::Active {
+            dialpad::control(c, th, cells[7], "conference", tr::SPLIT, Look::Plain, Hit::Soft(13));
+        } else {
+            let label = if other { tr::JOIN } else { tr::CONFERENCE };
+            dialpad::control(c, th, cells[7], "conference", label, look(false, established), Hit::Key(Key::Conference));
+        }
+        // The volume keys (they raise the volume popup, which has the
+        // level).
+        let volume = dialpad::columns(cells[8], 2, gap);
+        dialpad::control(c, th, volume[0], "", tr::VOLUME_DOWN, Look::Plain, Hit::Key(Key::VolumeDown));
+        dialpad::control(c, th, volume[1], "", tr::VOLUME_UP, Look::Plain, Hit::Key(Key::VolumeUp));
     }
 }

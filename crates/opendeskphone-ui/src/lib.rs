@@ -56,5 +56,5 @@ pub use ui::{IdleSoftkey, Ui, UiConfig, UiHandle, TRIAL_COVER_MAX_SECS};
 /// relative to this area, not to the app content area.
 pub fn idle_app_area(model: opendeskphone_state::Model) -> opendeskphone_state::Size {
     let th = skin::Theme::for_model(model);
-    opendeskphone_state::Size::new(th.idle_tab_x as u16, screens::idle::idle_app_h(th) as u16)
+    opendeskphone_state::Size::new(screens::idle::idle_app_w(th) as u16, screens::idle::idle_app_h(th) as u16)
 }

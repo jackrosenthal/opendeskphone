@@ -144,7 +144,7 @@ impl Rig {
             }
         });
         self.store.update::<Keys, _>(|k| {
-            for i in 0..model.line_keys() {
+            for i in 0..model.lines() {
                 let binding = match i {
                     0 | 1 => LineKeyBinding::Account(AccountId(i)),
                     2 | 3 => LineKeyBinding::Blf(format!("blf{}", i - 2)),

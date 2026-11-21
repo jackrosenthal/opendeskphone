@@ -254,3 +254,12 @@ pub const BT_PAIR_WITH: &str = "Pair with";
 pub const BT_COMPARE: &str = "Pair if the headset shows this number.";
 pub const BT_ASKS: &str = "This device asks to pair with the phone.";
 pub const BT_TYPE_PIN: &str = "Type the headset's PIN, which is often 0000.";
+
+// Touch (D80): the idle screen, the dialer, and the call screen.
+pub const KEYPAD: &str = "Keypad";
+pub const HIDE_KEYPAD: &str = "Hide Keypad";
+pub const MUTE: &str = "Mute";
+pub const VOLUME_DOWN: &str = "Vol \u{2013}";
+pub const VOLUME_UP: &str = "Vol +";
+pub const LINE_AVAILABLE: &str = "Available";
+pub const LINE_UNAVAILABLE: &str = "Unavailable";

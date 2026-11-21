@@ -1,9 +1,15 @@
 //! The idle (home) screen: clock, status, and line-key tabs.
+//!
+//! On the touch skin (D80) the screen is upright and has no keys beside
+//! it: from the top, the status icons, the clock and the date, an app's
+//! idle view, the phone's lines as tiles (a touch on one is its line key),
+//! and a button that opens the dialer; the softkey buttons are below.
 
 use super::*;
 use crate::gfx::Rgb;
 use crate::IdleSoftkey;
-use opendeskphone_state::{AccountId, Accounts, BlfState, LineKeyBinding, Network, Registration};
+use opendeskphone_hal::Blinker;
+use opendeskphone_state::{AccountId, Accounts, BlfState, Blink, LampColor, LampState, LineKeyBinding, Network, Registration};
 
 pub(crate) struct Idle;
 
@@ -131,12 +137,19 @@ pub(crate) fn draw_status_icons(cx: &Cx, c: &mut Canvas, r: IRect, fg: Rgb) {
     let old = c.push_clip(r);
     for (name, count) in status_icons(cx) {
         let Some(icon) = th.icon(name) else { continue };
+        let x0 = x;
         c.icon(icon, x, r.y + (r.h - icon.height()) / 2, fg);
         x += icon.width();
         if count > 0 {
             let s = count.to_string();
             x += gap;
             x += c.text(f, x, r.y + (r.h - f.height()) / 2 + f.ascent as i32, &s, fg);
+        }
+        // Touch: the message-waiting icon is the Messages key of a phone
+        // that has one.
+        if th.touch && name == "voicemail" {
+            let w = (x - x0 + 2 * gap).max(th.touch_min);
+            c.hit(IRect::new(((x0 + x - w) / 2).max(0), r.y, w, r.h.max(th.touch_min)), Hit::Key(Key::Messages));
         }
         x += after;
     }
@@ -233,9 +246,7 @@ pub(crate) struct ClockLayout {
 }
 
 pub(crate) fn clock_layout(th: &Theme, area: IRect) -> ClockLayout {
-    // (The touch skin has no stock clock either: its is placed as the
-    // gray skins' is, until its idle screen is designed.)
-    if !th.gray && !th.touch {
+    if !th.gray {
         return ClockLayout { time_right: 228, time_base: 152, mer_x: 240, date_cx: 148, date_base: 196 };
     }
     // Gray: no stock clock to match (stock shows a logo with a small time
@@ -258,6 +269,211 @@ pub(crate) fn clock_layout(th: &Theme, area: IRect) -> ClockLayout {
 /// Height of the idle-screen area offered to an app's idle view.
 pub(crate) fn idle_app_h(th: &Theme) -> i32 {
     if th.gray { 2 * th.line_h } else { th.px(36) }
+}
+
+/// Width of the idle-screen area offered to an app's idle view: the
+/// width left of the tabs, and on the touch skin, which has its lines
+/// below, the screen's.
+pub(crate) fn idle_app_w(th: &Theme) -> i32 {
+    if th.touch { th.width } else { th.idle_tab_x }
+}
+
+// ----------------------------------------------------------------- touch
+
+/// Touch: the region of the idle screen's that opens the dialer.
+const HIT_NEW_CALL: u32 = 1;
+
+/// One of the phone's lines as the touch skin shows it.
+pub(crate) struct Line {
+    /// Its line key is `Key::Line(n)`.
+    pub n: u8,
+    pub label: String,
+    /// What the line is doing, in words.
+    pub status: String,
+    pub icon: &'static str,
+    /// What the lamp of its line key shows on a model that has one.
+    pub lamp: LampState,
+}
+
+/// The lines that are in use (an account or a watched contact), from the
+/// key state, or from the accounts while the call core has not published
+/// keys yet.
+pub(crate) fn lines(cx: &Cx) -> Vec<Line> {
+    let st = cx.st;
+    let registration = |id: AccountId| match st.accounts.get(id).map(|a| &a.registration) {
+        Some(Registration::Registered { .. }) => tr::REGISTERED,
+        Some(Registration::Registering) => tr::REGISTERING,
+        Some(Registration::Disabled) => tr::DISABLED,
+        _ => tr::NOT_REGISTERED,
+    };
+    let tabs = line_tabs(cx);
+    if st.keys.line_keys.is_empty() {
+        let accounts = st.accounts.accounts.iter().zip(tabs).enumerate();
+        return accounts
+            .map(|(i, (a, tab))| Line {
+                n: i as u8 + 1,
+                label: tab.label,
+                status: registration(a.id).to_string(),
+                icon: tab.icon,
+                lamp: LampState::OFF,
+            })
+            .collect();
+    }
+    let keys = st.keys.line_keys.iter().zip(tabs);
+    keys.filter_map(|(k, tab)| {
+        let status = match &k.binding {
+            LineKeyBinding::Account(id) => match k.calls.first().and_then(|call| st.calls.get(*call)) {
+                Some(call) => calls::call_parts(call, cx.now_ms).0,
+                None => registration(*id).to_string(),
+            },
+            LineKeyBinding::Blf(entry) => {
+                let e = st.presence.get(entry);
+                match e.map(|e| e.state).unwrap_or_default() {
+                    BlfState::Ringing | BlfState::OnHoldRinging => tr::RINGING.to_string(),
+                    BlfState::InUse => tr::BUSY.to_string(),
+                    BlfState::OnHold => tr::ON_HOLD.to_string(),
+                    BlfState::Idle => match e.map(|e| e.status_text.as_str()) {
+                        Some(text) if !text.is_empty() => text.to_string(),
+                        _ => tr::LINE_AVAILABLE.to_string(),
+                    },
+                    _ => tr::LINE_UNAVAILABLE.to_string(),
+                }
+            }
+            LineKeyBinding::Unused => return None,
+        };
+        Some(Line { n: k.index + 1, label: tab.label, status, icon: tab.icon, lamp: k.lamp })
+    })
+    .collect()
+}
+
+/// The color a lamp shows at `now_ms`: none while it is off, or in the
+/// dark part of its blinking.
+fn lamp_color(th: &Theme, lamp: LampState, now_ms: u64) -> Option<Rgb> {
+    let color = match lamp.color {
+        LampColor::Off => return None,
+        LampColor::Red => th.error,
+        LampColor::Green => th.good,
+        LampColor::Amber => th.warn,
+    };
+    Blinker::phase_on(lamp.blink, now_ms).then_some(color)
+}
+
+/// When the lamps drawn for these lines next change (they blink as
+/// [`Blinker::phase_on`] has it).
+pub(crate) fn lamps_deadline(lines: &[Line], now_ms: u64) -> Option<u64> {
+    let next = |period: u64| now_ms - now_ms % period + period;
+    let lit = lines.iter().filter(|l| l.lamp.color != LampColor::Off);
+    lit.filter_map(|l| match l.lamp.blink {
+        Blink::Solid => None,
+        Blink::Slow => Some(next(500)),
+        Blink::Fast => Some(next(250)),
+        Blink::Wink if now_ms % 2000 < 125 => Some(now_ms - now_ms % 2000 + 125),
+        Blink::Wink => Some(next(2000)),
+    })
+    .min()
+}
+
+/// The lamp of a line, as a bar in `r`: in the lamp's color while it is
+/// lit, and a dim one while it is not.
+fn lamp_bar(cx: &Cx, c: &mut Canvas, r: IRect, lamp: LampState) {
+    let th = cx.th;
+    let color = lamp_color(th, lamp, cx.now_ms).unwrap_or(crate::gfx::mix(th.tab_bg, th.tab_fg, 1));
+    c.fill_round_aa(r, r.w.min(r.h) / 2, color);
+}
+
+/// Touch: a line as a tile in `r`, with its lamp, icon, label, and state.
+/// A touch on it is its line key.
+fn line_tile(cx: &Cx, c: &mut Canvas, r: IRect, line: &Line) {
+    let th = cx.th;
+    c.fill_round_aa(r, th.px(6), th.tab_bg);
+    lamp_bar(cx, c, IRect::new(r.x + th.px(5), r.y + th.pad, th.px(4), r.h - 2 * th.pad), line.lamp);
+    let mut text = IRect::new(r.x + th.px(14), r.y + th.px(6), r.w - th.px(14) - th.pad, r.h - th.px(12));
+    if let Some(icon) = th.icon(line.icon) {
+        let (ic, rest) = text.split_left(icon.width() + th.pad);
+        c.icon_in(icon, IRect { w: icon.width(), ..ic }, th.tab_fg);
+        text = rest;
+    }
+    let (top, bottom) = text.split_top(text.h / 2);
+    c.text_in(th.font(Font::Bold), top, &line.label, th.tab_fg, HAlign::Left);
+    c.text_in(th.font(Font::Small), bottom, &line.status, th.secondary, HAlign::Left);
+    c.hit(r, Hit::Key(Key::Line(line.n)));
+}
+
+/// Touch: the lines side by side across `r`, each with its label over
+/// its lamp (the call screen, where there is no room for the tiles).  A
+/// touch on one is its line key.
+pub(crate) fn lines_strip(cx: &Cx, c: &mut Canvas, r: IRect, lines: &[Line]) {
+    let th = cx.th;
+    for (line, cell) in lines.iter().zip(dialpad::columns(r, lines.len(), th.px(4))) {
+        c.fill_round_aa(cell, th.px(6), th.tab_bg);
+        let (label, lamp) = cell.inset_xy(th.px(4), th.px(4)).split_bottom(th.px(8));
+        c.text_in(th.font(Font::Normal), label, &line.label, th.tab_fg, HAlign::Center);
+        lamp_bar(cx, c, IRect::new(lamp.x + th.px(4), lamp.y + th.px(2), lamp.w - th.px(8), th.px(3)), line.lamp);
+        c.hit(cell, Hit::Key(Key::Line(line.n)));
+    }
+}
+
+impl Idle {
+    /// The touch skin's idle screen.  What is touched is laid out from
+    /// the bottom, above the softkey buttons (however many rows of them
+    /// there are); the clock has the middle of what is left.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        let m = dialpad::MARGIN;
+        let inner = IRect::new(area.x + m, area.y, area.w - 2 * m, area.h);
+        draw_status_icons(cx, c, IRect::new(inner.x - th.px(8), area.y, inner.w, th.header_h), th.wallpaper_fg);
+
+        let call = IRect::new(inner.x, area.bottom() - th.pad - th.px(52), inner.w, th.px(52));
+        dialpad::control(c, th, call, "keypad", tr::NEW_CALL, dialpad::Look::Go, Hit::Custom(HIT_NEW_CALL));
+        let mut bottom = call.y - th.pad;
+
+        let lines = lines(cx);
+        if !lines.is_empty() {
+            // Two to a row, in the order of the line keys.
+            let (gap, h) = (th.px(6), th.px(56));
+            let rows = lines.len().div_ceil(2) as i32;
+            let top = bottom - rows * h - (rows - 1) * gap;
+            let w = (inner.w - gap) / 2;
+            for (i, line) in lines.iter().enumerate() {
+                let (col, row) = ((i % 2) as i32, (i / 2) as i32);
+                line_tile(cx, c, IRect::new(inner.x + col * (w + gap), top + row * (h + gap), w, h), line);
+            }
+            bottom = top - th.pad;
+        }
+
+        if let Some(view) = cx.idle_view {
+            let app = IRect::new(area.x + (area.w - idle_app_w(th)) / 2, bottom - idle_app_h(th), idle_app_w(th), idle_app_h(th));
+            let mut tree = view.batch_quiet();
+            crate::appview_impl::render_over(&mut tree, c, th, app, cx.now_ms, th.wallpaper_fg);
+            bottom = app.y;
+        }
+
+        // The clock and the date, in the middle of what is left under the
+        // status icons.
+        let civil = cx.civil();
+        let big = th.clock_font();
+        let sub = th.date_font();
+        let clock_set = cx.st.system.time_synced || cx.unix > 1_600_000_000;
+        let time = if clock_set { civil.time(cx.cfg.time_24h) } else { "--:--".to_string() };
+        let mer = if clock_set { civil.meridiem(cx.cfg.time_24h) } else { "" };
+        let digits = big.glyph('0').map(|g| g.top as i32).unwrap_or(big.ascent as i32);
+        let top = area.y + th.header_h;
+        let block = digits + th.pad + sub.height();
+        let base = top + ((bottom - top - block) / 2).max(0) + digits;
+        let mid = area.x + area.w / 2;
+        let gap = th.px(4);
+        let tw = big.width(&time);
+        let mw = if mer.is_empty() { 0 } else { th.meridiem_font().width(mer) + gap };
+        let x = mid - (tw + mw) / 2;
+        c.text(big, x, base, &time, th.wallpaper_fg);
+        if !mer.is_empty() {
+            c.text(th.meridiem_font(), x + tw + gap, base, mer, th.wallpaper_fg);
+        }
+        if clock_set {
+            let date = civil.date();
+            c.text(sub, mid - sub.width(&date) / 2, base + th.pad + sub.ascent as i32, &date, th.wallpaper_fg);
+        }
+    }
 }
 
 impl Screen for Idle {
@@ -342,8 +558,19 @@ impl Screen for Idle {
             _ => Nav::Ignored,
         }
     }
+    fn tap(&mut self, _cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            // The dialer, with nothing off-hook: the number is typed and
+            // then called.
+            Hit::Custom(HIT_NEW_CALL) => Nav::Push(Box::new(calls::Dialer::new(calls::Purpose::Call, None))),
+            _ => Nav::Ignored,
+        }
+    }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
+        if th.touch {
+            return self.draw_touch(cx, c, area);
+        }
         // The background (wallpaper) is already painted.
         let header = th.header_rect_to(th.idle_tab_x);
         if th.gray {
@@ -376,7 +603,7 @@ impl Screen for Idle {
         let mer = if clock_set { civil.meridiem(cx.cfg.time_24h) } else { "" };
         let lay = clock_layout(th, main);
         let tw = big.width(&time);
-        if th.gray || th.touch {
+        if th.gray {
             let mw = if mer.is_empty() { 0 } else { sub.width(mer) + 3 };
             let x = lay.date_cx - (tw + mw) / 2;
             c.text(big, x, lay.time_base, &time, th.wallpaper_fg);
@@ -400,7 +627,10 @@ impl Screen for Idle {
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         // Repaint at the next minute boundary.
         let into = cx.unix % 60;
-        Some(cx.now_ms + (60 - into) * 1000 + 50)
+        let minute = cx.now_ms + (60 - into) * 1000 + 50;
+        // Touch: and when a line's lamp next blinks.
+        let lamps = if cx.th.touch { lamps_deadline(&lines(cx), cx.now_ms) } else { None };
+        Some(lamps.map_or(minute, |at| at.min(minute)))
     }
 }
 

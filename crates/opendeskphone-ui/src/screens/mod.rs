@@ -18,6 +18,7 @@ pub(crate) mod bluetooth;
 pub(crate) mod boot;
 pub(crate) mod calls;
 pub(crate) mod diag;
+pub(crate) mod dialpad;
 pub(crate) mod idle;
 pub(crate) mod menus;
 pub(crate) mod side;
