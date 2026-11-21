@@ -318,3 +318,122 @@ fn the_lamp_test_on_every_skin() {
         lamp_test(model);
     }
 }
+
+// ---------------------------------------------------------- the touchscreen
+
+impl Phone {
+    /// A finger down and up at (`x`, `y`) of the display.
+    fn touch(&mut self, x: u16, y: u16) {
+        self.sim.touch_tap(x, y);
+        self.settle();
+    }
+}
+
+/// The D80's title and back button: 96 pixels each way, at the top-left.
+const CORNER: usize = 96;
+
+#[test]
+fn the_display_test_on_the_touchscreen() {
+    let model = Model::D80;
+    let mut p = Phone::new(model);
+    let size = model.main_screen();
+    let (w, h) = (size.width as usize, size.height as usize);
+    // The pixels of the display without the corner the back button is
+    // drawn over, each with its place.
+    let rest = |p: &Phone| -> Vec<(usize, usize, u32)> {
+        let (px, _) = p.pixels();
+        (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|(x, y)| *x >= CORNER || *y >= CORNER).map(|(x, y)| (x, y, px[y * w + x])).collect()
+    };
+    p.shot("menu");
+    let menu = p.pixels().0;
+    // The first row of the menu, under the title.
+    p.touch(400, 96 + 48);
+    p.shot("display-1-white");
+    assert!(rest(&p).iter().all(|(_, _, c)| *c == WHITE), "the whole display, the softkey buttons' part too");
+    // The back button is over the pattern's corner.
+    assert!(p.pixels().0[..CORNER * w].iter().any(|c| *c != WHITE));
+    // A touch anywhere shows the next pattern.
+    p.touch(700, 1200);
+    p.shot("display-2-black");
+    assert!(rest(&p).iter().all(|(_, _, c)| *c == BLACK));
+    p.touch(10, 600);
+    p.shot("display-3-bars");
+    let bars = [0xFF_0000, 0x00_FF00, 0x00_00FF, 0xFF_FF00, 0x00_FFFF, 0xFF_00FF, WHITE, BLACK];
+    let bar = w / bars.len();
+    let (px, _) = p.pixels();
+    for (i, color) in bars.iter().enumerate() {
+        for x in [i * bar, i * bar + bar - 1] {
+            assert_eq!(px[(h - 1) * w + x], *color, "bar {i} at {x}");
+        }
+    }
+    // The display has more pixels than a drawing may have of bitmap:
+    // squares of two pixels, every other one of every other row.
+    p.touch(400, 400);
+    p.shot("display-4-pixels");
+    for (x, y, c) in rest(&p) {
+        let want = if (x / 2) % 2 == 0 && (y / 2) % 2 == 0 { BLACK } else { WHITE };
+        assert_eq!(c, want, "{x},{y}");
+    }
+    p.touch(400, 400);
+    p.shot("display-5-frame");
+    let (px, _) = p.pixels();
+    let at = |x: usize, y: usize| px[y * w + x];
+    assert_eq!([at(w - 1, h - 1), at(0, h - 1), at(w - 1, 0)], [BLACK; 3]);
+    assert_eq!([at(w - 5, h - 5), at(4, h - 5)], [0x55_5555; 2]);
+    assert_eq!([at(w / 2, 2), at(2, h / 2)], [BLACK; 2]);
+    p.touch(400, 400);
+    p.shot("display-6-fonts");
+    let fonts = p.pixels().0;
+    // The sample lines begin under the back button, not behind it.
+    let background = fonts[w - 1];
+    assert!((0..CORNER).all(|y| fonts[y * w + CORNER..(y + 1) * w].iter().all(|c| *c == background)));
+    // A touch after the last pattern: the menu.
+    p.touch(400, 400);
+    assert_eq!(p.pixels().0, menu);
+    assert_eq!(p.commands(), 0);
+    // The back button leaves the test at once.
+    p.touch(400, 96 + 48);
+    p.touch(400, 400);
+    assert!(rest(&p).iter().all(|(_, _, c)| *c == BLACK));
+    p.touch(48, 48);
+    assert_eq!(p.pixels().0, menu);
+    // And from the menu, the app.
+    p.touch(48, 48);
+    assert_ne!(p.ui.screen_name(), "app:diagnostics");
+}
+
+#[test]
+fn the_menu_on_the_touchscreen_has_no_key_test() {
+    let mut r = common::Rig::with_root(staged(), FakeConfig::default(), Model::D80);
+    r.launch(APP);
+    let items: Vec<String> = r.ui.items(APP).into_iter().map(|i| i.0).collect();
+    assert_eq!(items, ["Display test", "Lamp test", "Tone test", "Subsystems", "Log"]);
+    // A row is touched, and the back button goes back: no softkeys.
+    assert_eq!(r.ui.softkeys(APP), [""; 0]);
+    // The second row is the lamp test, not the key test: nothing takes
+    // the keys.
+    r.ui.tap_row(APP, 1);
+    r.settle();
+    assert!(r.ui.shows(APP, "Lamp test"));
+    assert!(!r.ui.captures(APP));
+    assert_eq!(r.ui.softkeys(APP), [""; 0]);
+    r.key(APP, Key::Cancel);
+    // The fourth: the subsystems, a page to read.
+    r.ui.tap_row(APP, 3);
+    r.settle();
+    assert_eq!(r.ui.texts(APP)[0], "Subsystems");
+    r.key(APP, Key::Cancel);
+    assert_eq!(r.ui.texts(APP), ["Diagnostics"]);
+    // The display test takes touches, and gives them back.
+    r.ui.tap_row(APP, 0);
+    r.settle();
+    assert!(r.ui.full_screen(APP) && r.ui.takes_touches(APP, 0));
+    for _ in 0..6 {
+        r.ui.tap(APP, 400, 640);
+        r.settle();
+    }
+    assert!(!r.ui.full_screen(APP) && !r.ui.takes_touches(APP, 0));
+    assert_eq!(r.ui.texts(APP), ["Diagnostics"]);
+    r.key(APP, Key::Cancel);
+    assert_ne!(r.ui.top().as_deref(), Some(APP));
+}

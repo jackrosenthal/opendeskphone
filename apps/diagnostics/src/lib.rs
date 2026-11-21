@@ -19,6 +19,15 @@ const ITEMS: [&str; 6] = [
     "Subsystems",
     "Log",
 ];
+/// The place of the key test in `ITEMS`.
+const ITEM_KEYS: usize = 1;
+
+/// The items of the menu on this phone, as their places in `ITEMS`: a
+/// phone without keys has no key test.
+fn menu_items() -> Vec<usize> {
+    let keys = ui::get_metrics().keys;
+    (0..ITEMS.len()).filter(|i| keys || *i != ITEM_KEYS).collect()
+}
 const LOG_ENTRIES: u32 = 40;
 /// How often a status page is brought up to date.
 const REFRESH_MS: u32 = 1000;
@@ -201,7 +210,20 @@ fn blank() -> Softkey {
 
 /// The space left and right of text.
 fn inset(m: &opendeskphone_app_sdk::Metrics) -> u16 {
-    if m.color { 15 } else { 4 }
+    match m.skin {
+        Skin::Touch => 24,
+        _ if m.color => 15,
+        _ => 4,
+    }
+}
+
+/// The softkeys of a page: on a phone with keys, `keys`; on the
+/// touchscreen none, where a row is touched and the back button goes
+/// back.
+fn page_softkeys(keys: &[Softkey]) {
+    if ui::get_metrics().keys {
+        ui::set_softkeys(ROOT, keys);
+    }
 }
 
 /// A rectangle's four edges, one pixel wide.
@@ -215,8 +237,12 @@ fn frame(ops: &mut Vec<Op>, x: i16, y: i16, w: u16, h: u16, color: Color) {
 
 /// Every other pixel of every other row, over the whole display: a
 /// bitmap is at most 256 pixels each way, so the display takes several.
+/// A display with more pixels than a drawing's bitmaps may have (64 KiB:
+/// the touchscreen) gets squares of two pixels.
 fn checkerboard(ops: &mut Vec<Op>, w: u16, h: u16) {
     const TILE: u16 = 256;
+    let scale: u16 = if (w as usize).div_ceil(8) * h as usize > 64 << 10 { 2 } else { 1 };
+    let (w, h) = (w.div_ceil(scale), h.div_ceil(scale));
     for top in (0..h).step_by(TILE as usize) {
         for left in (0..w).step_by(TILE as usize) {
             let (width, height) = ((w - left).min(TILE), (h - top).min(TILE));
@@ -234,11 +260,11 @@ fn checkerboard(ops: &mut Vec<Op>, w: u16, h: u16) {
                 }
             }
             ops.push(Op::Bitmap(Bitmap {
-                x: left as i16,
-                y: top as i16,
+                x: (left * scale) as i16,
+                y: (top * scale) as i16,
                 width,
                 height,
-                scale: 1,
+                scale: scale as u8,
                 color: BLACK,
                 bits,
             }));
@@ -291,7 +317,9 @@ fn pattern(which: u8, w: u16, h: u16, color: bool) -> Vec<Op> {
             // Every font of the skin.
             ops.push(Op::Fill((all, canvas::theme_color(Role::Background))));
             let fg = canvas::theme_color(Role::Foreground);
-            let mut y = 4;
+            // (Touch: below the back button.)
+            let m = ui::get_metrics();
+            let mut y = if m.keys { 4 } else { m.title_height as i16 };
             for font in [Font::Small, Font::Normal, Font::Bold, Font::Title, Font::Large] {
                 let size = canvas::text_size(font, SAMPLE);
                 ops.push(Op::Text(Text {
@@ -351,18 +379,15 @@ impl Diagnostics {
         claims.extend((1..=6).map(Key::Digit));
         ui::claim_keys(ROOT, &claims);
         let list = ui::create(WidgetKind::TextList, ROOT, r);
-        let items: Vec<ListItem> = ITEMS.iter().map(|i| ListItem::new(*i)).collect();
+        let items: Vec<ListItem> = menu_items().into_iter().map(|i| ListItem::new(ITEMS[i])).collect();
         ui::set_items(list, &items);
         ui::set_selected(list, self.selected);
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_SELECT, "Select"),
-                blank(),
-                blank(),
-                Softkey::new(SK_BACK, "Back"),
-            ],
-        );
+        page_softkeys(&[
+            Softkey::new(SK_SELECT, "Select"),
+            blank(),
+            blank(),
+            Softkey::new(SK_BACK, "Back"),
+        ]);
         ui::set_focus(list);
         self.page = Page::Menu { list };
     }
@@ -398,10 +423,7 @@ impl Diagnostics {
             ui::set_text(v, value);
             values.push(v);
         }
-        ui::set_softkeys(
-            ROOT,
-            &[blank(), blank(), blank(), Softkey::new(SK_BACK, "Back")],
-        );
+        page_softkeys(&[blank(), blank(), blank(), Softkey::new(SK_BACK, "Back")]);
         ui::set_focus(scroll);
         self.page = Page::Info {
             which,
@@ -441,11 +463,14 @@ impl Diagnostics {
     }
 
     /// A pattern of the display test on the whole display.  Every key is
-    /// the test's, so that any key shows the next pattern.
+    /// the test's, so that any key shows the next pattern; on the
+    /// touchscreen a touch anywhere does, and the back button, which is
+    /// over the pattern's corner, leaves.
     fn show_display(&mut self, pattern_index: u8) {
         ui::clear(ROOT);
         ui::set_full_screen(true);
         input::capture(true);
+        ui::claim_touch(ROOT, true);
         let m = ui::get_metrics();
         let picture = canvas::create(ROOT, Rect::new(0, 0, m.width, m.height));
         if let Err(e) = canvas::draw(picture, &pattern(pattern_index, m.width, m.height, m.color)) {
@@ -536,10 +561,7 @@ impl Diagnostics {
         );
         ui::set_align(text, Align::Center);
         ui::set_text(text, "Cycling all lamps");
-        ui::set_softkeys(
-            ROOT,
-            &[blank(), blank(), blank(), Softkey::new(SK_BACK, "Back")],
-        );
+        page_softkeys(&[blank(), blank(), blank(), Softkey::new(SK_BACK, "Back")]);
         self.light(step);
         if self.timer.is_none() {
             self.timer = timers::set(LAMP_STEP_MS, true).ok();
@@ -556,7 +578,10 @@ impl Diagnostics {
 
     fn activate(&mut self, row: u32) {
         self.selected = row;
-        match row {
+        let Some(item) = menu_items().get(row as usize).copied() else {
+            return;
+        };
+        match item {
             0 => self.show_display(0),
             1 => self.show_keys(Vec::new()),
             2 => self.show_lamps(0),
@@ -639,6 +664,17 @@ impl App for Diagnostics {
                 }
             }
             Event::Softkey(SK_BACK) => self.back(),
+            // A touch on a pattern of the display test: the next one,
+            // and the menu after the last.
+            Event::Touch((_, Touch::Tap(_))) => {
+                if let Page::Display { pattern } = self.page {
+                    if pattern + 1 >= PATTERNS {
+                        self.show_menu();
+                    } else {
+                        self.show_display(pattern + 1);
+                    }
+                }
+            }
             Event::Key(key) => self.key(key),
             Event::Hook(off_hook) => {
                 let name = if off_hook { "hook-up" } else { "hook-down" };
