@@ -36,6 +36,13 @@ pub(crate) fn main_menu() -> Box<dyn Screen> {
 
 // -------------------------------------------------------------- call log
 
+/// The call log.  Left and Right step through the filters (all, missed,
+/// received, placed); Select dials the selected entry.
+///
+/// Touch: the filters are tabs under the title bar, a tap on an entry
+/// dials it, and the button at the right of an entry shows its details
+/// (from which it can be dialed too).  Clear, below, asks before it
+/// clears the log.
 struct CallLogScreen {
     filter: Option<CallLogKind>,
     st: ListState,
@@ -46,21 +53,65 @@ pub(crate) fn call_log() -> Box<dyn Screen> {
     Box::new(CallLogScreen { filter: None, st: ListState::default(), seen: false })
 }
 
+/// The filters, in the order Left and Right step through them.
+const LOG_FILTERS: [Option<CallLogKind>; 4] =
+    [None, Some(CallLogKind::Missed), Some(CallLogKind::Received), Some(CallLogKind::Placed)];
+
+/// Touch: the regions of the call log: the tab of filter `i` is
+/// `LOG_TAB + i`, the details button of entry `i` `LOG_DETAILS + i`.
+const LOG_TAB: u32 = 1;
+const LOG_DETAILS: u32 = 0x1_0000;
+
+fn filter_name(filter: Option<CallLogKind>) -> &'static str {
+    match filter {
+        None => tr::ALL,
+        Some(CallLogKind::Missed) => tr::MISSED,
+        Some(CallLogKind::Received) => tr::RECEIVED,
+        Some(CallLogKind::Placed) => tr::PLACED,
+    }
+}
+
+/// Dials a call log entry.
+fn dial_entry(cx: &Cx, e: &opendeskphone_state::CallLogEntry) -> Nav {
+    if e.party.number.is_empty() {
+        return Nav::Stay;
+    }
+    cx.post(Command::Dial {
+        target: e.party.number.clone(),
+        account: Some(e.account),
+        path: cx.off_hook.then_some(AudioPath::Handset),
+    });
+    Nav::Home
+}
+
 impl CallLogScreen {
     fn rows<'a>(&self, cx: &'a Cx) -> Vec<&'a opendeskphone_state::CallLogEntry> {
         cx.st.call_log.entries.iter().filter(|e| self.filter.is_none_or(|k| e.kind == k)).collect()
     }
     fn dial(&self, cx: &Cx) -> Nav {
         match self.rows(cx).get(self.st.selected) {
-            Some(e) if !e.party.number.is_empty() => {
-                cx.post(Command::Dial {
-                    target: e.party.number.clone(),
-                    account: Some(e.account),
-                    path: cx.off_hook.then_some(AudioPath::Handset),
-                });
-                Nav::Home
+            Some(e) => dial_entry(cx, e),
+            None => Nav::Stay,
+        }
+    }
+
+    /// Touch: the tabs of the filters, across `r`.
+    fn draw_tabs(&self, c: &mut Canvas, th: &Theme, r: IRect) {
+        c.fill(r, th.bg);
+        let n = LOG_FILTERS.len() as i32;
+        let f = th.font(Font::Bold);
+        for (i, filter) in LOG_FILTERS.iter().enumerate() {
+            let i = i as i32;
+            let tab = IRect::new(r.x + r.w * i / n, r.y, r.w * (i + 1) / n - r.w * i / n, r.h);
+            let on = *filter == self.filter;
+            // The filter shown: its name in the accent, underlined.
+            let bar = th.px(3);
+            c.hline(tab.x, tab.bottom() - 1, tab.w, th.border);
+            if on {
+                c.fill(IRect::new(tab.x, tab.bottom() - bar, tab.w, bar), th.accent);
             }
-            _ => Nav::Stay,
+            c.text_in(f, tab, filter_name(*filter), if on { th.accent } else { th.secondary }, HAlign::Center);
+            c.hit(tab, Hit::Custom(LOG_TAB + i as u32));
         }
     }
 }
@@ -73,15 +124,43 @@ impl Screen for CallLogScreen {
     fn name(&self) -> String {
         "call_log".into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: an entry is touched to dial it, its button shows its
+        // details, and the title bar has the way back.
+        if cx.th.touch {
+            if cx.st.call_log.entries.is_empty() {
+                return Vec::new();
+            }
+            return vec![soft(0, ""), soft(0, ""), soft(0, ""), soft(3, tr::CLEAR)];
+        }
         vec![soft(1, tr::DIAL), soft(2, tr::DETAILS), soft(3, tr::CLEAR), soft(4, tr::BACK)]
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Custom(id) if (LOG_TAB..LOG_TAB + LOG_FILTERS.len() as u32).contains(&id) => {
+                let filter = LOG_FILTERS[(id - LOG_TAB) as usize];
+                if filter != self.filter {
+                    self.filter = filter;
+                    self.st = ListState::default();
+                }
+                Nav::Stay
+            }
+            Hit::Custom(id) if id >= LOG_DETAILS => {
+                self.st.selected = (id - LOG_DETAILS) as usize;
+                self.softkey(cx, 2)
+            }
+            // A row: selected and dialed (Select).
+            _ => Nav::Ignored,
+        }
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         match id {
             1 => self.dial(cx),
             2 => {
                 let Some(e) = self.rows(cx).get(self.st.selected).map(|e| (*e).clone()) else { return Nav::Stay };
-                Nav::Push(Info::boxed("call_log_entry", tr::DETAILS, move |cx| {
+                let touch = cx.th.touch;
+                let dial = e.clone();
+                let info = Info::boxed("call_log_entry", tr::DETAILS, move |cx| {
                     let civil = crate::time::Civil::from_unix(e.start_unix, cx.cfg.utc_offset_secs);
                     vec![
                         (e.party.display().to_string(), String::new()),
@@ -97,7 +176,12 @@ impl Screen for CallLogScreen {
                         ),
                         (tr::TIME.to_string(), crate::time::duration(e.duration_secs as u64)),
                     ]
-                }))
+                });
+                if touch {
+                    Nav::Push(Box::new(EntryDetails { info, entry: dial }))
+                } else {
+                    Nav::Push(info)
+                }
             }
             3 => Nav::Push(Confirm::boxed(tr::CLEAR_LOG_Q, |cx| {
                 cx.post(Command::ClearCallLog);
@@ -130,8 +214,9 @@ impl Screen for CallLogScreen {
         Nav::Stay
     }
     fn hook(&mut self, cx: &Cx, off_hook: bool) -> Nav {
-        // Lifting the handset dials the selected entry.
-        if off_hook && !self.rows(cx).is_empty() { self.dial(cx) } else { Nav::Ignored }
+        // Lifting the handset dials the selected entry.  (Touch: there is
+        // no selected entry to see; the phone does what it does anywhere.)
+        if off_hook && !self.rows(cx).is_empty() && !cx.th.touch { self.dial(cx) } else { Nav::Ignored }
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         if !self.seen {
@@ -142,14 +227,15 @@ impl Screen for CallLogScreen {
         }
         let th = cx.th;
         c.fill(area, th.bg);
-        let (title, body) = area.split_top(th.title_h);
-        let which = match self.filter {
-            None => tr::ALL,
-            Some(CallLogKind::Missed) => tr::MISSED,
-            Some(CallLogKind::Received) => tr::RECEIVED,
-            Some(CallLogKind::Placed) => tr::PLACED,
-        };
-        widgets::title_bar(c, th, title, &format!("{}  \u{2013}  {}", tr::CALL_LOG, which));
+        let (title, mut body) = area.split_top(th.title_h);
+        if th.touch {
+            widgets::title_bar(c, th, title, tr::CALL_LOG);
+            let (tabs, rest) = body.split_top(th.row_h);
+            self.draw_tabs(c, th, tabs);
+            body = rest;
+        } else {
+            widgets::title_bar(c, th, title, &format!("{}  \u{2013}  {}", tr::CALL_LOG, filter_name(self.filter)));
+        }
         let rows = self.rows(cx);
         if rows.is_empty() {
             c.text_in(th.font(Font::Normal), body, tr::NO_CALLS, th.secondary, HAlign::Center);
@@ -157,6 +243,12 @@ impl Screen for CallLogScreen {
         }
         let h24 = cx.cfg.time_24h;
         let off = cx.cfg.utc_offset_secs;
+        if th.touch {
+            widgets::list(c, th, body, rows.len(), &mut self.st, th.row_h, false, |c, r, i, _, fg| {
+                touch_log_row(c, th, r, rows[i], i, fg, h24, off);
+            });
+            return;
+        }
         widgets::list(c, th, widgets::body_rows(th, body), rows.len(), &mut self.st, th.row_h, true, |c, r, i, sel, fg| {
             let e = rows[i];
             let (ic, rest) = r.split_left(th.icon + 2 * th.pad);
@@ -179,6 +271,85 @@ impl Screen for CallLogScreen {
             let name = if e.party.display().is_empty() { tr::UNKNOWN_CALLER } else { e.party.display() };
             widgets::key_value(c, th, IRect { w: rest.w - th.pad, ..rest }, name, &when, fg, if sel { fg } else { th.secondary });
         });
+    }
+}
+
+fn log_icon(kind: CallLogKind) -> &'static str {
+    match kind {
+        CallLogKind::Missed => "phone-missed",
+        CallLogKind::Received => "phone-in",
+        CallLogKind::Placed => "phone-out",
+    }
+}
+
+/// Touch: one entry of the call log in `r`: the kind's icon, the name
+/// over the number, the time, and the details button (entry `i`'s).
+#[allow(clippy::too_many_arguments)]
+fn touch_log_row(c: &mut Canvas, th: &Theme, r: IRect, e: &opendeskphone_state::CallLogEntry, i: usize, fg: crate::gfx::Rgb, h24: bool, off: i32) {
+    let (ic, rest) = r.split_left(th.back_w);
+    let (text, details) = rest.split_right(th.back_w);
+    if let Some(ico) = th.icon(log_icon(e.kind)) {
+        c.icon_in(ico, ic, if e.kind == CallLogKind::Missed { th.error } else { th.secondary });
+    }
+    if let Some(ico) = th.icon("info") {
+        c.icon_in(ico, details, th.secondary);
+    }
+    c.hit(details, Hit::Custom(LOG_DETAILS + i as u32));
+    let when = crate::time::Civil::from_unix(e.start_unix, off).short(h24);
+    let name = e.party.display();
+    // The name over the number; the number alone (or "Unknown") where
+    // there is no name.
+    let (first, second) = if name.is_empty() || name == e.party.number {
+        (if e.party.number.is_empty() { tr::UNKNOWN_CALLER } else { e.party.number.as_str() }, "")
+    } else {
+        (name, e.party.number.as_str())
+    };
+    let small = th.font(Font::Small);
+    let text = IRect { w: text.w - th.pad, ..text };
+    let when_w = small.width(&when).min(text.w / 2);
+    let (left, right) = text.split_right(when_w);
+    let left = IRect { w: left.w - th.pad, ..left };
+    if second.is_empty() {
+        c.text_in(th.font(Font::Normal), left, first, fg, HAlign::Left);
+    } else {
+        let (top, bottom) = left.inset_xy(0, th.pad / 2).split_top((r.h - th.pad) / 2);
+        c.text_in(th.font(Font::Normal), top, first, fg, HAlign::Left);
+        c.text_in(small, bottom, second, th.secondary, HAlign::Left);
+    }
+    c.text_in(small, right, &when, th.secondary, HAlign::Right);
+}
+
+/// Touch: the details of a call log entry ([`Info`]), with a button that
+/// dials it.
+struct EntryDetails {
+    info: Box<dyn Screen>,
+    entry: opendeskphone_state::CallLogEntry,
+}
+
+impl Screen for EntryDetails {
+    fn name(&self) -> String {
+        self.info.name()
+    }
+    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+        if self.entry.party.number.is_empty() {
+            return Vec::new();
+        }
+        vec![soft(1, tr::DIAL)]
+    }
+    fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
+        if id == 1 { dial_entry(cx, &self.entry) } else { Nav::Stay }
+    }
+    fn key(&mut self, cx: &Cx, key: Key) -> Nav {
+        self.info.key(cx, key)
+    }
+    fn drag(&mut self, cx: &Cx, from: Option<Hit>, dx: i32, dy: i32) -> Nav {
+        self.info.drag(cx, from, dx, dy)
+    }
+    fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        self.info.draw(cx, c, area)
+    }
+    fn deadline(&self, cx: &Cx) -> Option<u64> {
+        self.info.deadline(cx)
     }
 }
 
@@ -269,14 +440,68 @@ impl Launcher {
         }
         Nav::Stay
     }
+
+    /// Touch: the height of a cell of the grid: the icon, with its name
+    /// under it.
+    fn touch_cell_h(th: &Theme) -> i32 {
+        let icon = th.icon("app-app").map(|i| i.height()).unwrap_or(th.touch_min);
+        th.pad * 2 + icon + th.pad + th.line_h + th.pad
+    }
+
+    /// Touch: the apps in a grid of large icons, each cell a region
+    /// (`Hit::Custom` of the app's index), scrolled by a finger.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, body: IRect) {
+        let th = cx.th;
+        let apps = visible_apps(cx);
+        let cols = Self::columns(th);
+        let cell_w = body.w / cols as i32;
+        let cell_h = Self::touch_cell_h(th);
+        let icon_h = cell_h - th.pad * 4 - th.line_h;
+        let visible_rows = (body.h / cell_h).max(1) as usize;
+        let total_rows = apps.len().div_ceil(cols);
+        self.st.top = self.st.top.min(total_rows.saturating_sub(visible_rows));
+        let f = th.font(Font::Normal);
+        let old = c.push_clip(body);
+        for (i, app) in apps.iter().enumerate().skip(self.st.top * cols).take(visible_rows * cols) {
+            let (col, row) = ((i % cols) as i32, (i / cols - self.st.top) as i32);
+            let cell = IRect::new(body.x + col * cell_w, body.y + row * cell_h, cell_w, cell_h);
+            if let Some(icon) = self.app_icon(th, app) {
+                let (iw, ih) = icon.size();
+                icon.draw(c, cell.x + (cell.w - iw) / 2, cell.y + th.pad * 2 + (icon_h - ih).max(0) / 2, th.fg);
+            }
+            let label = IRect::new(cell.x + th.pad, cell.y + th.pad * 3 + icon_h, cell.w - th.pad * 2, th.line_h);
+            c.text_in(f, label, &app.display_name, th.fg, HAlign::Center);
+            c.hit(cell, Hit::Custom(i as u32));
+        }
+        c.restore_clip(old);
+        widgets::scroll_bar(c, th, body, total_rows as i32, visible_rows as i32, self.st.top as i32);
+    }
 }
 
 impl Screen for Launcher {
     fn name(&self) -> String {
         "apps".into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: an app is touched, and the title bar has the way back.
+        if cx.th.touch {
+            return Vec::new();
+        }
         vec![soft(1, tr::SELECT), soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Custom(i) => {
+                self.st.selected = i as usize;
+                self.launch(cx)
+            }
+            _ => Nav::Ignored,
+        }
+    }
+    fn drag(&mut self, cx: &Cx, _from: Option<Hit>, _dx: i32, dy: i32) -> Nav {
+        let rows = visible_apps(cx).len().div_ceil(Self::columns(cx.th));
+        self.st.drag(dy, Self::touch_cell_h(cx.th), rows);
+        Nav::Stay
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         if id == 1 { self.launch(cx) } else { Nav::Pop }
@@ -319,6 +544,9 @@ impl Screen for Launcher {
         if apps.is_empty() {
             c.text_in(th.font(Font::Normal), body, tr::NO_APPS, th.secondary, HAlign::Center);
             return;
+        }
+        if th.touch {
+            return self.draw_touch(cx, c, body);
         }
         if th.gray {
             // Rows with a small icon, as the gray launcher has no room for
@@ -670,16 +898,29 @@ fn display_menu() -> Box<dyn Screen> {
 /// right arrow.  A wallpaper that moves on the idle screen moves here.
 /// Left and Right (and Up and Down) step through the themes, around the
 /// ends; Select saves, Back leaves the setting as it was.
+///
+/// Touch: in place of the bubble, a sheet over the lower part of the
+/// screen with a title bar (whose back button leaves the setting as it
+/// was) and the themes in rows, the one in use with a check mark.  A tap
+/// on a theme shows the screen in it; the Select button below saves it.
 struct Themes {
     selected: usize,
+    /// Touch: the rows of the sheet.
+    st: ListState,
+    /// Touch: the sheet is to scroll to the selection when it next draws
+    /// (it was opened, or a key stepped).
+    follow: bool,
 }
 
 /// The theme selector, with the theme in use selected.
 pub(crate) fn themes(cfg: &crate::UiConfig) -> Box<dyn Screen> {
     let current = crate::wallpaper::find_or_default(&cfg.theme).id;
     let selected = crate::wallpaper::all().iter().position(|w| w.id == current).unwrap_or(0);
-    Box::new(Themes { selected })
+    Box::new(Themes { selected, st: ListState::default(), follow: true })
 }
+
+/// Touch: how many themes the selector's sheet shows at once.
+const THEME_ROWS: i32 = 4;
 
 /// Where the selector's bubble is: centered under the clock and the date,
 /// left of the line-key tabs, just above the softkeys.
@@ -697,6 +938,42 @@ impl Themes {
     fn step(&mut self, by: usize) {
         let len = crate::wallpaper::all().len();
         self.selected = (self.selected + by) % len;
+        self.follow = true;
+    }
+
+    /// Touch: the idle screen in the upper part of `area`, and the sheet
+    /// of themes under it.
+    fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
+        let th = cx.th;
+        let all = crate::wallpaper::all();
+        let (preview, sheet) = area.split_bottom(th.title_h + THEME_ROWS * th.row_h);
+        let old = c.push_clip(preview);
+        idle::Idle.draw(&Cx { idle_view: None, ..*cx }, c, preview);
+        c.restore_clip(old);
+        // The idle screen is to be looked at only: its lines are not the
+        // line keys here.
+        c.hit(preview, Hit::Nothing);
+        c.fill(sheet, th.bg);
+        let (title, rows) = sheet.split_top(th.title_h);
+        widgets::title_bar(c, th, title, tr::THEME);
+        self.st.selected = self.selected;
+        if self.follow {
+            // The selection second from the top, with the theme before it
+            // above it.
+            self.follow = false;
+            self.st.top = self.selected.saturating_sub(1).min(all.len().saturating_sub(THEME_ROWS as usize));
+        }
+        let current = crate::wallpaper::find_or_default(&cx.cfg.theme).id;
+        let f = th.font(Font::Normal);
+        widgets::list(c, th, rows, all.len(), &mut self.st, th.row_h, true, |c, r, i, _, fg| {
+            let (mark, rest) = r.split_left(th.back_w);
+            if all[i].id == current
+                && let Some(icon) = th.icon("ok")
+            {
+                c.icon_in(icon, mark, fg);
+            }
+            c.text_in(f, rest, all[i].name, fg, HAlign::Left);
+        });
     }
 }
 
@@ -714,9 +991,26 @@ impl Screen for Themes {
         Some(self.selected())
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: the sheet's title bar has the way back.
+        if cx.th.touch {
+            return if cx.cfg.theme_locked { Vec::new() } else { vec![soft(1, tr::SELECT)] };
+        }
         // A theme the provisioning server fixed can be looked at only.
         let select = if cx.cfg.theme_locked { soft(0, "") } else { soft(1, tr::SELECT) };
         vec![select, soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
+    }
+    fn list_state(&mut self, _cx: &Cx) -> Option<(&mut ListState, usize)> {
+        Some((&mut self.st, crate::wallpaper::all().len()))
+    }
+    fn tap(&mut self, _cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            // Shown in the theme; Select saves it.
+            Hit::Row { row, .. } if (row as usize) < crate::wallpaper::all().len() => {
+                self.selected = row as usize;
+                Nav::Stay
+            }
+            _ => Nav::Ignored,
+        }
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         match id {
@@ -741,6 +1035,9 @@ impl Screen for Themes {
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
+        if th.touch {
+            return self.draw_touch(cx, c, area);
+        }
         // The idle screen, by its own code (without an app's idle view,
         // where the bubble is).
         idle::Idle.draw(&Cx { idle_view: None, ..*cx }, c, area);
@@ -784,12 +1081,19 @@ fn sounds_menu() -> Box<dyn Screen> {
     })
 }
 
+/// The ringtones, the one in use with a check mark.  Play sounds the
+/// selected one; Select makes it the ringtone.
+///
+/// Touch: a tap on a ringtone sounds it and marks it; the Select button
+/// below makes the one marked the ringtone.
 struct Ringtones {
     st: ListState,
+    /// Touch: the ringtone tapped last, which Select chooses.
+    picked: Option<usize>,
 }
 
 fn ringtones() -> Box<dyn Screen> {
-    Box::new(Ringtones { st: ListState::default() })
+    Box::new(Ringtones { st: ListState::default(), picked: None })
 }
 
 impl Screen for Ringtones {
@@ -799,8 +1103,23 @@ impl Screen for Ringtones {
     fn name(&self) -> String {
         "ringtones".into()
     }
-    fn softkeys(&self, _cx: &Cx) -> Vec<Soft> {
+    fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
+        // Touch: a tap plays, and the title bar has the way back; Select
+        // once there is a ringtone to choose.
+        if cx.th.touch {
+            return if self.picked.is_some() { vec![soft(1, tr::SELECT)] } else { Vec::new() };
+        }
         vec![soft(1, tr::SELECT), soft(2, tr::PLAY), soft(0, ""), soft(4, tr::BACK)]
+    }
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Row { row, .. } if (row as usize) < cx.cfg.ringtones.len() => {
+                self.picked = Some(row as usize);
+                self.st.selected = row as usize;
+                self.softkey(cx, 2)
+            }
+            _ => Nav::Ignored,
+        }
     }
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         let name = cx.cfg.ringtones.get(self.st.selected).cloned();
@@ -842,8 +1161,12 @@ impl Screen for Ringtones {
         widgets::title_bar(c, th, title, tr::RINGTONE);
         let f = th.font(Font::Normal);
         let tones = &cx.cfg.ringtones;
-        widgets::list(c, th, widgets::body_rows(th, body), tones.len(), &mut self.st, th.row_h, true, |c, r, i, _, fg| {
-            let (mark, rest) = r.split_left(th.icon + 2 * th.pad);
+        // Touch: the ringtone marked is the one tapped, if any (there is
+        // no cursor).
+        let focused = !th.touch || self.picked.is_some();
+        let mark_w = if th.touch { th.back_w } else { th.icon + 2 * th.pad };
+        widgets::list(c, th, widgets::body_rows(th, body), tones.len(), &mut self.st, th.row_h, focused, |c, r, i, _, fg| {
+            let (mark, rest) = r.split_left(mark_w);
             if tones[i] == cx.cfg.ringtone
                 && let Some(icon) = th.icon("ok") {
                     c.icon_in(icon, mark, fg);
