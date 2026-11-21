@@ -23,6 +23,8 @@ impl Rig {
         let sim = hal.sim.clone().unwrap();
         let store = Store::new(model);
         store.update::<System, _>(|s| s.phase = Phase::Running);
+        // (A phone with no account does not dial: it says that it has none.)
+        store.update::<Accounts, _>(|a| a.accounts.push(Account::new(AccountId(0))));
         let calls = store.handle(Domain::Calls);
         let audio = store.handle(Domain::Audio);
         let apps = store.handle(Domain::Apps);
@@ -442,14 +444,48 @@ fn injected_keys_and_events() {
     assert!(matches!(p.wait(), Err(CommandError::Invalid(_))));
 }
 
+/// The Messages key opens the voicemail app only where the app has the
+/// application account it reaches the server with; otherwise it calls the
+/// voicemail number of an account that has one, and a phone with neither
+/// says so.
 #[test]
-fn messages_key_prefers_the_voicemail_app() {
+fn messages_key_opens_the_voicemail_app_or_calls_the_voicemail_number() {
     let mut r = Rig::new(Model::D60);
     r.tap(Key::Messages);
-    assert_eq!(r.call_cmds(), vec![Command::DialVoicemail { account: None }]);
+    assert!(r.call_cmds().is_empty());
+    let notices = r.store.get::<opendeskphone_state::Ui>().notices.clone();
+    assert_eq!(notices.len(), 1, "no voicemail number: {notices:?}");
+    r.tap(Key::Select);
+    r.store.update::<Accounts, _>(|a| a.accounts[0].voicemail_number = "*97".into());
+    r.tap(Key::Messages);
+    assert_eq!(r.call_cmds(), vec![Command::DialVoicemail { account: Some(AccountId(0)) }]);
+    // The app without its account cannot reach the server: the number.
     r.store.update::<Apps, _>(|a| a.installed.push(AppInfo { name: "voicemail".into(), ..Default::default() }));
     r.tap(Key::Messages);
+    assert_eq!(r.call_cmds(), vec![Command::DialVoicemail { account: Some(AccountId(0)) }]);
+    assert!(Rig::drain(&r.apps).is_empty());
+    r.ui.handle().set_config(UiConfig { backlight_timeout_secs: 0, voicemail_app_account: true, ..Default::default() });
+    r.ui.pump();
+    r.tap(Key::Messages);
     assert_eq!(Rig::drain(&r.apps), vec![Command::LaunchApp { name: "voicemail".into() }]);
+    assert!(r.call_cmds().is_empty());
+}
+
+/// A phone with no account does not dial: it says why.
+#[test]
+fn dialing_with_no_account_raises_a_notice() {
+    let mut r = Rig::new(Model::D60);
+    r.store.update::<Accounts, _>(|a| a.accounts.clear());
+    r.ui.pump();
+    for d in [4, 5] {
+        r.tap(Key::Digit(d));
+    }
+    r.tap(Key::Soft(1));
+    assert!(r.call_cmds().is_empty());
+    assert_eq!(r.screen(), "idle");
+    let notices = r.store.get::<opendeskphone_state::Ui>().notices.clone();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].text.contains("no account"), "{notices:?}");
 }
 
 #[test]
@@ -1137,6 +1173,7 @@ fn rig_with(model: Model, f: impl FnOnce(&Store)) -> Rig {
     let sim = hal.sim.clone().unwrap();
     let store = Store::new(model);
     store.update::<System, _>(|s| s.phase = Phase::Running);
+    store.update::<Accounts, _>(|a| a.accounts.push(Account::new(AccountId(0))));
     f(&store);
     let calls = store.handle(Domain::Calls);
     let audio = store.handle(Domain::Audio);

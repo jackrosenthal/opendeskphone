@@ -124,7 +124,7 @@ impl Display for TapDisplay {
 fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
     // The built-in ringtones, and then the user's own in `/nvdata/ringtones`.
     let ringtones = super::ringtones::all(&ctx.paths.nvdata);
-    let mut out = UiConfig { ringtones, ..UiConfig::default() };
+    let mut out = UiConfig { ringtones, ..UiConfig::for_model(ctx.store.model()) };
     out.ringtone = out.ringtones.first().cloned().unwrap_or_default();
     let Some(cfg) = cfg else { return out };
     out.time_24h = cfg.localization_setting("time_short_format").is_some_and(|f| f.contains('H') || f.contains('k'));
@@ -146,7 +146,16 @@ fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
     if let Some(v) = cfg.setting_num::<u8>("contrast") {
         out.contrast = v;
     }
-    out.idle_softkeys = idle_softkeys(&cfg.idle_softkeys().keys);
+    // (With none configured, the D80 keeps its own home buttons: the
+    // configuration's default softkeys are those of a phone with keys.)
+    let softkeys = cfg.idle_softkeys();
+    if softkeys.source != opendeskphone_config::SettingSource::Default || !ctx.store.model().is_touch() {
+        out.idle_softkeys = idle_softkeys(&softkeys.keys);
+    }
+    // The voicemail app reaches the server with its application account;
+    // without one, the Messages key calls the voicemail number.
+    out.voicemail_app_account = cfg.appconfig("voicemail").is_some_and(|app| app.child("account").is_some());
+    out.park = cfg.setting("parking_lot_extension").is_some_and(|p| !p.is_empty());
     super::wallpaper::apply(cfg, &opendeskphone_config::Nvdata::new(&ctx.paths.nvdata), &mut out);
     let active = cfg.ringtones().active;
     if let Some(name) = out.ringtones.iter().find(|n| n.eq_ignore_ascii_case(&active)) {
@@ -401,5 +410,53 @@ mod tests {
             None,
         );
         assert!(ui_config(&ctx, Some(&cfg)).time_24h);
+    }
+
+    fn config(xml: &str) -> Config {
+        Config::from_merged(opendeskphone_config::xml::Element::parse(xml).unwrap(), opendeskphone_config::Model::D65, None)
+    }
+
+    /// With no softkeys configured the D80 has its own home buttons, and
+    /// the models with keys the configuration's default softkeys;
+    /// configured softkeys are the softkeys of either.
+    #[test]
+    fn the_d80_has_its_own_home_buttons_until_softkeys_are_configured() {
+        use opendeskphone_ui::IdleSoftkey;
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = |model| Context::standalone(crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")), model);
+        let (d80, d65) = (ctx(crate::model::Model::D80), ctx(crate::model::Model::D65));
+        let plain = config("<config/>");
+        assert_eq!(ui_config(&d80, None).idle_softkeys, IdleSoftkey::touch_defaults());
+        assert_eq!(ui_config(&d80, Some(&plain)).idle_softkeys, IdleSoftkey::touch_defaults());
+        let keyed = ui_config(&d65, Some(&plain)).idle_softkeys;
+        assert_eq!(keyed[..3], [IdleSoftkey::CallLog, IdleSoftkey::Contacts, IdleSoftkey::Status]);
+        assert!(!keyed.contains(&IdleSoftkey::Voicemail));
+        let set = config("<config><setting id=\"opendeskphone_idle_softkeys\" value=\"menu,redial\"/></config>");
+        for ctx in [&d80, &d65] {
+            assert_eq!(ui_config(ctx, Some(&set)).idle_softkeys, [IdleSoftkey::Menu, IdleSoftkey::Redial]);
+        }
+    }
+
+    /// The UI is told whether the voicemail app can reach the server (it
+    /// has its application account), and whether a call can be parked.
+    #[test]
+    fn the_ui_knows_of_the_voicemail_apps_account_and_the_parking_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Context::standalone(
+            crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")),
+            crate::model::Model::D65,
+        );
+        let plain = ui_config(&ctx, Some(&config("<config><appconfig id=\"voicemail\"/></config>")));
+        assert!(!plain.voicemail_app_account && !plain.park);
+        let set = ui_config(
+            &ctx,
+            Some(&config(concat!(
+                "<config>",
+                "<setting id=\"parking_lot_extension\" value=\"700\"/>",
+                "<appconfig id=\"voicemail\"><account account_id=\"100\" username=\"u\" password=\"p\"/></appconfig>",
+                "</config>",
+            ))),
+        );
+        assert!(set.voicemail_app_account && set.park);
     }
 }
