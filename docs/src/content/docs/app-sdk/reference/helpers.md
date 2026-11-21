@@ -60,6 +60,14 @@ impl Message {
 
 A screen with a title and wrapped text.  `show` calls `screen`, creates the text widget, sets `keys` as the window's softkeys, and focuses the text.
 
+### `nav::note`
+
+```rust
+pub fn note(area: Rect, text: &str) -> Widget
+```
+
+Creates a wrapped `Text` that fills `area` (the rectangle that `screen` returned), inset as the text of a `Message`: for a screen that shows a sentence in place of a list.  The insets of `note`, `Message`, and `Form` are larger on the touchscreen.
+
 ### `Form`
 
 ```rust
