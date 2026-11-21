@@ -997,3 +997,198 @@ fn the_theme_softkey() {
     gray.tap(Key::Digit(5));
     assert_ne!(gray.ui.screen_name(), "theme");
 }
+
+// ------------------------------------------------------------- the D80
+
+/// The touch skin's screen (D80): upright.
+const D80_W: i32 = 800;
+const D80_H: i32 = 1280;
+
+fn at_d80(pixels: &[u32], x: i32, y: i32) -> Rgb {
+    pixels[(y * D80_W + x) as usize]
+}
+
+/// Whether two colors are within `by` of each other in every channel
+/// (the dither moves a channel by up to two steps).
+fn near(a: Rgb, b: Rgb, by: u32) -> bool {
+    [16, 8, 0].iter().all(|s| ((a >> s) & 255).abs_diff((b >> s) & 255) <= by)
+}
+
+/// Every wallpaper drawn for the D80, in the order of `wallpaper::all`
+/// (drawn once for the tests that look at them).
+fn d80_pictures() -> &'static [Vec<u32>] {
+    static PICTURES: std::sync::OnceLock<Vec<Vec<u32>>> = std::sync::OnceLock::new();
+    PICTURES.get_or_init(|| wallpaper::all().iter().map(|w| w.render_sized(D80_W, D80_H)).collect())
+}
+
+/// On the D80 every built-in wallpaper is drawn from its description for
+/// its upright screen, in the same palette: the same picture every time,
+/// composed for the screen's shape and not the color skin's picture
+/// turned.  A gradient from top to bottom runs from top to bottom, a
+/// pattern keeps its size to the eye (a pixel of it is two of the
+/// screen's), and a circle stays round.  At the color skin's size the
+/// picture is the color skin's.
+#[test]
+fn the_d80_wallpapers_are_drawn_for_its_screen() {
+    let d80 = Theme::for_model(Model::D80);
+    let picture = |id: &str| &d80_pictures()[wallpaper::all().iter().position(|w| w.id == id).unwrap()];
+    for (w, p) in wallpaper::all().iter().zip(d80_pictures()) {
+        assert_eq!(p.len(), (D80_W * D80_H) as usize, "{}", w.id);
+        assert!(p.iter().all(|px| *px <= 0xFF_FFFF), "{}", w.id);
+        assert_eq!(w.render_sized(WIDTH, HEIGHT), w.render(), "{}", w.id);
+        assert_eq!(d80.in_wallpaper(w).palette(), w.palette(), "{}", w.id);
+    }
+    // The same picture every time (those drawn from random numbers too).
+    for id in ["prism", "bokeh", "summit", "harbor"] {
+        assert_eq!(picture(id), &wallpaper::find(id).unwrap().render_sized(D80_W, D80_H), "{id} differs between two renders");
+    }
+    // Dusk: from its first stop at the top to its last at the bottom, and
+    // each row one color across.
+    let dusk = picture("dusk");
+    assert!(near(at_d80(dusk, 400, 0), 0x141A3A, 2) && near(at_d80(dusk, 400, D80_H - 1), 0x9A5540, 2));
+    for y in [100, 640, 1200] {
+        assert!(near(at_d80(dusk, 0, y), at_d80(dusk, D80_W - 1, y), 4), "dusk, row {y}");
+    }
+    // The stand's awning: upright stripes of 160 pixels, red then yellow,
+    // from top to bottom.
+    let stand = picture("hot-dog-stand");
+    for y in [0, 640, D80_H - 1] {
+        let colors: Vec<Rgb> = [40, 120, 200, 280, 760].iter().map(|x| at_d80(stand, *x, y)).collect();
+        assert_eq!(colors, [0xFF0000, 0xFFFF00, 0xFF0000, 0xFFFF00, 0xFFFF00], "row {y}");
+    }
+    // The pinstripes: one every 24 pixels, two pixels wide.
+    let pinstripe = picture("pinstripe");
+    let base = at_d80(pinstripe, 0, 300);
+    let striped: Vec<i32> = (0..96).filter(|x| at_d80(pinstripe, *x, 300) != base).collect();
+    assert_eq!(striped, [10, 11, 34, 35, 58, 59, 82, 83]);
+    // Eclipse: its rings are round.  Its middle ring, at the same distance
+    // from their center (below the screen) up and up to the left.
+    let eclipse = picture("eclipse");
+    let (cx, cy) = (390 * D80_W / WIDTH, 290 * D80_H / HEIGHT);
+    let up = at_d80(eclipse, cx, cy - 330);
+    let left = at_d80(eclipse, cx - 233, cy - 233);
+    assert!(near(up, 0x5A3440, 2) && near(left, 0x5A3440, 2), "{up:06X} {left:06X}");
+}
+
+/// The idle screen's text can be read on every wallpaper of the D80 where
+/// it can be: the status icons (the middle of the header band, left of the
+/// lines), and the places of the color skin's clock and date, in
+/// proportion.
+#[test]
+fn the_d80_wallpapers_can_be_read() {
+    let d80 = Theme::for_model(Model::D80);
+    let (sx, sy) = (|v: i32| v * D80_W / WIDTH, |v: i32| v * D80_H / HEIGHT);
+    let areas = [
+        ("status icons", IRect::new(0, (d80.header_h - d80.icon) / 2, d80.idle_tab_x, d80.icon)),
+        ("clock", IRect::new(sx(30), sy(84), sx(266), sy(72))),
+        ("date", IRect::new(sx(30), sy(176), sx(236), sy(28))),
+    ];
+    let mut failures = Vec::new();
+    for (w, p) in wallpaper::all().iter().zip(d80_pictures()) {
+        let th = d80.in_wallpaper(w);
+        for (what, r) in areas {
+            let mut least = f64::MAX;
+            for y in r.y..r.bottom() {
+                for x in r.x..r.right() {
+                    least = least.min(contrast(th.wallpaper_fg, at_d80(p, x, y)));
+                }
+            }
+            if least < TEXT {
+                failures.push(format!("{}: {what}: {least:.2}, under {TEXT}", w.id));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "D80 wallpapers on which text cannot be read:\n{}", failures.join("\n"));
+}
+
+/// A provisioned picture on the D80 is scaled from the picture as it came
+/// to cover the upright screen: not turned, and not cut from the color
+/// skin's 480 x 272 (an upright picture shows whole, and a small one is
+/// not in blocks).  On the color skin it is what it was.
+#[test]
+fn a_wallpaper_picture_on_the_d80() {
+    // Upright, 80 x 128: a green band at the top, red above the middle,
+    // blue below.
+    let pixels: Vec<u8> = (0..80 * 128)
+        .flat_map(|i| match i / 80 {
+            0..8 => [0x10, 0x60, 0x10, 255],
+            8..64 => [0x60, 0x10, 0x10, 255],
+            _ => [0x10, 0x10, 0x60, 255],
+        })
+        .collect();
+    let image = opendeskphone_ui::image::Image { width: 80, height: 128, pixels: pixels.into() };
+    let picture = std::sync::Arc::new(Picture::new(&image, None));
+    let fitted = picture.pixels_sized(D80_W, D80_H);
+    assert_eq!(fitted.len(), (D80_W * D80_H) as usize);
+    assert_eq!((at_d80(&fitted, 400, 30), at_d80(&fitted, 400, 300), at_d80(&fitted, 400, 1000)), (0x106010, 0x601010, 0x101060));
+    // Between two of the picture's pixels, a color between theirs.
+    let edge = at_d80(&fitted, 400, 640);
+    assert!(edge != 0x601010 && edge != 0x101060 && (edge >> 16) > 0x10 && (edge & 255) > 0x10, "{edge:06X}");
+    assert_eq!(picture.pixels_sized(WIDTH, HEIGHT), picture.pixels());
+    // On the idle screen, where nothing is drawn over it.
+    let mut r = Rig::with_model(Model::D80, UiConfig { theme: "dusk".into(), wallpaper_picture: Some(picture), ..UiConfig::default() });
+    let frame = r.frame();
+    assert_eq!((at_d80(&frame, 790, 400), at_d80(&frame, 790, 900)), (0x601010, 0x101060));
+    // Wide, 96 x 96, the left half red and the right half blue: its middle
+    // covers the screen, red on the left and blue on the right.
+    let pixels: Vec<u8> = (0..96 * 96).flat_map(|i| if i % 96 < 48 { [0x40, 0x10, 0x10, 255] } else { [0x10, 0x10, 0x40, 255] }).collect();
+    let image = opendeskphone_ui::image::Image { width: 96, height: 96, pixels: pixels.into() };
+    let fitted = Picture::new(&image, None).pixels_sized(D80_W, D80_H);
+    assert_eq!((at_d80(&fitted, 100, 0), at_d80(&fitted, 700, D80_H - 1)), (0x401010, 0x101040));
+}
+
+/// On the D80 the waves move on the idle screen, as they do on the color
+/// skin, and a frame made from the one before is the screen drawn whole.
+/// The other motions change what grows with the screen's area, and cost
+/// too much there (`Wallpaper::frame_ms_sized`): those wallpapers are
+/// still on the D80.
+#[test]
+fn on_the_d80_the_waves_move() {
+    let _alone = MOTION.lock().unwrap_or_else(|p| p.into_inner());
+    for id in MOVING {
+        let w = wallpaper::find(id).unwrap();
+        let waves = ["tides", "dunes"].contains(&id);
+        assert_eq!(w.frame_ms_sized(D80_W, D80_H).is_some(), waves, "{id}");
+        assert_eq!(w.frame_ms_sized(WIDTH, HEIGHT), w.frame_ms(), "{id}");
+        let mut r = Rig::with_model(Model::D80, UiConfig { theme: id.into(), ..UiConfig::default() });
+        r.ui.set_motion_time(Some(3_000));
+        r.frame();
+        assert_eq!(r.ui.motion_deadline().is_some(), waves, "{id}");
+    }
+    let tides = wallpaper::find("tides").unwrap();
+    let every = u64::from(tides.frame_ms().unwrap());
+    // Nothing goes farther than a pixel between two frames.
+    let farthest = tides.farthest_step_sized(D80_W, D80_H).unwrap();
+    assert!((1..=16).contains(&farthest), "{farthest} sixteenths of a pixel in a frame");
+    // Frame after frame, each drawn from the one before, is the picture
+    // drawn whole; and it comes back after a cycle.
+    let start = 7_000;
+    let first = tides.render_at_sized(D80_W, D80_H, start);
+    assert_eq!(first, tides.render_at_sized(D80_W, D80_H, start + wallpaper::CYCLE_MS));
+    assert!(tides.with_frame_and_changes_sized(D80_W, D80_H, start, |f, _| f == first.as_slice()));
+    for n in 1..=6 {
+        let t = start + n * every;
+        let whole = tides.render_at_sized(D80_W, D80_H, t);
+        assert!(tides.with_frame_and_changes_sized(D80_W, D80_H, t, |f, _| f == whole.as_slice()), "frame {n}");
+    }
+    // On the idle screen.
+    let rig = |t: u64| {
+        let mut r = Rig::with_model(Model::D80, UiConfig { theme: "tides".into(), ..UiConfig::default() });
+        r.ui.set_motion_time(Some(t));
+        r.frame();
+        r
+    };
+    let mut t = 2_000;
+    let mut r = rig(t);
+    let first = r.frame();
+    for n in 1..=8 {
+        t += every;
+        let made = r.ui.motion_frames();
+        r.ui.motion_step(t);
+        assert_eq!(r.ui.motion_frames() - made, 1, "frame {n}");
+    }
+    let (stepped, whole) = (r.frame(), rig(t).frame());
+    let (_, most) = difference(&stepped, &whole);
+    assert!(most <= 1, "differs by {most} from the screen drawn whole");
+    assert_ne!(stepped, first);
+}

@@ -1511,13 +1511,11 @@ impl Ui {
         let motion_time = self.motion_time.or(self.fixed_time.is_none().then_some(now_ms));
         if let (Backdrop::Builtin(wallpaper), Some(t)) = (backdrop, motion_time)
             && !th.gray
-            // (The touch skin's wallpapers do not move yet.)
-            && !th.touch
             && self.backlight_on
             && top.motion()
             && top.wallpaper()
             && !top.full_screen()
-            && let Some(every) = wallpaper.frame_ms()
+            && let Some(every) = wallpaper.frame_ms_sized(bounds.w, bounds.h)
         {
             backdrop = Backdrop::Moving(wallpaper, t);
             frame_ms = Some(u64::from(every));
@@ -1711,7 +1709,7 @@ impl Ui {
         let begun = std::time::Instant::now();
         let (c, over, display) = (&mut self.main, &self.over, self.display.as_mut());
         let mut drawn = Duration::ZERO;
-        let serial = moving.wallpaper.with_frame_and_changes(t, |frame, changes| {
+        let serial = moving.wallpaper.with_frame_and_changes_sized(c.width(), c.height(), t, |frame, changes| {
             drawn = begun.elapsed();
             // Another user of the wallpaper may have drawn a frame since
             // (the changes are then from a frame this screen never had).
