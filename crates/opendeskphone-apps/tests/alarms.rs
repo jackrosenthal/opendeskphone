@@ -173,7 +173,8 @@ fn the_tone_dialog_plays_a_tone_and_stops_it() {
     r.key(APP, Key::Down);
     r.softkey(APP, "Play");
     r.softkey(APP, "Cancel");
-    assert_eq!(*audio.lock().unwrap(), [Command::PlayAlarmTone { name: "Buzzer".into() }, Command::StopSound]);
+    // Both are posted, not waited for.
+    assert_eq!(common::recorded(&audio, 2), [Command::PlayAlarmTone { name: "Buzzer".into() }, Command::StopSound]);
     // Cancel did not take the tone.
     assert_eq!(rows(&r)[2], row("Tone", "Beep"));
 }
@@ -361,19 +362,10 @@ impl Phone {
 
     /// The tones played so far, once `n` have been.
     fn previews(&self, n: usize) -> Vec<String> {
-        let played = || -> Vec<String> {
-            let log = self.audio.lock().unwrap();
-            log.iter()
-                .filter_map(|c| if let Command::PlayAlarmTone { name } = c { Some(name.clone()) } else { None })
-                .collect()
-        };
-        for _ in 0..200 {
-            if played().len() >= n {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        played()
+        common::recorded_of(&self.audio, n, |c| matches!(c, Command::PlayAlarmTone { .. }))
+            .into_iter()
+            .filter_map(|c| if let Command::PlayAlarmTone { name } = c { Some(name) } else { None })
+            .collect()
     }
 
     /// Writes the frame as a PNG (the gray ones doubled in size), and
@@ -543,9 +535,8 @@ fn on_the_touchscreen_an_alarm_is_set_by_touch() {
     assert_eq!(r.ui.softkeys(APP), ["OK", "Cancel"]);
     r.softkey(APP, "OK");
     assert_eq!(rows(&r)[2], row("Tone", "Osmium"));
-    std::thread::sleep(std::time::Duration::from_millis(30));
     assert_eq!(
-        *audio.lock().unwrap(),
+        common::recorded(&audio, 3),
         [
             Command::PlayAlarmTone { name: "Buzzer".into() },
             Command::PlayAlarmTone { name: "Osmium".into() },

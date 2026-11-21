@@ -7,7 +7,11 @@ import "opendeskphone/v1/model.proto";
 // Screen mirror, and key and touch injection.
 service ScreenService {
   rpc GetScreenLayout(GetScreenLayoutRequest) returns (GetScreenLayoutResponse);
-  // Sends the current picture, then a new one whenever the screen changes.
+  // Sends the current picture, then a new one whenever the screen changes:
+  // the whole screen each time, or, for a watcher that asks for
+  // `patches`, only the parts that changed.  Every watch begins with the
+  // whole screen, so a watcher that needs it again (e.g., one that lost
+  // its copy) watches again.
   rpc WatchScreen(WatchScreenRequest) returns (stream WatchScreenResponse);
   rpc PressKey(PressKeyRequest) returns (PressKeyResponse);
   // A touch of the main screen, as if by a finger: only on a model whose
@@ -164,16 +168,36 @@ message WatchScreenRequest {
   ScreenId screen = 1;
   // Fastest update rate wanted, in frames per second; 0 for the default.
   uint32 max_fps = 2;
+  // After the first picture, send a change as `patches` (the parts of the
+  // screen that changed) rather than as a new `png` of the whole screen,
+  // unless most of the screen changed.
+  bool patches = 3;
+}
+
+// A part of the screen that changed: a rectangle, and its new picture.
+message ScreenPatch {
+  // The rectangle's top-left pixel, from the screen's top-left corner.
+  uint32 x = 1;
+  uint32 y = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  // A PNG image of the rectangle, `width` by `height` pixels.
+  bytes png = 5;
 }
 
 message WatchScreenResponse {
-  // A PNG image of the whole screen; empty when only lamps changed.
+  // A PNG image of the whole screen; empty when only lamps changed, or
+  // when the change comes as `patches`.
   bytes png = 1;
+  // The size of the whole screen, with a picture (`png` or `patches`).
   uint32 width = 2;
   uint32 height = 3;
   repeated Lamp lamps = 4;
   bool backlight_on = 5;
   bool off_hook = 6;
+  // Only for a watcher that asked for them: the parts of the screen that
+  // changed since the last picture, to be drawn over it in order.
+  repeated ScreenPatch patches = 7;
 }
 
 message PressKeyRequest {

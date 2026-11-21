@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file opendeskphone/v1/screen.proto.
  */
 export const file_opendeskphone_v1_screen: GenFile = /*@__PURE__*/
-  fileDesc("Ch1vcGVuZGVza3Bob25lL3YxL3NjcmVlbi5wcm90bxIQb3BlbmRlc2twaG9uZS52MSJiCgpTY3JlZW5JbmZvEiYKAmlkGAEgASgOMhoub3BlbmRlc2twaG9uZS52MS5TY3JlZW5JZBINCgV3aWR0aBgCIAEoDRIOCgZoZWlnaHQYAyABKA0SDQoFY29sb3IYBCABKAgiggEKBExhbXASIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKgoFY29sb3IYAiABKA4yGy5vcGVuZGVza3Bob25lLnYxLkxhbXBDb2xvchIqCgVibGluaxgDIAEoDjIbLm9wZW5kZXNrcGhvbmUudjEuTGFtcEJsaW5rIoEFCgNLZXkSKAoEa2luZBgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuS2V5LktpbmQSDQoFaW5kZXgYAiABKA0SDgoGbW9kdWxlGAMgASgNIrAECgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIOCgpLSU5EX0RJR0lUEAESDQoJS0lORF9TVEFSEAISDgoKS0lORF9QT1VORBADEgsKB0tJTkRfVVAQBBINCglLSU5EX0RPV04QBRINCglLSU5EX0xFRlQQBhIOCgpLSU5EX1JJR0hUEAcSDwoLS0lORF9TRUxFQ1QQCBIPCgtLSU5EX0NBTkNFTBAJEhIKDktJTkRfVk9MVU1FX1VQEAoSFAoQS0lORF9WT0xVTUVfRE9XThALEg0KCUtJTkRfU09GVBAMEg0KCUtJTkRfTElORRANEgwKCEtJTkRfQkxGEA4SDQoJS0lORF9NVVRFEA8SEAoMS0lORF9TUEVBS0VSEBASEAoMS0lORF9IRUFEU0VUEBESDQoJS0lORF9IT0xEEBISEQoNS0lORF9UUkFOU0ZFUhATEg8KC0tJTkRfUkVESUFMEBQSEQoNS0lORF9NRVNTQUdFUxAVEhMKD0tJTkRfQ09ORkVSRU5DRRAWEg0KCUtJTkRfSU5GTxAXEhYKEktJTkRfQkxGX1BBR0VfTEVGVBAYEhcKE0tJTkRfQkxGX1BBR0VfUklHSFQQGRIPCgtLSU5EX1NUQVRVUxAaEhEKDUtJTkRfQ09OVEFDVFMQGxINCglLSU5EX0FQUFMQHBINCglLSU5EX01FTlUQHRISCg5LSU5EX0VYUEFOU0lPThAeEgwKCEtJTkRfUkFXEB8iGAoWR2V0U2NyZWVuTGF5b3V0UmVxdWVzdCKAAgoXR2V0U2NyZWVuTGF5b3V0UmVzcG9uc2USJgoFbW9kZWwYASABKA4yFy5vcGVuZGVza3Bob25lLnYxLk1vZGVsEiQKBHNraW4YAiABKA4yFi5vcGVuZGVza3Bob25lLnYxLlNraW4SLQoHc2NyZWVucxgDIAMoCzIcLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSW5mbxIjCgRrZXlzGAQgAygLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSGgoSc29mdGtleV9iYXJfaGVpZ2h0GAUgASgNEhgKEG1pcnJvcl9hdmFpbGFibGUYBiABKAgSDQoFdG91Y2gYByABKAgiUQoSV2F0Y2hTY3JlZW5SZXF1ZXN0EioKBnNjcmVlbhgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSWQSDwoHbWF4X2ZwcxgCIAEoDSKQAQoTV2F0Y2hTY3JlZW5SZXNwb25zZRILCgNwbmcYASABKAwSDQoFd2lkdGgYAiABKA0SDgoGaGVpZ2h0GAMgASgNEiUKBWxhbXBzGAQgAygLMhYub3BlbmRlc2twaG9uZS52MS5MYW1wEhQKDGJhY2tsaWdodF9vbhgFIAEoCBIQCghvZmZfaG9vaxgGIAEoCCJiCg9QcmVzc0tleVJlcXVlc3QSIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKwoGYWN0aW9uGAIgASgOMhsub3BlbmRlc2twaG9uZS52MS5LZXlBY3Rpb24iEgoQUHJlc3NLZXlSZXNwb25zZSJTCgxUb3VjaFJlcXVlc3QSCQoBeBgBIAEoDRIJCgF5GAIgASgNEi0KBmFjdGlvbhgDIAEoDjIdLm9wZW5kZXNrcGhvbmUudjEuVG91Y2hBY3Rpb24iDwoNVG91Y2hSZXNwb25zZSIiCg5TZXRIb29rUmVxdWVzdBIQCghvZmZfaG9vaxgBIAEoCCIRCg9TZXRIb29rUmVzcG9uc2UqTQoIU2NyZWVuSWQSGQoVU0NSRUVOX0lEX1VOU1BFQ0lGSUVEEAASEgoOU0NSRUVOX0lEX01BSU4QARISCg5TQ1JFRU5fSURfU0lERRACKmMKCUtleUFjdGlvbhIaChZLRVlfQUNUSU9OX1VOU1BFQ0lGSUVEEAASEgoOS0VZX0FDVElPTl9UQVAQARITCg9LRVlfQUNUSU9OX0RPV04QAhIRCg1LRVlfQUNUSU9OX1VQEAMqnQEKC1RvdWNoQWN0aW9uEhwKGFRPVUNIX0FDVElPTl9VTlNQRUNJRklFRBAAEhQKEFRPVUNIX0FDVElPTl9UQVAQARIVChFUT1VDSF9BQ1RJT05fRE9XThACEhUKEVRPVUNIX0FDVElPTl9NT1ZFEAMSEwoPVE9VQ0hfQUNUSU9OX1VQEAQSFwoTVE9VQ0hfQUNUSU9OX0NBTkNFTBAFKnsKCUxhbXBDb2xvchIaChZMQU1QX0NPTE9SX1VOU1BFQ0lGSUVEEAASEgoOTEFNUF9DT0xPUl9PRkYQARISCg5MQU1QX0NPTE9SX1JFRBACEhQKEExBTVBfQ09MT1JfR1JFRU4QAxIUChBMQU1QX0NPTE9SX0FNQkVSEAQqfAoJTGFtcEJsaW5rEhoKFkxBTVBfQkxJTktfVU5TUEVDSUZJRUQQABIUChBMQU1QX0JMSU5LX1NPTElEEAESEwoPTEFNUF9CTElOS19TTE9XEAISEwoPTEFNUF9CTElOS19GQVNUEAMSEwoPTEFNUF9CTElOS19XSU5LEAQywgMKDVNjcmVlblNlcnZpY2USZgoPR2V0U2NyZWVuTGF5b3V0Eigub3BlbmRlc2twaG9uZS52MS5HZXRTY3JlZW5MYXlvdXRSZXF1ZXN0Gikub3BlbmRlc2twaG9uZS52MS5HZXRTY3JlZW5MYXlvdXRSZXNwb25zZRJcCgtXYXRjaFNjcmVlbhIkLm9wZW5kZXNrcGhvbmUudjEuV2F0Y2hTY3JlZW5SZXF1ZXN0GiUub3BlbmRlc2twaG9uZS52MS5XYXRjaFNjcmVlblJlc3BvbnNlMAESUQoIUHJlc3NLZXkSIS5vcGVuZGVza3Bob25lLnYxLlByZXNzS2V5UmVxdWVzdBoiLm9wZW5kZXNrcGhvbmUudjEuUHJlc3NLZXlSZXNwb25zZRJICgVUb3VjaBIeLm9wZW5kZXNrcGhvbmUudjEuVG91Y2hSZXF1ZXN0Gh8ub3BlbmRlc2twaG9uZS52MS5Ub3VjaFJlc3BvbnNlEk4KB1NldEhvb2sSIC5vcGVuZGVza3Bob25lLnYxLlNldEhvb2tSZXF1ZXN0GiEub3BlbmRlc2twaG9uZS52MS5TZXRIb29rUmVzcG9uc2ViBnByb3RvMw", [file_opendeskphone_v1_model]);
+  fileDesc("Ch1vcGVuZGVza3Bob25lL3YxL3NjcmVlbi5wcm90bxIQb3BlbmRlc2twaG9uZS52MSJiCgpTY3JlZW5JbmZvEiYKAmlkGAEgASgOMhoub3BlbmRlc2twaG9uZS52MS5TY3JlZW5JZBINCgV3aWR0aBgCIAEoDRIOCgZoZWlnaHQYAyABKA0SDQoFY29sb3IYBCABKAgiggEKBExhbXASIgoDa2V5GAEgASgLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSKgoFY29sb3IYAiABKA4yGy5vcGVuZGVza3Bob25lLnYxLkxhbXBDb2xvchIqCgVibGluaxgDIAEoDjIbLm9wZW5kZXNrcGhvbmUudjEuTGFtcEJsaW5rIoEFCgNLZXkSKAoEa2luZBgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuS2V5LktpbmQSDQoFaW5kZXgYAiABKA0SDgoGbW9kdWxlGAMgASgNIrAECgRLaW5kEhQKEEtJTkRfVU5TUEVDSUZJRUQQABIOCgpLSU5EX0RJR0lUEAESDQoJS0lORF9TVEFSEAISDgoKS0lORF9QT1VORBADEgsKB0tJTkRfVVAQBBINCglLSU5EX0RPV04QBRINCglLSU5EX0xFRlQQBhIOCgpLSU5EX1JJR0hUEAcSDwoLS0lORF9TRUxFQ1QQCBIPCgtLSU5EX0NBTkNFTBAJEhIKDktJTkRfVk9MVU1FX1VQEAoSFAoQS0lORF9WT0xVTUVfRE9XThALEg0KCUtJTkRfU09GVBAMEg0KCUtJTkRfTElORRANEgwKCEtJTkRfQkxGEA4SDQoJS0lORF9NVVRFEA8SEAoMS0lORF9TUEVBS0VSEBASEAoMS0lORF9IRUFEU0VUEBESDQoJS0lORF9IT0xEEBISEQoNS0lORF9UUkFOU0ZFUhATEg8KC0tJTkRfUkVESUFMEBQSEQoNS0lORF9NRVNTQUdFUxAVEhMKD0tJTkRfQ09ORkVSRU5DRRAWEg0KCUtJTkRfSU5GTxAXEhYKEktJTkRfQkxGX1BBR0VfTEVGVBAYEhcKE0tJTkRfQkxGX1BBR0VfUklHSFQQGRIPCgtLSU5EX1NUQVRVUxAaEhEKDUtJTkRfQ09OVEFDVFMQGxINCglLSU5EX0FQUFMQHBINCglLSU5EX01FTlUQHRISCg5LSU5EX0VYUEFOU0lPThAeEgwKCEtJTkRfUkFXEB8iGAoWR2V0U2NyZWVuTGF5b3V0UmVxdWVzdCKAAgoXR2V0U2NyZWVuTGF5b3V0UmVzcG9uc2USJgoFbW9kZWwYASABKA4yFy5vcGVuZGVza3Bob25lLnYxLk1vZGVsEiQKBHNraW4YAiABKA4yFi5vcGVuZGVza3Bob25lLnYxLlNraW4SLQoHc2NyZWVucxgDIAMoCzIcLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSW5mbxIjCgRrZXlzGAQgAygLMhUub3BlbmRlc2twaG9uZS52MS5LZXkSGgoSc29mdGtleV9iYXJfaGVpZ2h0GAUgASgNEhgKEG1pcnJvcl9hdmFpbGFibGUYBiABKAgSDQoFdG91Y2gYByABKAgiYgoSV2F0Y2hTY3JlZW5SZXF1ZXN0EioKBnNjcmVlbhgBIAEoDjIaLm9wZW5kZXNrcGhvbmUudjEuU2NyZWVuSWQSDwoHbWF4X2ZwcxgCIAEoDRIPCgdwYXRjaGVzGAMgASgIIk8KC1NjcmVlblBhdGNoEgkKAXgYASABKA0SCQoBeRgCIAEoDRINCgV3aWR0aBgDIAEoDRIOCgZoZWlnaHQYBCABKA0SCwoDcG5nGAUgASgMIsABChNXYXRjaFNjcmVlblJlc3BvbnNlEgsKA3BuZxgBIAEoDBINCgV3aWR0aBgCIAEoDRIOCgZoZWlnaHQYAyABKA0SJQoFbGFtcHMYBCADKAsyFi5vcGVuZGVza3Bob25lLnYxLkxhbXASFAoMYmFja2xpZ2h0X29uGAUgASgIEhAKCG9mZl9ob29rGAYgASgIEi4KB3BhdGNoZXMYByADKAsyHS5vcGVuZGVza3Bob25lLnYxLlNjcmVlblBhdGNoImIKD1ByZXNzS2V5UmVxdWVzdBIiCgNrZXkYASABKAsyFS5vcGVuZGVza3Bob25lLnYxLktleRIrCgZhY3Rpb24YAiABKA4yGy5vcGVuZGVza3Bob25lLnYxLktleUFjdGlvbiISChBQcmVzc0tleVJlc3BvbnNlIlMKDFRvdWNoUmVxdWVzdBIJCgF4GAEgASgNEgkKAXkYAiABKA0SLQoGYWN0aW9uGAMgASgOMh0ub3BlbmRlc2twaG9uZS52MS5Ub3VjaEFjdGlvbiIPCg1Ub3VjaFJlc3BvbnNlIiIKDlNldEhvb2tSZXF1ZXN0EhAKCG9mZl9ob29rGAEgASgIIhEKD1NldEhvb2tSZXNwb25zZSpNCghTY3JlZW5JZBIZChVTQ1JFRU5fSURfVU5TUEVDSUZJRUQQABISCg5TQ1JFRU5fSURfTUFJThABEhIKDlNDUkVFTl9JRF9TSURFEAIqYwoJS2V5QWN0aW9uEhoKFktFWV9BQ1RJT05fVU5TUEVDSUZJRUQQABISCg5LRVlfQUNUSU9OX1RBUBABEhMKD0tFWV9BQ1RJT05fRE9XThACEhEKDUtFWV9BQ1RJT05fVVAQAyqdAQoLVG91Y2hBY3Rpb24SHAoYVE9VQ0hfQUNUSU9OX1VOU1BFQ0lGSUVEEAASFAoQVE9VQ0hfQUNUSU9OX1RBUBABEhUKEVRPVUNIX0FDVElPTl9ET1dOEAISFQoRVE9VQ0hfQUNUSU9OX01PVkUQAxITCg9UT1VDSF9BQ1RJT05fVVAQBBIXChNUT1VDSF9BQ1RJT05fQ0FOQ0VMEAUqewoJTGFtcENvbG9yEhoKFkxBTVBfQ09MT1JfVU5TUEVDSUZJRUQQABISCg5MQU1QX0NPTE9SX09GRhABEhIKDkxBTVBfQ09MT1JfUkVEEAISFAoQTEFNUF9DT0xPUl9HUkVFThADEhQKEExBTVBfQ09MT1JfQU1CRVIQBCp8CglMYW1wQmxpbmsSGgoWTEFNUF9CTElOS19VTlNQRUNJRklFRBAAEhQKEExBTVBfQkxJTktfU09MSUQQARITCg9MQU1QX0JMSU5LX1NMT1cQAhITCg9MQU1QX0JMSU5LX0ZBU1QQAxITCg9MQU1QX0JMSU5LX1dJTksQBDLCAwoNU2NyZWVuU2VydmljZRJmCg9HZXRTY3JlZW5MYXlvdXQSKC5vcGVuZGVza3Bob25lLnYxLkdldFNjcmVlbkxheW91dFJlcXVlc3QaKS5vcGVuZGVza3Bob25lLnYxLkdldFNjcmVlbkxheW91dFJlc3BvbnNlElwKC1dhdGNoU2NyZWVuEiQub3BlbmRlc2twaG9uZS52MS5XYXRjaFNjcmVlblJlcXVlc3QaJS5vcGVuZGVza3Bob25lLnYxLldhdGNoU2NyZWVuUmVzcG9uc2UwARJRCghQcmVzc0tleRIhLm9wZW5kZXNrcGhvbmUudjEuUHJlc3NLZXlSZXF1ZXN0GiIub3BlbmRlc2twaG9uZS52MS5QcmVzc0tleVJlc3BvbnNlEkgKBVRvdWNoEh4ub3BlbmRlc2twaG9uZS52MS5Ub3VjaFJlcXVlc3QaHy5vcGVuZGVza3Bob25lLnYxLlRvdWNoUmVzcG9uc2USTgoHU2V0SG9vaxIgLm9wZW5kZXNrcGhvbmUudjEuU2V0SG9va1JlcXVlc3QaIS5vcGVuZGVza3Bob25lLnYxLlNldEhvb2tSZXNwb25zZWIGcHJvdG8z", [file_opendeskphone_v1_model]);
 
 /**
  * @generated from message opendeskphone.v1.ScreenInfo
@@ -394,6 +394,15 @@ export type WatchScreenRequest = Message<"opendeskphone.v1.WatchScreenRequest"> 
    * @generated from field: uint32 max_fps = 2;
    */
   maxFps: number;
+
+  /**
+   * After the first picture, send a change as `patches` (the parts of the
+   * screen that changed) rather than as a new `png` of the whole screen,
+   * unless most of the screen changed.
+   *
+   * @generated from field: bool patches = 3;
+   */
+  patches: boolean;
 };
 
 /**
@@ -404,17 +413,63 @@ export const WatchScreenRequestSchema: GenMessage<WatchScreenRequest> = /*@__PUR
   messageDesc(file_opendeskphone_v1_screen, 5);
 
 /**
+ * A part of the screen that changed: a rectangle, and its new picture.
+ *
+ * @generated from message opendeskphone.v1.ScreenPatch
+ */
+export type ScreenPatch = Message<"opendeskphone.v1.ScreenPatch"> & {
+  /**
+   * The rectangle's top-left pixel, from the screen's top-left corner.
+   *
+   * @generated from field: uint32 x = 1;
+   */
+  x: number;
+
+  /**
+   * @generated from field: uint32 y = 2;
+   */
+  y: number;
+
+  /**
+   * @generated from field: uint32 width = 3;
+   */
+  width: number;
+
+  /**
+   * @generated from field: uint32 height = 4;
+   */
+  height: number;
+
+  /**
+   * A PNG image of the rectangle, `width` by `height` pixels.
+   *
+   * @generated from field: bytes png = 5;
+   */
+  png: Uint8Array;
+};
+
+/**
+ * Describes the message opendeskphone.v1.ScreenPatch.
+ * Use `create(ScreenPatchSchema)` to create a new message.
+ */
+export const ScreenPatchSchema: GenMessage<ScreenPatch> = /*@__PURE__*/
+  messageDesc(file_opendeskphone_v1_screen, 6);
+
+/**
  * @generated from message opendeskphone.v1.WatchScreenResponse
  */
 export type WatchScreenResponse = Message<"opendeskphone.v1.WatchScreenResponse"> & {
   /**
-   * A PNG image of the whole screen; empty when only lamps changed.
+   * A PNG image of the whole screen; empty when only lamps changed, or
+   * when the change comes as `patches`.
    *
    * @generated from field: bytes png = 1;
    */
   png: Uint8Array;
 
   /**
+   * The size of the whole screen, with a picture (`png` or `patches`).
+   *
    * @generated from field: uint32 width = 2;
    */
   width: number;
@@ -438,6 +493,14 @@ export type WatchScreenResponse = Message<"opendeskphone.v1.WatchScreenResponse"
    * @generated from field: bool off_hook = 6;
    */
   offHook: boolean;
+
+  /**
+   * Only for a watcher that asked for them: the parts of the screen that
+   * changed since the last picture, to be drawn over it in order.
+   *
+   * @generated from field: repeated opendeskphone.v1.ScreenPatch patches = 7;
+   */
+  patches: ScreenPatch[];
 };
 
 /**
@@ -445,7 +508,7 @@ export type WatchScreenResponse = Message<"opendeskphone.v1.WatchScreenResponse"
  * Use `create(WatchScreenResponseSchema)` to create a new message.
  */
 export const WatchScreenResponseSchema: GenMessage<WatchScreenResponse> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 6);
+  messageDesc(file_opendeskphone_v1_screen, 7);
 
 /**
  * @generated from message opendeskphone.v1.PressKeyRequest
@@ -467,7 +530,7 @@ export type PressKeyRequest = Message<"opendeskphone.v1.PressKeyRequest"> & {
  * Use `create(PressKeyRequestSchema)` to create a new message.
  */
 export const PressKeyRequestSchema: GenMessage<PressKeyRequest> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 7);
+  messageDesc(file_opendeskphone_v1_screen, 8);
 
 /**
  * @generated from message opendeskphone.v1.PressKeyResponse
@@ -480,7 +543,7 @@ export type PressKeyResponse = Message<"opendeskphone.v1.PressKeyResponse"> & {
  * Use `create(PressKeyResponseSchema)` to create a new message.
  */
 export const PressKeyResponseSchema: GenMessage<PressKeyResponse> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 8);
+  messageDesc(file_opendeskphone_v1_screen, 9);
 
 /**
  * @generated from message opendeskphone.v1.TouchRequest
@@ -510,7 +573,7 @@ export type TouchRequest = Message<"opendeskphone.v1.TouchRequest"> & {
  * Use `create(TouchRequestSchema)` to create a new message.
  */
 export const TouchRequestSchema: GenMessage<TouchRequest> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 9);
+  messageDesc(file_opendeskphone_v1_screen, 10);
 
 /**
  * @generated from message opendeskphone.v1.TouchResponse
@@ -523,7 +586,7 @@ export type TouchResponse = Message<"opendeskphone.v1.TouchResponse"> & {
  * Use `create(TouchResponseSchema)` to create a new message.
  */
 export const TouchResponseSchema: GenMessage<TouchResponse> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 10);
+  messageDesc(file_opendeskphone_v1_screen, 11);
 
 /**
  * @generated from message opendeskphone.v1.SetHookRequest
@@ -540,7 +603,7 @@ export type SetHookRequest = Message<"opendeskphone.v1.SetHookRequest"> & {
  * Use `create(SetHookRequestSchema)` to create a new message.
  */
 export const SetHookRequestSchema: GenMessage<SetHookRequest> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 11);
+  messageDesc(file_opendeskphone_v1_screen, 12);
 
 /**
  * @generated from message opendeskphone.v1.SetHookResponse
@@ -553,7 +616,7 @@ export type SetHookResponse = Message<"opendeskphone.v1.SetHookResponse"> & {
  * Use `create(SetHookResponseSchema)` to create a new message.
  */
 export const SetHookResponseSchema: GenMessage<SetHookResponse> = /*@__PURE__*/
-  messageDesc(file_opendeskphone_v1_screen, 12);
+  messageDesc(file_opendeskphone_v1_screen, 13);
 
 /**
  * @generated from enum opendeskphone.v1.ScreenId
@@ -767,7 +830,11 @@ export const ScreenService: GenService<{
     output: typeof GetScreenLayoutResponseSchema;
   },
   /**
-   * Sends the current picture, then a new one whenever the screen changes.
+   * Sends the current picture, then a new one whenever the screen changes:
+   * the whole screen each time, or, for a watcher that asks for
+   * `patches`, only the parts that changed.  Every watch begins with the
+   * whole screen, so a watcher that needs it again (e.g., one that lost
+   * its copy) watches again.
    *
    * @generated from rpc opendeskphone.v1.ScreenService.WatchScreen
    */

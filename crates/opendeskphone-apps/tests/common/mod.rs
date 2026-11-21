@@ -116,6 +116,36 @@ pub fn answer_commands(
     });
 }
 
+/// The commands in `log` (of [`answer_commands`]) once it holds `n`,
+/// waiting up to ten seconds for them; what it holds then, for the test
+/// to show, if they do not come.
+///
+/// A command the code under test posts (`Store::post`) is not waited for:
+/// it is recorded on the thread of [`answer_commands`], some time after
+/// the code that posted it has gone on, so a test that looks at once may
+/// look too soon.  A command that is sent and waited for is recorded
+/// before it is answered.  With `n` 0 there is nothing to wait for, and a
+/// command that should not have come is given 30 ms to show.
+pub fn recorded(log: &Mutex<Vec<Command>>, n: usize) -> Vec<Command> {
+    recorded_of(log, n, |_| true)
+}
+
+/// [`recorded`], of the commands that `of` picks.
+pub fn recorded_of(log: &Mutex<Vec<Command>>, n: usize, of: impl Fn(&Command) -> bool) -> Vec<Command> {
+    use std::time::{Duration, Instant};
+    if n == 0 {
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let got: Vec<Command> = log.lock().unwrap().iter().filter(|c| of(c)).cloned().collect();
+        if got.len() >= n || Instant::now() >= deadline {
+            return got;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 /// The time the phone gives an app's code for an event (2 seconds), which
 /// the rigs give too.  The time is measured on the clock, so a shorter one
 /// would test how busy the machine that runs the tests is, not the app;

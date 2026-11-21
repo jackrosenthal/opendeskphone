@@ -358,10 +358,8 @@ fn a_sound_plays_and_reports_where_it_stopped() {
     r.softkey("probe", "Play");
     r.softkey("probe", "Stop");
     r.softkey("probe", "Play");
-    std::thread::sleep(std::time::Duration::from_millis(20));
     r.mgr.close("probe");
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let tail: Vec<Command> = log.lock().unwrap()[1..].to_vec();
+    let tail: Vec<Command> = common::recorded(&log, 5)[1..].to_vec();
     assert!(
         matches!(
             &tail[..],
@@ -394,8 +392,7 @@ fn idle_screen_events_and_the_idle_timer() {
 
     r.launch("probe");
     r.softkey("probe", "Awake");
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    assert_eq!(log.lock().unwrap().clone(), [Command::ResetIdleTimer]);
+    assert_eq!(common::recorded(&log, 1), [Command::ResetIdleTimer]);
 }
 
 #[test]
