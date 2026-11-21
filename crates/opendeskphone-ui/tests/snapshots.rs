@@ -282,15 +282,22 @@ fn form_app(model: Model) -> (AppView, opendeskphone_ui::AppEvents) {
     let m = view.metrics();
     let mut t = view.batch();
     let lh = m.line_height;
-    let label = t.create(WidgetKind::Text, None, av::Rect::new(4, 2, m.width - 8, lh));
+    // Touch: under the back button's corner, with inputs a finger's
+    // height, and the edge the skin's lists keep.
+    let (x, top, ih) = match (m.keys, m.color) {
+        (false, _) => (16, m.title_height, m.row_height),
+        (true, true) => (4, 0, 36),
+        (true, false) => (4, 0, lh + 4),
+    };
+    let w = m.width - 2 * x as u16;
+    let label = t.create(WidgetKind::Text, None, av::Rect::new(x, (top + 2) as i16, w, lh));
     t.set_text(label, "Extension");
-    let ih = if m.color { 36 } else { lh + 4 };
-    let ext = t.create(WidgetKind::Input, None, av::Rect::new(4, (lh + 4) as i16, m.width - 8, ih));
+    let ext = t.create(WidgetKind::Input, None, av::Rect::new(x, (top + lh + 4) as i16, w, ih));
     t.input_set_mode(ext, av::InputMode::Numeric);
     t.set_text(ext, "1042");
-    let label2 = t.create(WidgetKind::Text, None, av::Rect::new(4, (lh + ih + 8) as i16, m.width - 8, lh));
+    let label2 = t.create(WidgetKind::Text, None, av::Rect::new(x, (top + lh + ih + 8) as i16, w, lh));
     t.set_text(label2, "PIN");
-    let pin = t.create(WidgetKind::Input, None, av::Rect::new(4, (2 * lh + ih + 10) as i16, m.width - 8, ih));
+    let pin = t.create(WidgetKind::Input, None, av::Rect::new(x, (top + 2 * lh + ih + 10) as i16, w, ih));
     t.input_set_mode(pin, av::InputMode::Pin);
     t.input_set_placeholder(pin, "Required");
     t.focus(Some(ext));
@@ -520,8 +527,9 @@ fn d65() {
 fn d70() {
     all_screens(Model::D70);
 }
-/// The D80 has no keys, but its screens answer to them (the web mirror
-/// and the diagnostics send them), so the same walk draws them all.
+/// The D80 has no keys, but its screens answer to them (`dphone key` and
+/// the diagnostics send them; the web mirror sends touches), so the same
+/// walk draws them all.
 #[test]
 fn d80() {
     all_screens(Model::D80);

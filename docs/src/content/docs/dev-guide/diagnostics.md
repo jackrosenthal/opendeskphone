@@ -72,7 +72,7 @@ Every subsystem publishes state to one typed store, which the user interface, th
 
 | Page | Description |
 | --- | --- |
-| **Screen** | A live mirror of the phone's display, with clickable phone keys. |
+| **Screen** | A live mirror of the phone's display, with clickable phone keys.  The D80 has no keys: a click on its mirrored screen is a tap, and a drag is a finger's drag. |
 | **Shell** | A root shell in the browser, with the shell and commands of an SSH session.  Works without an SSH key and with the SSH setting off. |
 
 ## Metrics

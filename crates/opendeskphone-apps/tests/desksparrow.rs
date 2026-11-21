@@ -1031,7 +1031,7 @@ fn it_is_played_by_touch_where_there_are_no_keys() {
     assert!(r.mgr.pump().expect("the game's timer") <= Duration::from_millis(m.tick_ms));
     // It rises, and falls; a touch where the button was is a flap now,
     // and so is a finger that slips as it touches, once.
-    let mut rises = |r: &mut Rig| {
+    let rises = |r: &mut Rig| {
         for _ in 0..12 {
             next_tick(r);
         }
@@ -1088,7 +1088,7 @@ fn drawn_on_the_touchscreen() {
 
     // The button under the plate: the leaderboard, and back.
     let b = button(&p.ops());
-    let mut touch = |p: &mut Phone, x: i16, y: i16| {
+    let touch = |p: &mut Phone, x: i16, y: i16| {
         p.sim.touch_tap(x as u16, y as u16);
         p.settle();
     };

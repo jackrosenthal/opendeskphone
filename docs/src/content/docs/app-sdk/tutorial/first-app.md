@@ -106,7 +106,7 @@ A newer build installs the same way.  If the app is running, the phone stops the
 
 ## First run
 
-Open Fresh Pot from the Applications menu (**Applications** in the main menu, or the **Apps** softkey on the idle screen), or click **Open** on the **Apps** page.  The **Screen** page mirrors the display and has the phone's keys.
+Open Fresh Pot from the Applications menu (**Applications** in the main menu, or the **Apps** softkey on the idle screen), or click **Open** on the **Apps** page.  The **Screen** page mirrors the display and has the phone's keys; the D80 has none, and its mirrored screen is touched with the mouse.
 
 <figure class="screenshot">
 
