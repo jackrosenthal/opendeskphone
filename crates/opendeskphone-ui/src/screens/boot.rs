@@ -1,8 +1,66 @@
 //! Base screens that replace the idle screen: boot progress, recovery,
 //! provisioning, and firmware update.
+//!
+//! On the touch skin (D80) each is laid out for the upright screen: the
+//! start-up artwork is drawn for it (`assets/art/splash.touch.svg`), a
+//! message is a block of an icon, a title, the text, and a bar in the
+//! middle of the screen ([`notice`]), and a title has no back button
+//! ([`title_band`]: a base screen has nothing to go back to).  What the
+//! keys do is done by touch: the softkeys are buttons, a server or a user
+//! is touched in its list, and a touch elsewhere stops the count to the
+//! automatic choice of a server, as a key does.  The server's address and
+//! the PIN are typed in an [`EditScreen`], which is the touch skin's own.
 
 use super::*;
+use crate::gfx::Rgb;
 use opendeskphone_state::{Health, HealthStatus, NetPhase, Phase, ProvisionPhase, Skin, Subsystem, UpdatePhase};
+
+/// The title band of a base screen: [`widgets::title_bar`], without the
+/// back button it has on the touch skin.  (Also the ringing alarm's: there
+/// it is the alarm's buttons that take it down.)
+pub(crate) fn title_band(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
+    if !th.touch {
+        return widgets::title_bar(c, th, r, title);
+    }
+    c.fill(r, th.title_bg);
+    let text = IRect { x: r.x + th.title_pad, w: r.w - 2 * th.title_pad, ..r };
+    c.text_in(th.font(Font::Title), text, title, th.title_fg, HAlign::Left);
+}
+
+/// A message filling `area` ([`splash`]): on the touch skin one block in
+/// the middle of the screen, of the icon called `icon` (tinted `tint`
+/// where it takes a tint), the title, the text, and a bar filled
+/// `percent`, each where it is given.
+#[allow(clippy::too_many_arguments)]
+fn notice(c: &mut Canvas, th: &Theme, area: IRect, icon: &str, tint: Rgb, title: &str, text: &str, percent: Option<u32>) {
+    if !th.touch {
+        return splash(c, th, area, title, text, percent);
+    }
+    let inner = area.inset_xy(th.pad * 3, 0);
+    let f = th.font(Font::Normal);
+    let gap = th.px(12);
+    let bar_h = th.px(8);
+    let icon = th.icon(icon);
+    let lines = if text.is_empty() { 0 } else { f.wrap(text, inner.w).len() as i32 };
+    let block = icon.map_or(0, |i| i.height() + 2 * gap)
+        + if title.is_empty() { 0 } else { th.line_h + gap }
+        + lines * th.line_h
+        + if percent.is_some() { 2 * gap + bar_h } else { 0 };
+    let mut y = area.y + ((area.h - block) / 2).max(0);
+    if let Some(i) = icon {
+        c.icon(i, inner.x + (inner.w - i.width()) / 2, y, tint);
+        y += i.height() + 2 * gap;
+    }
+    if !title.is_empty() {
+        c.text_in(th.font(Font::Title), IRect::new(inner.x, y, inner.w, th.line_h), title, th.fg, HAlign::Center);
+        y += th.line_h + gap;
+    }
+    y += c.text_wrapped(f, IRect::new(inner.x, y, inner.w, lines * th.line_h), text, th.secondary, HAlign::Center, th.line_h);
+    if let Some(p) = percent {
+        let w = area.w * 2 / 3;
+        widgets::loading_bar(c, th, IRect::new(area.x + (area.w - w) / 2, y + 2 * gap, w, bar_h), p.min(100) * 10);
+    }
+}
 
 /// The start-up stages the loading bar follows, in the order the main
 /// role starts them: the subsystem whose health reports the stage, its
@@ -165,14 +223,16 @@ impl Screen for Recovery {
         let th = cx.th;
         c.fill(area, th.bg);
         let (title, body) = area.split_top(th.title_h);
-        widgets::title_bar(c, th, title, tr::RECOVERY_TITLE);
+        title_band(c, th, title, tr::RECOVERY_TITLE);
         let mut text = tr::RECOVERY_TEXT.to_string();
         if let Some(ip) = cx.st.network.ipv4.address {
-            text = format!("{text} http://{ip}/");
+            // (Touch: the address on a line of its own.)
+            text = format!("{text}{}http://{ip}/", if th.touch { "\n\n" } else { " " });
         }
         let f = th.font(if th.gray { Font::Small } else { Font::Normal });
         let lh = if th.gray { th.line_h - 3 } else { th.line_h };
-        c.text_wrapped(f, body.inset_xy(th.pad, 2), &text, th.fg, HAlign::Left, lh);
+        let inset = if th.touch { th.title_pad } else { th.pad };
+        c.text_wrapped(f, body.inset_xy(inset, if th.touch { th.pad } else { 2 }), &text, th.fg, HAlign::Left, lh);
     }
 }
 
@@ -208,6 +268,10 @@ enum Countdown {
 const AUTO_SELECT_MS: u64 = 6000;
 /// Followed by the seconds left (stock: "Automatically selecting in...%s").
 const AUTO_SELECTING: &str = "Automatically selecting in\u{2026}";
+
+/// Touch: the list's screen away from its rows ([`Hit::Custom`]).  A touch
+/// there stops the count, as a key other than Select does.
+const HIT_ELSEWHERE: u32 = 1;
 
 fn manual_server() -> Box<dyn Screen> {
     EditScreen::boxed("provision-server", tr::PROV_ENTER_SERVER, "", InputMode::Text, |cx, text| {
@@ -285,6 +349,10 @@ impl Screen for Provision {
             // setup screen that takes keys (stock: the Settings softkey of
             // `choosePbx.js` and `noAvahiServers.js`); Cancel there comes
             // back here.
+            // (Touch: a row is touched; Select is a cursor's.)
+            ProvisionPhase::AwaitingServer | ProvisionPhase::AwaitingUser if cx.th.touch => {
+                vec![soft(0, ""), soft(6, tr::NETWORK), soft(0, ""), soft(4, tr::STATUS)]
+            }
             ProvisionPhase::AwaitingServer | ProvisionPhase::AwaitingUser => {
                 vec![soft(1, tr::SELECT), soft(6, tr::NETWORK), soft(0, ""), soft(4, tr::STATUS)]
             }
@@ -348,6 +416,27 @@ impl Screen for Provision {
             _ => None,
         }
     }
+    /// Touch: a row is chosen as Select chooses it (the default, through
+    /// [`Screen::list_state`]); a touch away from the rows stops the count.
+    fn tap(&mut self, _cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        match hit {
+            Hit::Custom(HIT_ELSEWHERE) => {
+                if self.countdown != Countdown::Idle {
+                    self.countdown = Countdown::Stopped;
+                }
+                Nav::Stay
+            }
+            _ => Nav::Ignored,
+        }
+    }
+    /// Touch: a finger scrolling the list stops the count, as a key does
+    /// (and the list scrolls).
+    fn drag(&mut self, _cx: &Cx, _from: Option<Hit>, _dx: i32, _dy: i32) -> Nav {
+        if self.countdown != Countdown::Idle {
+            self.countdown = Countdown::Stopped;
+        }
+        Nav::Ignored
+    }
     fn key(&mut self, cx: &Cx, key: Key) -> Nav {
         // Any key but Select stops the count; Select picks the entry now.
         if self.countdown != Countdown::Idle {
@@ -379,13 +468,24 @@ impl Screen for Provision {
         let th = cx.th;
         let p = &cx.st.provisioning;
         let f = th.font(Font::Normal);
+        // Touch: there is no cursor, but the server the count will choose
+        // is shown chosen.
+        let counting = self.seconds_left(cx);
+        let focused = !th.touch || counting.is_some();
+        // The list, under its title; returns the bottom of its last row.
         let listing = |c: &mut Canvas, title: &str, rows: Vec<String>, st: &mut ListState| {
             c.fill(area, th.bg);
             let (t, body) = area.split_top(th.title_h);
-            widgets::title_bar(c, th, t, title);
-            widgets::list(c, th, widgets::body_rows(th, body), rows.len(), st, th.row_h, true, |c, r, i, _, fg| {
-                c.text_in(f, r.inset_xy(th.pad * 2, 0), &rows[i], fg, HAlign::Left);
+            title_band(c, th, t, title);
+            if th.touch {
+                c.hit(body, Hit::Custom(HIT_ELSEWHERE));
+            }
+            let body = widgets::body_rows(th, body);
+            let inset = if th.touch { th.title_pad } else { th.pad * 2 };
+            let shown = widgets::list(c, th, body, rows.len(), st, th.row_h, focused, |c, r, i, _, fg| {
+                c.text_in(f, r.inset_xy(inset, 0), &rows[i], fg, HAlign::Left);
             });
+            body.y + shown.min(rows.len()) as i32 * th.row_h
         };
         match &p.phase {
             ProvisionPhase::AwaitingServer => {
@@ -396,10 +496,12 @@ impl Screen for Provision {
                     .collect();
                 rows.push(tr::PROV_ENTER_MANUALLY.into());
                 rows.push(tr::PROV_NO_SERVER.into());
-                listing(c, tr::PROV_SELECT_SERVER, rows, &mut self.servers);
-                if let Some(n) = self.seconds_left(cx) {
-                    // The last line of the body, below the three rows.
-                    let line = IRect { y: area.bottom() - th.line_h, h: th.line_h, ..area };
+                let end = listing(c, tr::PROV_SELECT_SERVER, rows, &mut self.servers);
+                if let Some(n) = counting {
+                    // The last line of the body, below the three rows (on
+                    // touch, right below them, where the eye is).
+                    let y = if th.touch { (end + th.pad).min(area.bottom() - th.line_h) } else { area.bottom() - th.line_h };
+                    let line = IRect { y, h: th.line_h, ..area };
                     c.fill(line, th.bg);
                     c.text_in(f, line, &format!("{}{n}", AUTO_SELECTING), th.fg, HAlign::Center);
                 }
@@ -417,7 +519,7 @@ impl Screen for Provision {
                     Some(code) => format!("{reason} ({code})"),
                     None => reason.clone(),
                 };
-                splash(c, th, area, tr::PROV_FAILED, &text, None);
+                notice(c, th, area, "warning", th.warn, tr::PROV_FAILED, &text, None);
             }
             other => {
                 let text = match other {
@@ -428,7 +530,7 @@ impl Screen for Provision {
                 };
                 let server = p.server.as_ref().map(|s| s.address.as_str()).unwrap_or("");
                 let text = if server.is_empty() { text.to_string() } else { format!("{text}\n{server}") };
-                splash(c, th, area, "", &text, None);
+                notice(c, th, area, "app-network", th.accent, "", &text, None);
             }
         }
     }
@@ -483,6 +585,6 @@ impl Screen for UpdateScreen {
         if !matches!(u.phase, UpdatePhase::Complete) {
             text = format!("{text}\n{}", tr::UPDATE_WARNING);
         }
-        splash(c, cx.th, area, tr::UPDATE_TITLE, &text, pct);
+        notice(c, cx.th, area, "app-update", cx.th.accent, tr::UPDATE_TITLE, &text, pct);
     }
 }

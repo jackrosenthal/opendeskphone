@@ -12,6 +12,13 @@
 //! Everything shown comes from the `Bluetooth` state topic, and everything
 //! done is a command of the Bluetooth domain; the screen keeps only the
 //! highlighted device, its scroll position, and the PIN being typed.
+//!
+//! On the touch skin (D80) nothing is highlighted: each device's row is
+//! taller, with its state under its name and buttons for what can be done
+//! to it (Pair; Connect or Disconnect, and Forget), and a touch on the row
+//! does what Select does to it.  A finger scrolls the list, and Search is
+//! the one softkey.  The pairing question has its own buttons, and the PIN
+//! is typed in an [`EditScreen`].
 
 use super::*;
 use crate::gfx::{Rgb, mix};
@@ -35,6 +42,40 @@ const PIN_MAX: usize = 16;
 /// 300 ms 6 %.)
 const PULSE_DOTS: u64 = 3;
 const PULSE_MS: u64 = 300;
+
+/// Touch: the PIN field of the pairing question ([`Hit::Custom`]).  The
+/// buttons of a device's row are `Hit::Custom(action << 16 | row)`, the
+/// action a softkey's id.
+const HIT_PIN: u32 = 1;
+
+/// Touch: the height of a device's row (its name, and its state under it).
+fn device_h(th: &Theme) -> i32 {
+    if th.touch { th.row_h + th.px(12) } else { th.row_h }
+}
+
+/// The height of a line of the list.
+fn line_h(th: &Theme, line: &Line) -> i32 {
+    match line {
+        Line::Heading(_) if th.gray => th.line_h,
+        Line::Heading(_) => th.px(26),
+        Line::Device(_) => device_h(th),
+    }
+}
+
+/// Touch: the PIN, typed for the device at `addr` while it asks for one
+/// (its question may be gone by the time the PIN is typed).
+fn pin_entry(addr: String, typed: &str) -> Box<dyn Screen> {
+    EditScreen::boxed("bluetooth-pin", tr::PROV_ENTER_PIN, typed, InputMode::Numeric, move |cx, pin| {
+        let pin: String = pin.chars().filter(char::is_ascii_digit).take(PIN_MAX).collect();
+        if pin.is_empty() {
+            return Nav::Stay;
+        }
+        if cx.st.bluetooth.pairing.as_ref().is_some_and(|q| q.addr == addr && q.pin_needed) {
+            cx.post(Command::BluetoothAnswerPairing { addr: addr.clone(), accept: true, pin: Some(pin) });
+        }
+        Nav::Pop
+    })
+}
 
 fn label(d: &BluetoothDevice) -> &str {
     if d.name.is_empty() { &d.addr } else { &d.name }
@@ -91,21 +132,43 @@ fn lines(rows: &[Row]) -> Vec<Line> {
 /// The application's one screen; opening it starts a search, unless a
 /// pairing is under way.
 pub(crate) fn screen() -> Box<dyn Screen> {
-    Box::new(BluetoothScreen { opened: false, selected: String::new(), index: 0, top: 0, pin: String::new(), pin_for: String::new() })
+    Box::new(BluetoothScreen {
+        opened: false,
+        selected: String::new(),
+        index: 0,
+        top: 0,
+        drag: 0,
+        pin: String::new(),
+        pin_for: String::new(),
+    })
 }
 
 struct BluetoothScreen {
     opened: bool,
     /// The highlighted device, by address, so that the highlight stays on
     /// it as devices are found and the list reorders; and its place, for
-    /// when it goes.
+    /// when it goes.  (Touch: the device last touched.)
     selected: String,
     index: usize,
     /// The first line of the list in view.
     top: usize,
+    /// Touch: how far a finger has dragged the list, in pixels, short of a
+    /// line.
+    drag: i32,
     /// The PIN being typed, and the device that asked for it.
     pin: String,
     pin_for: String,
+}
+
+/// What Select does to a device: the first softkey of its row.
+fn primary(bt: &Bluetooth, row: Row) -> u32 {
+    match row {
+        Row::Paired(d) if d.addr == bt.connected => SK_DISCONNECT,
+        Row::Paired(_) => SK_CONNECT,
+        Row::Available(_) if bt.pairing_with.is_empty() => SK_PAIR,
+        // One pairing at a time.
+        Row::Available(_) => 0,
+    }
 }
 
 impl BluetoothScreen {
@@ -136,7 +199,8 @@ impl BluetoothScreen {
         let Some(q) = self.question(&cx.st.bluetooth) else { return Nav::Stay };
         let pin = if q.pin_needed && accept {
             if self.pin.is_empty() {
-                return Nav::Stay;
+                // Touch: there are no digit keys; the PIN is typed first.
+                return if cx.th.touch { Nav::Push(pin_entry(q.addr.clone(), "")) } else { Nav::Stay };
             }
             Some(self.pin.clone())
         } else {
@@ -151,22 +215,30 @@ impl BluetoothScreen {
         let th = cx.th;
         let bt = &cx.st.bluetooth;
         let lines = lines(rows);
-        let heading_h = if th.gray { th.line_h } else { th.px(26) };
-        let height = |l: &Line| if matches!(l, Line::Heading(_)) { heading_h } else { th.row_h };
-        let current = self.current(rows);
+        let height = |l: &Line| line_h(th, l);
+        // Touch: nothing is highlighted.
+        let current = if th.touch { None } else { self.current(rows) };
         if let Some(i) = current {
             self.highlight(rows, i);
         }
-        // Scroll so that the highlighted row is in view, with its group's
-        // heading when there is room, and no room is left below the end.
-        let sel = lines.iter().position(|l| Some(*l) == current.map(Line::Device)).unwrap_or(0);
-        let first = if sel > 0 && matches!(lines[sel - 1], Line::Heading(_)) { sel - 1 } else { sel };
-        self.top = self.top.min(first).min(lines.len().saturating_sub(1));
-        while self.top < sel && lines[self.top..=sel].iter().map(height).sum::<i32>() > body.h {
-            self.top += 1;
-        }
-        while self.top > 0 && lines[self.top - 1..].iter().map(height).sum::<i32>() <= body.h {
-            self.top -= 1;
+        if th.touch {
+            // A finger scrolls the list ([`Screen::drag`]), no farther
+            // than shows its last line at the bottom.
+            let last = (0..lines.len()).find(|t| lines[*t..].iter().map(height).sum::<i32>() <= body.h).unwrap_or(0);
+            self.top = self.top.min(last);
+        } else {
+            // Scroll so that the highlighted row is in view, with its
+            // group's heading when there is room, and no room is left
+            // below the end.
+            let sel = lines.iter().position(|l| Some(*l) == current.map(Line::Device)).unwrap_or(0);
+            let first = if sel > 0 && matches!(lines[sel - 1], Line::Heading(_)) { sel - 1 } else { sel };
+            self.top = self.top.min(first).min(lines.len().saturating_sub(1));
+            while self.top < sel && lines[self.top..=sel].iter().map(height).sum::<i32>() > body.h {
+                self.top += 1;
+            }
+            while self.top > 0 && lines[self.top - 1..].iter().map(height).sum::<i32>() <= body.h {
+                self.top -= 1;
+            }
         }
         let total: i32 = lines.iter().map(height).sum();
         let bar = total > body.h;
@@ -190,6 +262,10 @@ impl BluetoothScreen {
                 }
                 Line::Device(i) => i,
             };
+            if th.touch {
+                touch_row(cx, c, r, rows[i], i);
+                continue;
+            }
             let selected = Some(i) == current;
             if selected {
                 c.fill(if th.gray { r } else { IRect { h: r.h - 1, ..r } }, th.sel_bg);
@@ -237,9 +313,21 @@ impl BluetoothScreen {
             (false, Some(_)) => (tr::BT_COMPARE, big.height() + gap),
             (false, None) => (tr::BT_ASKS, 0),
         };
+        // Touch: the field is touched to type the PIN, and the answers are
+        // buttons under the rest.
+        let (field_h, extra) = if th.touch && q.pin_needed { (th.touch_min, th.touch_min + gap) } else { (field_h, extra) };
+        let buttons_h = if th.touch { th.touch_min + 2 * gap } else { 0 };
         let lines = f.wrap(text, text_w).len() as i32;
-        let h = (1 + lines) * th.line_h + extra + 2 * th.pad + gap;
+        let h = (1 + lines) * th.line_h + extra + 2 * th.pad + gap + buttons_h;
         let inner = widgets::modal(c, th, area, w, h);
+        if th.touch {
+            let (_, buttons) = inner.split_bottom(th.touch_min);
+            let (refuse, accept) = buttons.split_left((buttons.w - gap) / 2);
+            let accept = IRect { x: accept.x + gap, w: accept.w - gap, ..accept };
+            let yes = if q.pin_needed { tr::OK } else { tr::BT_PAIR };
+            widgets::button(c, th, refuse, tr::CANCEL, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Soft(SK_REFUSE));
+            widgets::button(c, th, accept, yes, th.sel_bg, None, th.sel_fg, Hit::Soft(SK_ACCEPT));
+        }
         let (head, rest) = inner.split_top(th.line_h);
         let (icon, title) = head.split_left(th.icon + th.pad);
         if let Some(i) = th.icon("headset") {
@@ -254,11 +342,60 @@ impl BluetoothScreen {
             (true, _) => {
                 let field = IRect::new(below.x, below.y, below.w, field_h);
                 widgets::text_field(c, th, field, &self.pin, self.pin.len(), InputMode::Numeric, true, false, "", Font::Normal);
+                if th.touch {
+                    c.hit(field, Hit::Custom(HIT_PIN));
+                }
             }
             (false, Some(p)) => c.text_in(big, below, &format!("{p:06}"), th.fg, HAlign::Center),
             (false, None) => {}
         }
     }
+}
+
+/// Touch: device number `i`, in its row `r`: its icon, its name with its
+/// state under it, and at the right its buttons.  A touch on the row
+/// elsewhere is [`Hit::Row`] `i`.
+fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
+    let th = cx.th;
+    let bt = &cx.st.bluetooth;
+    c.hit(r, Hit::Row { list: 0, row: i as u32 });
+    let (icon, rest) = r.split_left(th.icon + 2 * th.pad);
+    let device = row.device();
+    let (state, tint, buttons): (&str, Rgb, &[(u32, &str)]) = match row {
+        Row::Paired(d) => {
+            if let Some(ic) = th.icon("headset") {
+                c.icon_in(ic, icon, th.fg);
+            }
+            if d.addr == bt.connected {
+                (tr::BT_CONNECTED, th.good, &[(SK_DISCONNECT, tr::BT_DISCONNECT), (SK_FORGET, tr::BT_FORGET)])
+            } else {
+                (tr::BT_NOT_CONNECTED, th.secondary, &[(SK_CONNECT, tr::BT_CONNECT), (SK_FORGET, tr::BT_FORGET)])
+            }
+        }
+        Row::Available(d) if d.addr == bt.pairing_with => (tr::BT_PAIRING, th.accent, &[]),
+        // One pairing at a time.
+        Row::Available(_) if !bt.pairing_with.is_empty() => ("", th.secondary, &[]),
+        Row::Available(_) => ("", th.secondary, &[(SK_PAIR, tr::BT_PAIR)]),
+    };
+    // The buttons, from the right.
+    let bf = th.font(Font::Bold);
+    let mut right = rest.right() - th.pad;
+    for &(id, text) in buttons.iter().rev() {
+        let w = (bf.width(text) + th.px(32)).max(th.touch_min);
+        let b = IRect::new(right - w, r.y + (r.h - th.touch_min) / 2, w, th.touch_min);
+        widgets::button(c, th, b, text, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Custom(id << 16 | i as u32));
+        right = b.x - th.pad;
+    }
+    // The name, and the state under it.
+    let text = IRect::new(rest.x, r.y, right - rest.x, r.h);
+    if state.is_empty() {
+        c.text_in(th.font(Font::Normal), text, label(device), th.fg, HAlign::Left);
+    } else {
+        let (name, under) = text.split_top(r.h / 2 + th.px(4));
+        c.text_in(th.font(Font::Normal), IRect { y: name.bottom() - th.line_h, h: th.line_h, ..name }, label(device), th.fg, HAlign::Left);
+        c.text_in(th.font(Font::Small), IRect { h: th.line_h, ..under }, state, tint, HAlign::Left);
+    }
+    c.hline(r.x + th.px(16), r.bottom() - 1, r.w - th.px(24), th.border);
 }
 
 /// A message in the middle of `r`: a line, and a dimmer hint under it.
@@ -313,6 +450,12 @@ impl Screen for BluetoothScreen {
 
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         let bt = &cx.st.bluetooth;
+        if cx.th.touch {
+            // The rows have their buttons, the question its own, and the
+            // title bar the way back.
+            let search = bt.present && bt.pairing.is_none() && !bt.discovering;
+            return if search { vec![soft(SK_SEARCH, tr::BT_SEARCH)] } else { Vec::new() };
+        }
         let blank = || soft(0, "");
         let back = soft(SK_BACK, tr::BACK);
         if !bt.present {
@@ -407,6 +550,61 @@ impl Screen for BluetoothScreen {
         }
     }
 
+    /// Touch: a device's row does what Select does to it, and its buttons
+    /// what their softkeys do; the PIN field opens the PIN's entry.
+    fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
+        let bt = &cx.st.bluetooth;
+        let (action, i) = match hit {
+            Hit::Custom(HIT_PIN) => {
+                return match self.question(bt) {
+                    Some(q) if q.pin_needed => Nav::Push(pin_entry(q.addr.clone(), &self.pin)),
+                    _ => Nav::Stay,
+                };
+            }
+            Hit::Custom(id) => (id >> 16, (id & 0xFFFF) as usize),
+            Hit::Row { row, .. } => (0, row as usize),
+            _ => return Nav::Ignored,
+        };
+        let rows = rows(bt);
+        if bt.pairing.is_some() || i >= rows.len() {
+            return Nav::Stay;
+        }
+        self.highlight(&rows, i);
+        match if action == 0 { primary(bt, rows[i]) } else { action } {
+            0 => Nav::Stay,
+            id => self.softkey(cx, id),
+        }
+    }
+
+    /// Touch: a finger scrolls the list, a line at a time.
+    fn drag(&mut self, cx: &Cx, _from: Option<Hit>, _dx: i32, dy: i32) -> Nav {
+        let bt = &cx.st.bluetooth;
+        let lines = lines(&rows(bt));
+        if bt.pairing.is_some() || lines.is_empty() {
+            return Nav::Stay;
+        }
+        self.drag -= dy;
+        loop {
+            if self.drag > 0 && self.top + 1 < lines.len() && self.drag >= line_h(cx.th, &lines[self.top]) {
+                self.drag -= line_h(cx.th, &lines[self.top]);
+                self.top += 1;
+            } else if self.drag < 0 && self.top > 0 && -self.drag >= line_h(cx.th, &lines[self.top - 1]) {
+                self.drag += line_h(cx.th, &lines[self.top - 1]);
+                self.top -= 1;
+            } else {
+                break;
+            }
+        }
+        // Not beyond the first line or the last.
+        if self.top == 0 {
+            self.drag = self.drag.max(0);
+        }
+        if self.top + 1 >= lines.len() {
+            self.drag = self.drag.min(0);
+        }
+        Nav::Stay
+    }
+
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
         let bt = &cx.st.bluetooth;
@@ -441,6 +639,11 @@ impl Screen for BluetoothScreen {
             message(c, th, list, tr::BT_NONE_FOUND, tr::BT_PAIRING_MODE_SEARCH);
         }
         if let Some(q) = self.question(bt) {
+            // Touch: the question is answered, and nothing else is touched
+            // (the back button too would answer it).
+            if th.touch {
+                c.hit(area, Hit::Nothing);
+            }
             self.draw_question(cx, c, body, q);
         }
     }

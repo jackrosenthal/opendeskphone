@@ -706,3 +706,89 @@ fn alarm_clock() {
         r.shot("71-alarm-ringing");
     }
 }
+
+/// The D80's Bluetooth application in the states of `bluetooth`: each
+/// device's row has its buttons, the pairing question has its own, and a
+/// finger scrolls the list.
+#[test]
+fn bluetooth_d80() {
+    let mut r = Rig::new(Model::D80);
+    r.running();
+    r.store.update::<CallLog, _>(|l| l.missed_unseen = 0);
+    r.ui.pump();
+    let dev = |addr: &str, name: &str, rssi: i8| BluetoothDevice { addr: addr.into(), name: name.into(), rssi };
+    r.store.update::<Bluetooth, _>(|b| {
+        b.present = true;
+        b.powered = true;
+        b.discovering = true;
+    });
+    r.show("bluetooth");
+    r.shot("80-bt-searching");
+    r.store.update::<Bluetooth, _>(|b| {
+        b.found = vec![
+            dev("00:1B:DC:0F:A1:02", "Jabra Evolve 65", -48),
+            dev("5C:F3:70:11:22:33", "Plantronics Voyager", -63),
+            dev("F4:4E:FD:44:55:66", "", -80),
+        ];
+    });
+    r.shot("81-bt-found");
+    r.store.update::<Bluetooth, _>(|b| {
+        b.pairing_with = "5C:F3:70:11:22:33".into();
+        b.discovering = false;
+    });
+    r.shot("83-bt-pairing");
+    r.store.update::<Bluetooth, _>(|b| {
+        b.pairing = Some(BluetoothPairing { addr: "5C:F3:70:11:22:33".into(), name: "Plantronics Voyager".into(), passkey: Some(42), pin_needed: false });
+    });
+    r.show("bluetooth");
+    r.shot("84-bt-confirm");
+    r.store.update::<Bluetooth, _>(|b| b.pairing.as_mut().unwrap().pin_needed = true);
+    r.show("bluetooth");
+    r.shot("85-bt-pin-question");
+    r.store.update::<Bluetooth, _>(|b| {
+        b.pairing = None;
+        b.pairing_with.clear();
+        b.paired = vec![dev("5C:F3:70:11:22:33", "Plantronics Voyager", 0), dev("00:0D:44:AA:BB:CC", "Office Headset", 0)];
+        b.connected = "5C:F3:70:11:22:33".into();
+        b.found.retain(|d| d.addr != "5C:F3:70:11:22:33");
+        b.discovering = true;
+    });
+    r.show("bluetooth");
+    r.shot("87-bt-paired-searching");
+    r.store.update::<Bluetooth, _>(|b| b.discovering = false);
+    r.shot("88-bt-paired-done");
+    r.store.update::<Bluetooth, _>(|b| {
+        for i in 0..6 {
+            b.found.push(dev(&format!("00:00:00:00:00:0{i}"), &format!("Headset {}", i + 1), -85));
+        }
+    });
+    r.sim.touch_drag((400, 1000), (400, 300), 8);
+    r.shot("89-bt-scrolled");
+    r.store.update::<Bluetooth, _>(|b| {
+        b.found.clear();
+        b.paired.clear();
+        b.connected.clear();
+        b.discovering = false;
+    });
+    r.shot("90-bt-nothing-found");
+    r.store.update::<Bluetooth, _>(|b| b.error = "pairing with Plantronics Voyager failed".into());
+    r.shot("91-bt-error");
+    r.store.update::<Bluetooth, _>(|b| *b = Bluetooth::default());
+    r.show("bluetooth");
+    r.shot("92-bt-no-controller");
+}
+
+/// The D80's ringing alarm: the time, and two large buttons.
+#[test]
+fn alarm_clock_d80() {
+    let mut r = Rig::new(Model::D80);
+    r.running();
+    r.store.update::<Alarms, _>(|a| {
+        a.alarms = vec![Alarm { id: 1, hour: 8, minute: 0, days: 0b0111110, tone: "Osmium".into(), enabled: true }];
+        a.icon = true;
+        a.ringing = Some(AlarmRinging { id: 1, hour: 8, minute: 0 });
+    });
+    r.ui.pump();
+    assert_eq!(r.ui.screen_name(), "alarm");
+    r.shot("71-alarm-ringing");
+}

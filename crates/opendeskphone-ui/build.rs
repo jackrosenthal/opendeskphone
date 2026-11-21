@@ -104,8 +104,8 @@ const BITMAP_FALLBACKS: [(&str, &str); 8] = [
 /// The last flag inverts luminance on the gray skins (artwork drawn for a
 /// dark background, shown on the light gray screens).
 ///
-/// A file named `<name>.<skin>.svg` (`small-gray`, `large-gray`, or
-/// `color`) replaces `<name>.svg` on that skin.  It is drawn for that
+/// A file named `<name>.<skin>.svg` (`small-gray`, `large-gray`, `color`,
+/// or `touch`) replaces `<name>.svg` on that skin.  It is drawn for that
 /// skin's pixels: it is rendered at its own size, and never inverted.
 const CLASSES: [(&str, [u32; 4], bool, bool); 3] = [
     ("icons/status", [13, 15, 22, 44], false, false),
