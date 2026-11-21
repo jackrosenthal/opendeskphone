@@ -852,6 +852,23 @@ fn d80_touch() {
     touch(&mut r, Cap::More.hit());
     r.shot("t04-osk-more");
     touch(&mut r, Hit::Key(Key::Cancel));
+    // Contacting the server, with its Cancel; the extensions, narrowed.
+    r.store.update::<Provisioning, _>(|p| {
+        p.phase = ProvisionPhase::Handshaking;
+        p.server = Some(DiscoveredServer { source: DiscoverySource::Manual, name: "tu".into(), address: "tu".into() });
+    });
+    r.shot("t05-prov-contacting");
+    r.store.update::<Provisioning, _>(|p| {
+        p.phase = ProvisionPhase::AwaitingUser;
+        p.users = (0..30).map(|i| ProvisionUser { id: format!("1{i:02}"), name: format!("User Number {i}"), needs_pin: false }).collect();
+    });
+    r.ui.pump();
+    touch(&mut r, Hit::Custom(2));
+    touch(&mut r, Cap::Symbols.hit());
+    for ch in "12".chars() {
+        touch(&mut r, Cap::Char(ch).hit());
+    }
+    r.shot("t06-prov-users-filter");
     r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Provisioned);
 
     // Menus.
@@ -875,6 +892,11 @@ fn d80_touch() {
         touch(&mut r, Cap::Char(ch).hit());
     }
     r.shot("t15-osk-dial");
+    // A rule that is on, with its number under it.
+    r.store.update::<Features, _>(|f| f.forward.always = "1099".into());
+    r.show("forward");
+    r.shot("t18-forward");
+    r.store.update::<Features, _>(|f| f.forward.always.clear());
     r.show("network");
     touch(&mut r, row(1));
     assert_eq!(r.ui.screen_name(), "setting_edit");
@@ -924,6 +946,11 @@ fn d80_touch() {
     r.shot("t32-status");
     r.show("paging");
     r.shot("t33-paging");
+    r.show("settings");
+    touch(&mut r, row(2));
+    touch(&mut r, row(2));
+    assert_eq!(r.ui.screen_name(), "backlight_timeout");
+    r.shot("t34-backlight-timeout");
 }
 
 /// The D80's Bluetooth application in the states of `bluetooth`: each
@@ -976,6 +1003,11 @@ fn bluetooth_d80() {
     r.shot("87-bt-paired-searching");
     r.store.update::<Bluetooth, _>(|b| b.discovering = false);
     r.shot("88-bt-paired-done");
+    // A paired headset's own screen.
+    touch(&mut r, opendeskphone_ui::Hit::Custom(10 << 16));
+    assert_eq!(r.ui.screen_name(), "bluetooth-device");
+    r.shot("93-bt-device");
+    touch(&mut r, opendeskphone_ui::Hit::Key(Key::Cancel));
     r.store.update::<Bluetooth, _>(|b| {
         for i in 0..6 {
             b.found.push(dev(&format!("00:00:00:00:00:0{i}"), &format!("Headset {}", i + 1), -85));
@@ -1005,6 +1037,7 @@ fn alarm_clock_d80() {
     r.store.update::<Alarms, _>(|a| {
         a.alarms = vec![Alarm { id: 1, hour: 8, minute: 0, days: 0b0111110, tone: "Osmium".into(), enabled: true }];
         a.icon = true;
+        a.snooze_secs = 600;
         a.ringing = Some(AlarmRinging { id: 1, hour: 8, minute: 0 });
     });
     r.ui.pump();
