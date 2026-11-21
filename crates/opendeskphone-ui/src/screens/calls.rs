@@ -7,12 +7,15 @@
 //! call (a touch selects the call), the lines, and a button for each
 //! thing a key does during a call on a phone that has keys: where there
 //! is such a key the button is that key ([`Hit::Key`]), so that what it
-//! does is in one place.
+//! does is in one place.  (The volume is the exception: the screen shows
+//! the level between its two buttons, where the keys raise a popup.)
 
 use super::dialpad::Look;
 use super::*;
 use crate::gfx::Rgb;
-use opendeskphone_state::{AccountId, AudioPath, Call, CallId, CallState, Direction, EndCause, LampColor, Tone};
+use opendeskphone_state::{
+    AccountId, AudioPath, Call, CallId, CallState, Direction, EndCause, LampColor, Tone, VolumeTarget, VOLUME_MAX,
+};
 
 /// Why the dialer is open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -640,9 +643,11 @@ pub(crate) struct CallScreen {
 }
 
 /// Touch: the regions of the call screen's own ([`Hit::Custom`]): the
-/// button that shows and hides the dial pad, and, from `HIT_CARD`, the
-/// card of the call with that id.
+/// button that shows and hides the dial pad, the two volume buttons, and,
+/// from `HIT_CARD`, the card of the call with that id.
 const HIT_KEYPAD: u32 = 1;
+const HIT_VOLUME_DOWN: u32 = 2;
+const HIT_VOLUME_UP: u32 = 3;
 const HIT_CARD: u32 = 1000;
 
 impl CallScreen {
@@ -800,6 +805,13 @@ impl Screen for CallScreen {
             Hit::Custom(HIT_KEYPAD) => {
                 self.keypad = !self.keypad;
                 self.dtmf.clear();
+                Nav::Stay
+            }
+            // What the volume keys do, without their popup: the level is
+            // on the screen.
+            Hit::Custom(n @ (HIT_VOLUME_DOWN | HIT_VOLUME_UP)) => {
+                let delta = if n == HIT_VOLUME_UP { 1 } else { -1 };
+                cx.post(Command::AdjustVolume { target: VolumeTarget::Current, delta });
                 Nav::Stay
             }
             // A call's card: the buttons act on that call from now on.
@@ -1018,7 +1030,7 @@ impl CallScreen {
             let h = dialpad::pad_h(th, key_h);
             dialpad::pad(c, th, IRect::new(space.x, space.y + (space.h - h) / 2, space.w, h));
             let cols = dialpad::columns(bottom, 2, gap);
-            dialpad::control(c, th, cols[0], "keypad", tr::HIDE_KEYPAD, Look::Plain, Hit::Custom(HIT_KEYPAD));
+            dialpad::control(c, th, cols[0], dialpad::KEYPAD, tr::HIDE_KEYPAD, Look::Plain, Hit::Custom(HIT_KEYPAD));
             dialpad::control(c, th, cols[1], "phone", tr::END_CALL, Look::Stop, Hit::Soft(10));
             return;
         }
@@ -1031,7 +1043,7 @@ impl CallScreen {
             dialpad::control(c, th, bottom, "phone", tr::END_CALL, Look::Stop, Hit::Soft(10));
         }
 
-        // The buttons, three to a row.  The audio buttons show what the
+        // The buttons, four to a row.  The audio buttons show what the
         // lamps of the keys show.
         let (speaker, headset, _) = opendeskphone_state::audio_lamps(&st.audio, &st.calls);
         let look = |on: bool, enabled: bool| match (enabled, on) {
@@ -1040,45 +1052,24 @@ impl CallScreen {
             (true, false) => Look::Plain,
         };
         let other = self.other(cx, sel.id).is_some();
-        let (cell_h, rows) = (th.px(58), 3);
+        let (cell_h, rows) = (th.px(58), 2);
         let grid = IRect::new(inner.x, bottom.y - gap - rows * cell_h - (rows - 1) * gap, inner.w, rows * cell_h + (rows - 1) * gap);
         let cells: Vec<IRect> = (0..rows)
-            .flat_map(|row| dialpad::columns(IRect::new(grid.x, grid.y + row * (cell_h + gap), grid.w, cell_h), 3, gap))
+            .flat_map(|row| dialpad::columns(IRect::new(grid.x, grid.y + row * (cell_h + gap), grid.w, cell_h), 4, gap))
             .collect();
         dialpad::control(c, th, cells[0], "mute", tr::MUTE, look(st.audio.muted || sel.muted, true), Hit::Key(Key::Mute));
-        dialpad::control(c, th, cells[1], "keypad", tr::KEYPAD, look(false, can_type), Hit::Custom(HIT_KEYPAD));
-        dialpad::control(
-            c,
-            th,
-            cells[2],
-            "speaker",
-            tr::VOL_SPEAKER,
-            look(speaker.color != LampColor::Off, true),
-            Hit::Key(Key::Speaker),
-        );
-        dialpad::control(
-            c,
-            th,
-            cells[3],
-            "hold",
-            if held { tr::RESUME } else { tr::HOLD },
-            look(held, held || *state == CallState::Active),
-            Hit::Key(Key::Hold),
-        );
+        dialpad::control(c, th, cells[1], dialpad::KEYPAD, tr::KEYPAD, look(false, can_type), Hit::Custom(HIT_KEYPAD));
+        let on = speaker.color != LampColor::Off;
+        dialpad::control(c, th, cells[2], "speaker", tr::VOL_SPEAKER, look(on, true), Hit::Key(Key::Speaker));
+        let on = headset.color != LampColor::Off;
+        dialpad::control(c, th, cells[3], "headset", tr::VOL_HEADSET, look(on, true), Hit::Key(Key::Headset));
+        let (label, can_hold) = (if held { tr::RESUME } else { tr::HOLD }, held || *state == CallState::Active);
+        dialpad::control(c, th, cells[4], "hold", label, look(held, can_hold), Hit::Key(Key::Hold));
         if other {
-            dialpad::control(c, th, cells[4], "", tr::SWAP, Look::Plain, Hit::Soft(14));
+            dialpad::control(c, th, cells[5], "", tr::SWAP, Look::Plain, Hit::Soft(14));
         } else {
-            dialpad::control(c, th, cells[4], "phone-out", tr::NEW_CALL, look(false, established), Hit::Soft(15));
+            dialpad::control(c, th, cells[5], "phone-out", tr::NEW_CALL, look(false, established), Hit::Soft(15));
         }
-        dialpad::control(
-            c,
-            th,
-            cells[5],
-            "headset",
-            tr::VOL_HEADSET,
-            look(headset.color != LampColor::Off, true),
-            Hit::Key(Key::Headset),
-        );
         dialpad::control(c, th, cells[6], "transfer", tr::TRANSFER, look(false, established || ringing), Hit::Key(Key::Transfer));
         if sel.in_conference && *state == CallState::Active {
             dialpad::control(c, th, cells[7], "conference", tr::SPLIT, Look::Plain, Hit::Soft(13));
@@ -1086,10 +1077,26 @@ impl CallScreen {
             let label = if other { tr::JOIN } else { tr::CONFERENCE };
             dialpad::control(c, th, cells[7], "conference", label, look(false, established), Hit::Key(Key::Conference));
         }
-        // The volume keys (they raise the volume popup, which has the
-        // level).
-        let volume = dialpad::columns(cells[8], 2, gap);
-        dialpad::control(c, th, volume[0], "", tr::VOLUME_DOWN, Look::Plain, Hit::Key(Key::VolumeDown));
-        dialpad::control(c, th, volume[1], "", tr::VOLUME_UP, Look::Plain, Hit::Key(Key::VolumeUp));
+
+        // The volume of what is sounding (the ringer, for a ringing call):
+        // its level between the buttons that lower and raise it.
+        let row = IRect::new(inner.x, grid.y - gap - th.touch_min, inner.w, th.touch_min);
+        let (minus, rest) = row.split_left(th.px(52));
+        let (rest, plus) = rest.split_right(th.px(52));
+        dialpad::control(c, th, minus, "", "\u{2013}", Look::Plain, Hit::Custom(HIT_VOLUME_DOWN));
+        dialpad::control(c, th, plus, "", "+", Look::Plain, Hit::Custom(HIT_VOLUME_UP));
+        let icon = match st.audio.current_target() {
+            VolumeTarget::Handset => "handset",
+            VolumeTarget::Headset => "headset",
+            VolumeTarget::Speaker => "speaker",
+            VolumeTarget::Ringer | VolumeTarget::Current => "ring",
+        };
+        let (ic, meter) = rest.inset_xy(gap, 0).split_left(th.icon + gap);
+        if let Some(i) = th.icon(icon) {
+            c.icon_in(i, IRect { w: th.icon, ..ic }, th.wallpaper_fg);
+        }
+        let h = th.px(18);
+        let level = st.audio.volume(VolumeTarget::Current) as u32;
+        widgets::meter(c, th, IRect::new(meter.x, meter.y + (meter.h - h) / 2, meter.w, h), level, VOLUME_MAX as u32);
     }
 }

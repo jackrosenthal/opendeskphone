@@ -259,7 +259,5 @@ pub const BT_TYPE_PIN: &str = "Type the headset's PIN, which is often 0000.";
 pub const KEYPAD: &str = "Keypad";
 pub const HIDE_KEYPAD: &str = "Hide Keypad";
 pub const MUTE: &str = "Mute";
-pub const VOLUME_DOWN: &str = "Vol \u{2013}";
-pub const VOLUME_UP: &str = "Vol +";
 pub const LINE_AVAILABLE: &str = "Available";
 pub const LINE_UNAVAILABLE: &str = "Unavailable";

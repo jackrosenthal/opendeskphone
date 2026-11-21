@@ -706,3 +706,91 @@ fn alarm_clock() {
         r.shot("71-alarm-ringing");
     }
 }
+
+/// The D80's idle screen, dialer, and call screen, operated by touch.
+#[test]
+fn d80_touch_calls() {
+    use opendeskphone_ui::Hit;
+    fn tap(r: &mut Rig, hit: Hit) {
+        let at = r.ui.canvas().hit_rect(hit).unwrap_or_else(|| panic!("no region {hit:?}"));
+        r.sim.touch_tap((at.x + at.w / 2) as u16, (at.y + at.h / 2) as u16);
+        r.ui.pump();
+    }
+    let model = Model::D80;
+    let mut r = Rig::new(model);
+    r.running();
+    r.ui.pump();
+
+    // Idle, with the lamps of the lines lit and an app's idle view.
+    r.store.update::<Keys, _>(|k| {
+        k.line_keys[0].lamp = LampState::solid(LampColor::Green);
+        k.line_keys[3].lamp = LampState::solid(LampColor::Red);
+    });
+    let (view, _events) = AppView::new("status", model);
+    let area = opendeskphone_ui::idle_app_area(model);
+    {
+        let mut t = view.batch();
+        let line = t.create(WidgetKind::Text, None, av::Rect::new(0, 0, area.width, area.height));
+        t.set_text(line, "Status: Available");
+        t.set_align(line, av::Align::Center, av::VAlign::Middle);
+    }
+    r.ui.handle().add_idle_view(view.clone());
+    r.shot("60-touch-idle");
+    r.ui.handle().remove_idle_view("status");
+    r.ui.pump();
+
+    // The dialer: opened from the idle screen, the number touched in.
+    tap(&mut r, Hit::Custom(1));
+    assert_eq!(r.ui.screen_name(), "dialer");
+    r.shot("61-touch-dialer-empty");
+    for d in [1, 5, 5, 5, 5, 5, 5, 0, 1, 2, 3] {
+        tap(&mut r, Hit::Key(Key::Digit(d)));
+    }
+    r.shot("62-touch-dialer");
+    tap(&mut r, Hit::Key(Key::Cancel));
+    assert_eq!(r.ui.screen_name(), "idle");
+
+    // Calls.
+    let c1 = r.call(Direction::Incoming, CallState::Ringing, "Alice Example", "1002");
+    r.store.update::<Keys, _>(|k| {
+        k.line_keys[0].calls = vec![c1];
+        k.line_keys[0].lamp = LampState::blinking(LampColor::Green, Blink::Fast);
+    });
+    r.shot("63-touch-call-incoming");
+    r.store.update::<Calls, _>(|c| {
+        let call = c.get_mut(c1).unwrap();
+        call.state = CallState::Active;
+        call.connected_mono_ms = Some(MONO - 83_000);
+        call.srtp = true;
+    });
+    r.store.update::<Audio, _>(|a| {
+        a.path = AudioPath::Speaker;
+        a.muted = true;
+    });
+    r.store.update::<Keys, _>(|k| k.line_keys[0].lamp = LampState::solid(LampColor::Green));
+    r.shot("64-touch-call-active");
+    tap(&mut r, Hit::Custom(1));
+    for d in [4, 2] {
+        tap(&mut r, Hit::Key(Key::Digit(d)));
+    }
+    r.shot("65-touch-call-keypad");
+    tap(&mut r, Hit::Custom(1));
+    tap(&mut r, Hit::Key(Key::Transfer));
+    assert_eq!(r.ui.screen_name(), "dialer");
+    for d in [1, 0, 0, 7] {
+        tap(&mut r, Hit::Key(Key::Digit(d)));
+    }
+    r.shot("66-touch-transfer");
+    tap(&mut r, Hit::Key(Key::Cancel));
+    assert_eq!(r.ui.screen_name(), "call");
+    r.store.update::<Audio, _>(|a| {
+        a.path = AudioPath::Handset;
+        a.muted = false;
+    });
+    r.store.update::<Calls, _>(|c| c.get_mut(c1).unwrap().state = CallState::Held { local: true, remote: false });
+    r.call(Direction::Outgoing, CallState::Active, "", "15555550123");
+    r.call(Direction::Outgoing, CallState::Ringback { early_media: false }, "Bob Builder", "1003");
+    r.shot("67-touch-call-three");
+    r.end_calls();
+    assert_eq!(r.ui.screen_name(), "idle");
+}

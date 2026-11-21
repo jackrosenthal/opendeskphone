@@ -424,7 +424,7 @@ impl Idle {
         draw_status_icons(cx, c, IRect::new(inner.x - th.px(8), area.y, inner.w, th.header_h), th.wallpaper_fg);
 
         let call = IRect::new(inner.x, area.bottom() - th.pad - th.px(52), inner.w, th.px(52));
-        dialpad::control(c, th, call, "keypad", tr::NEW_CALL, dialpad::Look::Go, Hit::Custom(HIT_NEW_CALL));
+        dialpad::control(c, th, call, dialpad::KEYPAD, tr::NEW_CALL, dialpad::Look::Go, Hit::Custom(HIT_NEW_CALL));
         let mut bottom = call.y - th.pad;
 
         let lines = lines(cx);

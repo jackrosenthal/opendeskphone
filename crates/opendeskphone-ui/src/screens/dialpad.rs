@@ -58,6 +58,22 @@ pub(crate) fn pad(c: &mut Canvas, th: &Theme, r: IRect) {
     }
 }
 
+/// The name of the dial pad's icon for [`control`]: not one of the skin's
+/// icons (those are the apps' too), but drawn here.
+pub(crate) const KEYPAD: &str = "keypad";
+
+/// The dial pad's icon, `th.icon` pixels each way from (`x`, `y`): three
+/// rows of three dots, and one under the middle.
+fn keypad_icon(c: &mut Canvas, th: &Theme, x: i32, y: i32, fg: Rgb) {
+    let size = th.icon;
+    let dot = size * 2 / 11;
+    let pitch = (size - dot) / 3;
+    let left = x + (size - 2 * pitch - dot) / 2;
+    for (col, row) in (0..3).flat_map(|row| (0..3).map(move |col| (col, row))).chain([(1, 3)]) {
+        c.fill_round_aa(IRect::new(left + col * pitch, y + row * pitch, dot, dot), dot / 2, fg);
+    }
+}
+
 /// How a [`control`] looks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Look {
@@ -75,8 +91,8 @@ pub(crate) enum Look {
     Off,
 }
 
-/// A button of the touch screens in `r`: `icon` (none if empty or
-/// unknown) and `label` (none if empty), the icon above the label where
+/// A button of the touch screens in `r`: `icon` (one of the skin's, or
+/// [`KEYPAD`]; none if empty or unknown) and `label` (none if empty), the icon above the label where
 /// the button is tall enough for both and beside it where it is not.  It
 /// is a region that is `hit`, unless its look is [`Look::Off`].
 pub(crate) fn control(c: &mut Canvas, th: &Theme, r: IRect, icon: &str, label: &str, look: Look, hit: Hit) {
@@ -102,22 +118,33 @@ pub(crate) fn control(c: &mut Canvas, th: &Theme, r: IRect, icon: &str, label: &
         let f = th.font(Font::Bold);
         if f.width(label) > w { th.font(Font::Small) } else { f }
     };
-    match th.icon(icon) {
-        Some(i) if label.is_empty() => c.icon_in(i, r, fg),
-        Some(i) if r.h >= i.height() + th.line_h + th.pad => {
+    // The icon's size, and how it is drawn: one of the skin's, or the
+    // dial pad's, which is drawn here.
+    let glyph: Option<(i32, i32)> = match icon {
+        KEYPAD => Some((th.icon, th.icon)),
+        name => th.icon(name).map(|i| (i.width(), i.height())),
+    };
+    let draw = |c: &mut Canvas, x: i32, y: i32| match (icon, th.icon(icon)) {
+        (KEYPAD, _) => keypad_icon(c, th, x, y, fg),
+        (_, Some(i)) => c.icon(i, x, y, fg),
+        _ => {}
+    };
+    match glyph {
+        Some((w, h)) if label.is_empty() => draw(c, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2),
+        Some((w, h)) if r.h >= h + th.line_h + th.pad => {
             let f = font_for(inner.w);
-            let block = i.height() + th.px(2) + f.height();
+            let block = h + th.px(2) + f.height();
             let top = r.y + (r.h - block) / 2;
-            c.icon(i, r.x + (r.w - i.width()) / 2, top, fg);
+            draw(c, r.x + (r.w - w) / 2, top);
             c.text_in(f, IRect::new(inner.x, top + block - f.height(), inner.w, f.height()), label, fg, HAlign::Center);
         }
-        Some(i) => {
+        Some((w, h)) => {
             let gap = th.pad;
-            let f = font_for(inner.w - i.width() - gap);
-            let w = (i.width() + gap + f.width(label)).min(inner.w);
-            let x = inner.x + (inner.w - w) / 2;
-            c.icon(i, x, r.y + (r.h - i.height()) / 2, fg);
-            c.text_in(f, IRect::new(x + i.width() + gap, r.y, w - i.width() - gap, r.h), label, fg, HAlign::Left);
+            let f = font_for(inner.w - w - gap);
+            let all = (w + gap + f.width(label)).min(inner.w);
+            let x = inner.x + (inner.w - all) / 2;
+            draw(c, x, r.y + (r.h - h) / 2);
+            c.text_in(f, IRect::new(x + w + gap, r.y, all - w - gap, r.h), label, fg, HAlign::Left);
         }
         None => c.text_in(font_for(inner.w), inner, label, fg, HAlign::Center),
     }
