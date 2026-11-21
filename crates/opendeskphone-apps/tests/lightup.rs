@@ -1482,6 +1482,14 @@ impl Phone {
         self.tap(r.x + r.w / 2, r.y + r.h / 2);
     }
 
+    /// Touches item `n` (from 0) of the menu that "More" opens: the
+    /// softkeys that have no button.
+    fn more(&mut self, n: u32) {
+        self.softkey(4);
+        let r = self.ui.canvas().hit_rect(opendeskphone_ui::Hit::Custom(0x100 + n)).expect("an item of the menu");
+        self.tap(r.x + r.w / 2, r.y + r.h / 2);
+    }
+
     fn pixel(&self, x: i32, y: i32) -> u32 {
         self.ui.canvas().pixel(x, y)
     }
@@ -1551,15 +1559,13 @@ fn on_a_d80_the_game_is_drawn_and_touched_on_the_phones_own_screen() {
         p.softkey(1);
         assert_eq!(p.state(), before, "{side}");
         if side == 7 {
-            // The fourth is "More"; then the first is "Help", and the
-            // second "Scores".  The back button leaves either for the
-            // puzzle.
-            p.softkey(4);
-            p.softkey(1);
+            // The fourth is "More", which opens a menu: its first item
+            // is "Help", and its second "Scores".  The back button
+            // leaves either for the puzzle.
+            p.more(0);
             p.shot("help");
             p.tap(40, 40);
-            p.softkey(4);
-            p.softkey(2);
+            p.more(1);
             p.shot("scores");
             p.tap(40, 40);
             assert_eq!(p.state(), before);

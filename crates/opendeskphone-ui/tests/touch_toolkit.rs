@@ -296,8 +296,9 @@ fn a_pressed_button_has_its_own_shape() {
     let mut r = Rig::new(Model::D80);
     // The volume popup's buttons (the volume keys of a phone that has
     // them open it).
-    let _ = r.store.send(Command::InjectKey { key: Key::VolumeUp, down: true });
+    let sent = r.store.send(Command::InjectKey { key: Key::VolumeUp, down: true });
     r.ui.pump();
+    assert_eq!(sent.wait(), Ok(Reply::Done));
     let plus = r.region(Hit::Key(Key::VolumeUp));
     let rest = r.ui.canvas().pixels().to_vec();
     r.sim.touch(TouchPhase::Down, (plus.x + 10) as u16, (plus.y + 40) as u16);

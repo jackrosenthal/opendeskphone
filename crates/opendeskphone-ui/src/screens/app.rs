@@ -322,8 +322,11 @@ impl Screen for AppScreen {
             }
             // The title bar's buttons are the phone's.
             widgets::title_buttons(c, th, IRect { h: th.title_h, ..area }, th.title_fg);
+            // (The menu goes with the softkeys it was opened for.)
+            let items = appview_impl::softkey_overflow(&tree);
+            self.menu &= !items.is_empty();
             if self.menu {
-                self.draw_menu(c, th, area, &appview_impl::softkey_overflow(&tree));
+                self.draw_menu(c, th, area, &items);
             }
             return;
         };
