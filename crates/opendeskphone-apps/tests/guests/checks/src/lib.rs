@@ -205,6 +205,34 @@ impl Checks {
                     .collect();
                 names.join(",")
             }
+            // What the phone says of its screen and of itself.
+            "metrics" => {
+                let m = ui::get_metrics();
+                format!(
+                    "{:?} {}x{} line={} title={} row={} bar={} color={} keys={} back={} model={:?}",
+                    m.skin,
+                    m.width,
+                    m.height,
+                    m.line_height,
+                    m.title_height,
+                    m.row_height,
+                    m.scroll_bar_width,
+                    m.color,
+                    m.keys,
+                    m.back_width,
+                    config::model()
+                )
+            }
+            // A canvas that takes touches, a list that does not, and with
+            // the argument "window" the window takes the rest.
+            "touch" => {
+                let c = canvas::create(ROOT, Rect::new(100, 200, 300, 300));
+                ui::claim_touch(c, true);
+                let list = ui::create(WidgetKind::TextList, ROOT, Rect::new(0, 600, 400, 300));
+                ui::set_items(list, &[ListItem::new("one"), ListItem::new("two"), ListItem::new("three")]);
+                ui::claim_touch(ROOT, arg == "window");
+                format!("canvas={c} list={list}")
+            }
             "long-key" => {
                 let key = "k".repeat(arg.parse().unwrap_or(0));
                 stored(storage::set(StorageLocation::Local, &key, b"v", None))
@@ -275,6 +303,11 @@ impl App for Checks {
             )),
             Event::PlaybackStopped(at) => self.log.push(format!("stopped {at}")),
             Event::HotdeskDone(result) => self.log.push(format!("hotdesk {result:?}")),
+            Event::Touch((w, Touch::Tap(p))) => self.log.push(format!("tap {w} {},{}", p.x, p.y)),
+            Event::Touch((w, Touch::Drag((a, b)))) => self.log.push(format!("drag {w} {},{} {},{}", a.x, a.y, b.x, b.y)),
+            Event::Touch((w, Touch::DragEnd((a, b)))) => self.log.push(format!("end {w} {},{} {},{}", a.x, a.y, b.x, b.y)),
+            Event::Widget((w, WidgetEvent::Highlighted(row))) => self.log.push(format!("highlighted {w} {row}")),
+            Event::Widget((w, WidgetEvent::Activated(row))) => self.log.push(format!("activated {w} {row}")),
             _ => return,
         }
         ui::set_text(self.seen, &self.log.join("; "));

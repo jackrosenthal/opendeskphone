@@ -2,13 +2,15 @@
 //! (`opendeskphone-ui`'s `appview`) is adapted to these traits by the
 //! integrator; the semantics follow that module: widgets are handles within
 //! one window, `None` is the window itself (the app content area), keys reach
-//! the app only when claimed, and softkeys belong to widgets.
+//! the app only when claimed, softkeys belong to widgets, and on a
+//! touchscreen a finger reaches the app on the widgets that take touches.
 
 pub use crate::host::bindings::opendeskphone::app::canvas::{
     Bitmap, Color, Op as DrawOp, Role as ColorRole,
 };
 pub use crate::host::bindings::opendeskphone::app::types::{
-    Align, Font, Icon, Image, InputMode, ListItem, Metrics, Rect, Size, Skin, Softkey, WidgetKind,
+    Align, Font, Icon, Image, InputMode, ListItem, Metrics, Point, Rect, Size, Skin, Softkey, Touch,
+    WidgetKind,
 };
 use opendeskphone_state::{Key, LampColor, Model};
 use std::sync::Arc;
@@ -197,6 +199,11 @@ pub enum WindowKind {
     Idle,
 }
 
+// (The interface's types are generated with `PartialEq` alone; these have
+// nothing in them that is not equal to itself.)
+impl Eq for Point {}
+impl Eq for Touch {}
+
 /// Something the user did in a window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowEvent {
@@ -226,6 +233,12 @@ pub enum WindowEvent {
     Submitted {
         widget: u32,
         value: String,
+    },
+    /// A finger on a widget that takes touches (0: the window), with
+    /// places counted from that widget's top-left corner.
+    Touch {
+        widget: u32,
+        touch: Touch,
     },
     /// Cancel was pressed and nothing claimed it.
     CloseRequested,
@@ -302,6 +315,9 @@ pub trait AppWindow: Send {
     fn hold_changes(&mut self, _on: bool) {}
     fn set_softkeys(&mut self, w: Option<u32>, keys: &[Softkey]);
     fn claim_keys(&mut self, w: Option<u32>, keys: &[Key]);
+    /// Whether the widget (`None`: the window) takes touches: what a
+    /// finger does on it comes as [`WindowEvent::Touch`].
+    fn claim_touch(&mut self, _w: Option<u32>, _on: bool) {}
     /// Next pending user event, if any.
     fn poll_event(&mut self) -> Option<WindowEvent>;
 }

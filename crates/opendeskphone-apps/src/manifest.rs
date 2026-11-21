@@ -27,7 +27,7 @@ pub const RECORD: &str = "app.pb";
 /// The largest icon.
 pub const MAX_ICON_BYTES: usize = 256 << 10;
 /// The models of phone an icon can be for.
-pub const MODELS: [&str; 7] = ["D40", "D45", "D50", "D60", "D62", "D65", "D70"];
+pub const MODELS: [&str; 8] = ["D40", "D45", "D50", "D60", "D62", "D65", "D70", "D80"];
 
 /// A host interface an app may be granted.  `runtime` is always granted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

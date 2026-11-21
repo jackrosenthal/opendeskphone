@@ -172,7 +172,7 @@ impl Look {
     fn new() -> Look {
         let m = ui::get_metrics();
         let rules = match m.skin {
-            Skin::Color => Rules::COLOR,
+            Skin::Color | Skin::Touch => Rules::COLOR,
             Skin::LargeGray => Rules::LARGE_GRAY,
             Skin::SmallGray => Rules::SMALL_GRAY,
         };
@@ -479,7 +479,7 @@ impl Screen {
         // plate is wider than the other to hold them, as wide as the
         // screen on the gray ones.
         let (board_w, score_w) = match m.skin {
-            Skin::Color => (440, 44),
+            Skin::Color | Skin::Touch => (440, 44),
             Skin::LargeGray => (m.width, 35),
             Skin::SmallGray => (m.width, 30),
         };
