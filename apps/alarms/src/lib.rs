@@ -5,6 +5,11 @@
 //! disables, and deletes alarms.  An alarm's time, days, and tone are a
 //! list of fields; Select on a field opens a dialog over the list in which
 //! the field is changed.
+//!
+//! On the touchscreen, which has no keys, touching an alarm chooses it for
+//! the buttons under the list, touching a field opens its dialog, and the
+//! time is not typed but chosen: the hours and the minutes are two lists
+//! side by side.
 
 use opendeskphone_app_sdk::alarms::{self, Alarm};
 use opendeskphone_app_sdk::canvas::{self, Op, Role};
@@ -60,6 +65,19 @@ enum Dialog {
     Tones,
 }
 
+/// Touch: the widgets of the dialog in which a time is chosen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Picker {
+    hours: Widget,
+    minutes: Widget,
+    /// The text of the time chosen.
+    shown: Widget,
+}
+
+/// How many rows of hours and minutes the time's dialog shows on the
+/// touchscreen.
+const PICKER_ROWS: usize = 5;
+
 #[derive(Default)]
 struct Alarms {
     screen: Screen,
@@ -81,6 +99,12 @@ struct Alarms {
     typed: Typed,
     /// The phone shows times with AM and PM.
     meridiem: bool,
+    /// Touch: the time's dialog, while it is open, and the rows chosen in
+    /// its lists (the hour's row is the hour of the half of the day where
+    /// the phone shows AM and PM; `typed.pm` has the half).
+    picker: Option<Picker>,
+    hour_row: u32,
+    minute_row: u32,
 }
 
 /// The text of a time of day as the phone shows times.
@@ -117,7 +141,10 @@ impl Alarms {
             }
             keys.push(Softkey::new(SK_DELETE, "Delete"));
         }
-        keys.push(Softkey::new(SK_EXIT, "Exit"));
+        // (Touch: the back button leaves.)
+        if has_keys() {
+            keys.push(Softkey::new(SK_EXIT, "Exit"));
+        }
         ui::set_softkeys(ROOT, &keys);
     }
 
@@ -202,6 +229,7 @@ impl Alarms {
         };
         self.screen = Screen::Edit;
         self.dialog = None;
+        self.picker = None;
         let items = [
             ListItem::with_detail("Time", time_text(d.hour, d.minute)),
             ListItem::with_detail("Repeat", days_label(d.days)),
@@ -233,6 +261,8 @@ impl Alarms {
             ROW_TIME => {
                 self.meridiem = time_text(13, 0).contains('M');
                 self.typed = Typed::of(d.hour, d.minute, self.meridiem);
+                self.hour_row = u32::from(if self.meridiem { d.hour % 12 } else { d.hour });
+                self.minute_row = u32::from(d.minute);
                 Dialog::Time
             }
             ROW_REPEAT => {
@@ -260,13 +290,21 @@ impl Alarms {
         // color on the gray displays, a thin edge on the color one.
         // On the gray ones a line of the background is left inside the
         // frame, so that a highlighted row does not run into it.
-        let (edge, pad) = if m.color { (1, 8) } else { (3, 2) };
-        let width = if m.color { 300 } else { m.width * 3 / 4 };
-        let head = m.line_height;
+        let touch = !m.keys;
+        let (edge, pad) = match (touch, m.color) {
+            (true, _) => (2, 16),
+            (false, true) => (1, 8),
+            (false, false) => (3, 2),
+        };
+        let width = if m.color && !touch { 300 } else { m.width * 3 / 4 };
+        // (Touch: the head is as high as what is touched under it needs.)
+        let head = if touch { m.line_height * 2 } else { m.line_height };
+        self.picker = None;
         let below = m.height.saturating_sub(m.title_height);
         let room = below.saturating_sub(2 * edge + head);
         let rows = |n: usize| (n as u16).min(room / m.row_height.max(1)) * m.row_height;
         let (title, body) = match dialog {
+            Dialog::Time if touch => ("Time", rows(PICKER_ROWS)),
             Dialog::Time => ("Time", (m.line_height * 2 + m.line_height + pad).min(room)),
             Dialog::Days => ("Repeat", rows(DAY_NAMES.len())),
             Dialog::Tones => ("Tone", rows(alarms::tones().len().max(1))),
@@ -274,6 +312,11 @@ impl Alarms {
         let height = 2 * edge + head + body;
         let top = m.title_height + (below - height) / 2;
         let bounds = Rect::new(((m.width - width) / 2) as i16, top as i16, width, height);
+        if touch {
+            // What is under the dialog is not touched while it is open.
+            let under = ui::create(WidgetKind::Group, ROOT, Rect::new(0, 0, m.width, m.height));
+            ui::claim_touch(under, true);
+        }
         let group = ui::create(WidgetKind::Group, ROOT, bounds);
         let back = canvas::create(group, Rect::new(0, 0, width, height));
         let line = canvas::theme_color(if m.color { Role::Border } else { Role::Foreground });
@@ -291,6 +334,45 @@ impl Alarms {
         ui::set_text(name, title);
         let area = Rect::new(edge as i16, (edge + head) as i16, width - 2 * edge, body);
         match dialog {
+            Dialog::Time if touch => {
+                // The time chosen, at the right of the head.
+                let shown = ui::create(
+                    WidgetKind::Text,
+                    group,
+                    Rect::new((width / 2) as i16, edge as i16, width / 2 - edge - pad, head),
+                );
+                ui::set_font(shown, Font::Bold);
+                ui::set_align(shown, Align::Right);
+                // The hours and the minutes, side by side.
+                let half = area.width / 2;
+                let hours = ui::create(WidgetKind::TextList, group, Rect::new(area.x, area.y, half, body));
+                let minutes = ui::create(
+                    WidgetKind::TextList,
+                    group,
+                    Rect::new(area.x + half as i16, area.y, area.width - half, body),
+                );
+                let hour_items: Vec<ListItem> = if self.meridiem {
+                    (0..12).map(|h| ListItem::new(if h == 0 { "12".to_string() } else { h.to_string() })).collect()
+                } else {
+                    (0..24).map(|h| ListItem::new(format!("{h:02}"))).collect()
+                };
+                let minute_items: Vec<ListItem> = (0..60).map(|m| ListItem::new(format!(":{m:02}"))).collect();
+                ui::set_items(hours, &hour_items);
+                ui::set_items(minutes, &minute_items);
+                ui::set_selected(hours, self.hour_row);
+                ui::set_selected(minutes, self.minute_row);
+                let mut softkeys = vec![Softkey::new(SK_OK, "OK")];
+                if self.meridiem {
+                    softkeys.push(Softkey::new(SK_MERIDIEM, "AM/PM"));
+                }
+                softkeys.push(Softkey::new(SK_CANCEL, "Cancel"));
+                ui::set_softkeys(group, &softkeys);
+                ui::claim_keys(group, &[Key::Cancel]);
+                ui::set_focus(hours);
+                self.field = hours;
+                self.picker = Some(Picker { hours, minutes, shown });
+                self.draw_time();
+            }
             Dialog::Time => {
                 let hint_h = m.line_height;
                 let time = ui::create(WidgetKind::Text, group, Rect::new(area.x, area.y, area.width, body - hint_h - pad));
@@ -323,6 +405,8 @@ impl Alarms {
                 let list = ui::create(WidgetKind::TextList, group, area);
                 ui::set_focus(list);
                 let softkeys = match dialog {
+                    // (Touch: a tone that is touched is heard.)
+                    Dialog::Tones if touch => vec![Softkey::new(SK_OK, "OK"), Softkey::new(SK_CANCEL, "Cancel")],
                     Dialog::Tones => vec![
                         Softkey::new(SK_OK, "Select"),
                         Softkey::new(SK_PLAY, "Play"),
@@ -337,8 +421,24 @@ impl Alarms {
         }
     }
 
+    /// Touch: the time chosen in the dialog's lists.
+    fn picked(&self) -> (u8, u8) {
+        let hour = if self.meridiem {
+            self.hour_row % 12 + if self.typed.pm { 12 } else { 0 }
+        } else {
+            self.hour_row.min(23)
+        };
+        (hour as u8, self.minute_row.min(59) as u8)
+    }
+
     fn draw_time(&self) {
-        ui::set_text(self.field, &self.typed.text(self.meridiem));
+        match self.picker {
+            Some(p) => {
+                let (hour, minute) = self.picked();
+                ui::set_text(p.shown, &time_text(hour, minute));
+            }
+            None => ui::set_text(self.field, &self.typed.text(self.meridiem)),
+        }
     }
 
     /// The rows of the dialog's list: the days, with a mark on each the
@@ -373,6 +473,10 @@ impl Alarms {
                 self.days ^= 1 << self.dialog_row.min(6);
                 self.draw_choices();
             }
+            // Touch: a tone that is touched is heard, and OK takes it.
+            Some(Dialog::Tones) if !has_keys() => {
+                alarms::preview(alarms::tones().get(self.dialog_row as usize).map(String::as_str))
+            }
             Some(_) => self.dialog_done(),
             None => {}
         }
@@ -381,8 +485,10 @@ impl Alarms {
     /// Takes the dialog's value into the alarm and closes the dialog.  A
     /// time that is not one keeps the dialog open.
     fn dialog_done(&mut self) {
+        let (picking, picked) = (self.picker.is_some(), self.picked());
         let (Some(dialog), Some(d)) = (self.dialog, &mut self.draft) else { return };
         match dialog {
+            Dialog::Time if picking => (d.hour, d.minute) = picked,
             Dialog::Time => match self.typed.time(self.meridiem) {
                 Some((hour, minute)) => (d.hour, d.minute) = (hour, minute),
                 None => return,
@@ -504,6 +610,17 @@ impl App for Alarms {
             Event::AlarmsChanged if self.screen == Screen::List && runtime::in_foreground() => {
                 self.show_list()
             }
+            // Touch: an hour or a minute of the time's dialog.
+            Event::Widget((w, WidgetEvent::Highlighted(row) | WidgetEvent::Activated(row)))
+                if self.picker.is_some_and(|p| w == p.hours || w == p.minutes) =>
+            {
+                if self.picker.is_some_and(|p| w == p.hours) {
+                    self.hour_row = row;
+                } else {
+                    self.minute_row = row;
+                }
+                self.draw_time();
+            }
             Event::Widget((w, WidgetEvent::Highlighted(row))) if self.dialog.is_some() => {
                 if w == self.field {
                     self.dialog_row = row;
@@ -529,7 +646,13 @@ impl App for Alarms {
                     Screen::Edit => self.edit_row = row,
                     Screen::Error => {}
                 }
-                self.activate();
+                // Touch: an alarm that is touched is the one the buttons
+                // under the list are for; "Edit" opens it.
+                if self.screen == Screen::List && !has_keys() {
+                    self.list_softkeys();
+                } else {
+                    self.activate();
+                }
             }
             Event::Softkey(id) => self.softkey(id),
             Event::Key(k) => self.key(k),
