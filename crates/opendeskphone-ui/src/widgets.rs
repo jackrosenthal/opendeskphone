@@ -439,6 +439,20 @@ pub fn edit_key(
     }
 }
 
+/// Inserts `ch` at the cursor of a one-line text field and moves the
+/// cursor past it, unless the text has `max_len` characters already (the
+/// on-screen keyboard, [`crate::osk`]).
+pub fn edit_insert(text: &mut String, cursor: &mut u16, max_len: usize, ch: char) -> Edit {
+    let len = text.chars().count();
+    if len >= max_len {
+        return Edit::Consumed;
+    }
+    let cur = (*cursor as usize).min(len);
+    text.insert(byte_at(text, cur), ch);
+    *cursor = (cur + 1) as u16;
+    Edit::Changed
+}
+
 /// Draws a one-line text field with a cursor.  `pending` marks the
 /// character before the cursor as still cycling (multi-tap).
 #[allow(clippy::too_many_arguments)]
@@ -495,6 +509,34 @@ pub fn text_field(
         }
     }
     c.restore_clip(old);
+}
+
+/// Touch: the cursor position (in characters) nearest to `x`, a finger's,
+/// in a text field that [`text_field`] drew with the same arguments.
+#[allow(clippy::too_many_arguments)]
+pub fn text_field_cursor_at(
+    th: &Theme,
+    r: IRect,
+    text: &str,
+    cursor: usize,
+    mode: InputMode,
+    pending: bool,
+    font: Font,
+    x: i32,
+) -> usize {
+    // Where `text_field` puts the text.
+    let f = th.font(font);
+    let inner = r.inset_xy(th.pad.max(4), 2);
+    let n = text.chars().count();
+    let shown: String = if matches!(mode, InputMode::Password | InputMode::Pin) {
+        text.chars().enumerate().map(|(i, ch)| if pending && i + 1 == cursor.min(n) { ch } else { '\u{2022}' }).collect()
+    } else {
+        text.to_string()
+    };
+    let cur_x = f.width(&shown[..byte_at(&shown, cursor)]);
+    let scroll = (cur_x - (inner.w - 2)).max(0);
+    let x = x - (inner.x - scroll);
+    (0..=n).min_by_key(|i| (f.width(&shown[..byte_at(&shown, *i)]) - x).abs()).unwrap_or(0)
 }
 
 /// Draws `label: value` on one row, value right-aligned.

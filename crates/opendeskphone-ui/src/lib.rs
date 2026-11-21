@@ -17,6 +17,8 @@
 //! - [`wallpaper`] has the color skin's built-in wallpapers.
 //! - [`touch`] is the touch skin's input (D80): the regions of the screen
 //!   that can be touched, and the gestures of a finger.
+//! - [`osk`] is the touch skin's on-screen keyboard, for any screen that
+//!   takes text.
 //!
 //! Fonts and artwork are rasterized at build time (`build.rs`) from
 //! `assets/`; drawing at run time uses no floating point.  The one file
@@ -33,6 +35,7 @@ pub mod gfx;
 pub mod icons;
 pub mod image;
 pub mod multitap;
+pub mod osk;
 mod screens;
 pub mod skin;
 pub mod strings;
