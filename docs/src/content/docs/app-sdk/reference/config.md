@@ -71,7 +71,7 @@ pub fn model() -> PhoneModel
 ```
 
 ```rust
-pub enum PhoneModel { D40, D45, D50, D60, D62, D65, D70 }
+pub enum PhoneModel { D40, D45, D50, D60, D62, D65, D70, D80 }
 ```
 
 ## `firmware_version`

@@ -2,7 +2,7 @@
 
 The SDK for writing apps for [Open Desk Phone](https://github.com/jackrosenthal/opendeskphone), the open firmware for Digium D-series desk phones.
 
-An app is a WebAssembly component.  The phone calls it once when it starts and then once for every event (a key, a softkey, a timer, a reply from the PBX), and the app answers by calling the phone: it builds its screen from widgets, sets softkeys, starts timers, reads and writes its keys and values, and sends requests to the PBX.  Everything that takes time returns an id at once and delivers its result later as an event, so an app never blocks the phone.
+An app is a WebAssembly component.  The phone calls it once when it starts and then once for every event (a key, a softkey, a touch, a timer, a reply from the PBX), and the app answers by calling the phone: it builds its screen from widgets, sets softkeys, starts timers, reads and writes its keys and values, and sends requests to the PBX.  Everything that takes time returns an id at once and delivers its result later as an event, so an app never blocks the phone.
 
 The version of this crate is the version of the firmware whose app interface it is.  The interface itself is `wit/app.wit` in this crate; the firmware generates its side from the same file.
 
@@ -121,7 +121,7 @@ Each interface of the phone except `runtime` is a capability, and each is a modu
 
 | Capability | What it is for |
 | --- | --- |
-| `ui` | Widgets, softkeys, keys, and the window. |
+| `ui` | Widgets, softkeys, keys, touches, and the window. |
 | `canvas` | A widget the app draws itself, from filled rectangles, one-color bitmaps, and texts in the skin's fonts. |
 | `timers` | One-shot and repeating timers, and the time. |
 | `storage` | The app's keys and values, on the phone and on the PBX, which no other app can reach. |
@@ -144,6 +144,53 @@ Each interface of the phone except `runtime` is a capability, and each is a modu
 The phone stops an app whose code runs for more than two seconds to handle one event (waiting for the phone's answer, as in `calls::dial`, does not count), that takes more than ten seconds in all to handle one event, that asks for more memory than its limit, or that panics.  A panic's message, with the file and the line, is in the phone's log (`export_app!` sees to that).  An app that starts with the phone (`AppKind::Background`, or `has_idle`) is started again after such a fault: after 10 seconds, and after twice as long for each further fault in a row, up to an hour.  The count starts over when the user opens the app, and when the app has run for an hour without a fault.
 
 What an app changes in its window while it handles one event appears together, when `handle` returns.
+
+## Keys and the touchscreen
+
+Most of the phones have keys and a small screen; the D80 has a touchscreen and no keys.  `ui::get_metrics()` tells an app which it is on: the `skin` (`SmallGray`, `LargeGray`, `Color`, or `Touch`), the size of the window (240x102, 320x140, 480x243, or 800x1160), the heights of a line, a title, and a list's row, and `keys`, which is `false` on a phone that is used by touch alone.  An app that lays its screen out from the metrics, as `screen`, `Form`, and `Message` of this crate do, fits every phone.
+
+The widgets work by touch without the app's help.  Touching a row of a list highlights and activates it, as `select` does (`WidgetEvent::Highlighted`, if the row was not highlighted, then `Activated`); a finger scrolls a list and a scroll widget; touching an input focuses it for the phone's on-screen keyboard; and the softkeys are buttons under the window.  There is no X key, so the phone draws a back button over the top-left corner of the window, `back_width` wide and `title_height` high, which is the key `cancel`: `Event::Key(Key::Cancel)` for an app that claims it, as `screen` does (and `screen` begins the title after the button).  An app that draws its own screen keeps that corner free.
+
+What is left to the app is what it did with a key that has no softkey: the keys an app claims with `ui::claim_keys` never come where there are no keys (`cancel` apart).  There, a widget takes touches instead: after `ui::claim_touch(widget, true)`, what a finger does on the widget (`ROOT`: on the window, where no widget takes it) comes as `Event::Touch((widget, touch))`, with places counted in pixels from the widget's top-left corner:
+
+- `Touch::Tap(at)`: the finger came down and went up again at `at`.
+- `Touch::Drag((from, to))`: the finger came down at `from` and is now at `to`; for every movement.
+- `Touch::DragEnd((from, to))`: the finger was lifted at `to`.
+
+```rust,ignore
+fn show(&mut self) {
+    let m = ui::get_metrics();
+    ui::clear(ROOT);
+    ui::claim_keys(ROOT, &[Key::Up, Key::Down, Key::Left, Key::Right, Key::Cancel]);
+    self.board = canvas::create(ROOT, Rect::new(0, m.title_height as i16, m.width, m.width));
+    ui::claim_touch(self.board, true);
+    if m.keys {
+        self.hint("Arrows move");
+    } else {
+        self.hint("Swipe to move");
+    }
+}
+
+fn handle(&mut self, event: Event) {
+    match event {
+        Event::Key(Key::Up) => self.step(Dir::Up),
+        // ...
+        Event::Touch((w, Touch::DragEnd((from, to)))) if w == self.board => {
+            let (dx, dy) = (to.x - from.x, to.y - from.y);
+            self.step(match (dx.abs() > dy.abs(), dx > 0, dy > 0) {
+                (true, true, _) => Dir::Right,
+                (true, false, _) => Dir::Left,
+                (false, _, true) => Dir::Down,
+                (false, _, false) => Dir::Up,
+            });
+        }
+        Event::Touch((w, Touch::Tap(at))) if w == self.board => self.touched(at.x, at.y),
+        _ => {}
+    }
+}
+```
+
+On a phone with keys nothing is touched: `claim_touch` does nothing there, and no `Event::Touch` comes.
 
 ## Storage
 

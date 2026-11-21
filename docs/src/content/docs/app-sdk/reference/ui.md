@@ -4,7 +4,7 @@ title: "ui"
 
 ## Window
 
-`ROOT` (handle 0) is the app's window, above the softkey bar.  The phone fills the window with the skin's background color, then paints the widgets: parents before children, and siblings in creation order.  Each widget is clipped to the widget's bounds and to the bounds of every ancestor.
+`ROOT` (handle 0) is the app's window, above the softkey bar (on the touchscreen, above the softkey buttons).  The phone fills the window with the skin's background color, then paints the widgets: parents before children, and siblings in creation order.  Each widget is clipped to the widget's bounds and to the bounds of every ancestor.
 
 The phone holds back changes made during `start` or `handle` and shows them when the call returns.  A repaint for another reason during the call (the window comes on screen, or the user switches themes) shows the widgets as the call has left them so far.  Changes made while the window is off screen appear when the window returns.
 
@@ -37,11 +37,34 @@ At most one widget in the window has the focus, set by [`set_focus`](#set_focus)
 
 [`input::capture`](input.md) replaces steps 2 to 7: every key goes to the app.
 
+## Touch
+
+The D80 has a touchscreen and no keys ([`Skin::Touch`](types.md#metrics-and-skin); `keys` is `false` in the metrics).  The stock widgets work by touch with no help from the app:
+
+| Touch | Effect |
+| --- | --- |
+| A tap on a row of a `TextList` | Focuses the list, selects the row (`WidgetEvent::Highlighted`, unless the row was selected), and activates the row (`WidgetEvent::Activated`). |
+| A drag on a `TextList` | Scrolls the list, if the rows don't all fit. |
+| A drag on a `Scroll`, or on anything in one | Scrolls the `Scroll`. |
+| A tap on an `Input` | Focuses the input, and the phone's on-screen keyboard types into the input. |
+| A tap on a softkey button | As the key below the display on other models: [`Event::Softkey`](app-events.md#softkey), "More", or "Delete". |
+| A tap on the back button | The key `cancel`: `Event::Key(Key::Cancel)` if claimed, and otherwise the app leaves the screen. |
+
+A list row is `row_height` tall, which is tall enough for a finger.  A list doesn't scroll to keep the selection visible while the user scrolls by hand; `set_selected` scrolls the selected row into view.  A `Scroll` brings a newly focused descendant into view once.
+
+The phone draws the back button over the top-left corner of the window, `back_width` wide and `title_height` tall, also in a [full-screen](#set_full_screen) window.  Keep that corner free: [`screen`](helpers.md#screen) starts the title to the right of the button.
+
+To handle touches itself, a widget takes touches with [`claim_touch`](#claim_touch), and the touches arrive as [`Event::Touch`](app-events.md#touch).  A touch goes to the topmost widget under the finger that takes touches or is a `TextList`, an `Input`, or a `Scroll`.  Widgets of other kinds that don't take touches let a touch through to what is under them.  The window is under every widget, and gets a touch only if the window takes touches and no widget does.
+
+An app written for keys needs changes only where a key has no counterpart on the screen: a key claimed with [`claim_keys`](#claim_keys) never arrives (except `cancel`), so check `keys` in the metrics and offer the action as a softkey, a list row, or a touch.
+
 ## Softkeys
 
 [`set_softkeys`](#set_softkeys) sets softkeys on a widget or the window.  The softkey bar shows the softkeys of the focused widget, or else of the nearest ancestor that has any, or else of the window.
 
 Up to four softkeys fill the four positions in order.  With more than four, the bar shows three at a time and, in the fourth position, a "More" key that pages through the softkeys, wrapping around.
+
+On the touchscreen, the softkeys are buttons in the same four positions, in a row below the window, and work the same way, including "More" and "Delete".  A position without a softkey has no button.
 
 While an `Input` has the focus and the third position is empty, the phone shows "Delete" there.  "Delete" deletes the character before the cursor and sends `WidgetEvent::Changed`.
 
@@ -111,7 +134,7 @@ pub fn clear(w: Widget)
 ```
 
 
-Destroys all descendants of the widget.  `clear(ROOT)` also removes the window's softkeys, key claims, and focus; `clear` on the idle window's root does the same for the idle window.  Images from `define_image` stay defined.
+Destroys all descendants of the widget.  `clear(ROOT)` also removes the window's softkeys, key claims, touch claim, and focus; `clear` on the idle window's root does the same for the idle window.  Images from `define_image` stay defined.
 
 ### `set_bounds`
 
@@ -312,6 +335,35 @@ A widget's claims apply while the widget or a descendant has the focus; the wind
 
 Line key 1, the volume keys, `Mute`, `Speaker`, and `Headset` can't be claimed (see [`input::capture`](input.md)).  The four keys below the display can be claimed only in a full-screen window.
 
+On a phone without keys ([`Metrics::keys`](types.md#metrics-and-skin) is `false`), the only key that arrives is `Cancel`, from the [back button](#touch).
+
+### `claim_touch`
+
+```rust
+pub fn claim_touch(w: Widget, on: bool)
+```
+
+With `true`, the widget, or the window for `ROOT`, takes touches: what a finger does on the widget arrives as [`Event::Touch`](app-events.md#touch) instead of the built-in behavior, with places counted from the widget's top-left corner.  `false` restores the built-in behavior.  Any kind of widget can take touches, including a canvas, and a `TextList` or `Input` that takes touches no longer handles them itself.  See [Touch](#touch) for which widget gets a touch.
+
+`clear(ROOT)` ends the window's claim.  On a phone without a touchscreen, `claim_touch` has no effect.
+
+```rust
+// A canvas the user taps and swipes.
+let board = canvas::create(ROOT, Rect::new(0, 100, 400, 400));
+ui::claim_touch(board, true);
+
+// In `handle`:
+Event::Touch((w, Touch::Tap(at))) if w == board => self.tap(at.x, at.y),
+Event::Touch((w, Touch::DragEnd((from, to)))) if w == board => {
+    let (dx, dy) = (to.x - from.x, to.y - from.y);
+    if dx.abs() > dy.abs() {
+        self.swipe(if dx > 0 { Dir::Right } else { Dir::Left });
+    } else {
+        self.swipe(if dy > 0 { Dir::Down } else { Dir::Up });
+    }
+}
+```
+
 ### `set_full_screen`
 
 ```rust
@@ -321,8 +373,8 @@ pub fn set_full_screen(on: bool)
 
 Expands the app's window to the whole display (`true`), or restores the area above the softkey bar (`false`).
 
-- A full-screen window has no softkey bar.  The four keys below the display do nothing unless claimed as `Key::Softkey(1)` to `Key::Softkey(4)`.
-- `get_metrics` reports the new height (272, 160, or 120).  Widgets keep their bounds; lay out the screen again.
+- A full-screen window has no softkey bar.  The four keys below the display do nothing unless claimed as `Key::Softkey(1)` to `Key::Softkey(4)`.  On the touchscreen, a full-screen window has no softkey buttons, and keeps the back button.
+- `get_metrics` reports the new height (272, 160, 120, or 1280).  Widgets keep their bounds; lay out the screen again.
 - An unclaimed `cancel` and line key 1 still take the app off the screen.  Calls and notices from the phone cover a full-screen window like any other.
 
 ### `set_softkeys`
