@@ -267,14 +267,16 @@ impl Model {
     }
 
     pub const fn gigabit(self) -> bool {
-        // The D80: its switch is a gigabit one (an RTL8363NB), and stock
-        // 1_12_13 links at 1000/Full on its LAN port.
+        // The D80: its switch is a gigabit one (an RTL8363NB), and it
+        // links at 1000/Full on its LAN port, under stock 1_12_13 and
+        // under a mainline kernel.
         matches!(self, Model::D45 | Model::D70 | Model::D62 | Model::D65 | Model::D80)
     }
 
     pub const fn bluetooth(self) -> bool {
-        // The D80: an AP6212 Wi-Fi and Bluetooth module is on its board,
-        // and the stock kernel brings its Bluetooth up (HCI on UART4).
+        // The D80: an AP6212 Wi-Fi and Bluetooth module is on its board
+        // (HCI on UART4), and on the hardware a scan with it finds
+        // devices.
         matches!(self, Model::D65 | Model::D80)
     }
 
@@ -291,8 +293,9 @@ impl Model {
             // The D80's voice processor, a ZL38040, exchanges a call's
             // audio with the SoC at 16 kHz on every path: the stock
             // 1_12_13 kernel's codec tables set that rate, whatever rate
-            // is asked for.  (Read from that kernel; not yet heard on the
-            // hardware.)
+            // is asked for.  So it was heard on the hardware: a tone at
+            // 16 kHz played on the speaker and was recorded by its
+            // microphone.  (8 kHz is untried.)
             Family::Touch => 16_000,
         }
     }

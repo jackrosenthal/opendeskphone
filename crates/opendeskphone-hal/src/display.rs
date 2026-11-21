@@ -50,7 +50,8 @@ impl FrameInfo {
         // kernel gives it a framebuffer of 32 (`bpp=32` on its command
         // line).  That it takes `XR24` is not yet seen on the hardware.
         // Its scan-out is upside down to the user: stock rotates it by 180
-        // degrees, and so it was seen on the hardware.
+        // degrees, and so it was seen on the hardware, where the
+        // touchscreen's coordinates are of the scan-out too.
         let format = if model.is_color() { PixelFormat::Xrgb8888 } else { PixelFormat::R8 };
         Some(FrameInfo {
             width: size.width,
