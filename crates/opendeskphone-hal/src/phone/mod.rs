@@ -4,12 +4,12 @@
 //! | --- | --- |
 //! | Display | DRM/KMS dumb buffers, `DIRTYFB` for the SPI panels ([`DrmDisplay`]) |
 //! | Backlight, contrast | backlight and LCD class sysfs ([`SysBacklight`]) |
-//! | Keys, hook | evdev, found by capability ([`EvdevInput`]) |
+//! | Keys, hook, touchscreen | evdev, found by capability ([`EvdevInput`]) |
 //! | Lamps | LED class sysfs ([`SysLamps`]) |
 //! | Audio | ALSA PCM and control ioctls ([`AlsaAudio`]) |
-//! | Flash | MTD character devices ([`PhoneMtd`]) |
+//! | Flash | MTD character devices ([`PhoneMtd`]); the D80 has none (its storage is an eMMC) |
 //! | Watchdog, RNG | `/dev/watchdog`, `/dev/hwrng` |
-//! | EHS | `/dev/ttyAMA0` |
+//! | EHS | `/dev/ttyAMA0`; on the D80 `/dev/ttymxc1` |
 
 mod alsa;
 mod drm;
@@ -48,10 +48,12 @@ pub fn build(model: Model) -> Hal {
     }
     let display = dev!("display", dyn Display, DrmDisplay::open(model));
     let backlight = dev!("backlight", dyn Backlight, SysBacklight::open(model));
-    let input = dev!("input", dyn Input, EvdevInput::open());
+    let input = dev!("input", dyn Input, EvdevInput::open(model));
     let lamps = dev!("lamps", dyn Lamps, SysLamps::open());
     let audio = dev!("audio", dyn Audio, AlsaAudio::open(model));
-    let mtd = dev!("mtd", dyn Mtd, PhoneMtd::open());
+    // The D80's storage is an eMMC: it has no MTD partitions, and their
+    // absence is not a fault to report.
+    let mtd = if model.is_touch() { Box::new(Null("mtd")) as Box<dyn Mtd> } else { dev!("mtd", dyn Mtd, PhoneMtd::open()) };
     let rng = dev!("rng", dyn Rng, PhoneRng::open());
     Hal {
         model,
@@ -64,7 +66,7 @@ pub fn build(model: Model) -> Hal {
         // Opened on `start`, because opening the device arms it.
         watchdog: Box::new(PhoneWatchdog::new()),
         rng,
-        ehs: Box::new(PhoneEhs::new()),
+        ehs: Box::new(PhoneEhs::for_model(model)),
         sim: None,
         missing,
     }
@@ -86,6 +88,7 @@ mod abi_tests {
         assert_eq!(eviocgbit(1, 96), 0x8060_4521);
         assert_eq!(eviocgkey(96), 0x8060_4518);
         assert_eq!(eviocgbit(0, 4), 0x8004_4520);
+        assert_eq!(eviocgsw(3), 0x8003_451b);
         assert_eq!(WDIOC_SETTIMEOUT, 0xc004_5706);
         assert_eq!(WDIOC_KEEPALIVE, 0x8004_5705);
         assert_eq!(WDIOC_GETTIMELEFT, 0x8004_570a);

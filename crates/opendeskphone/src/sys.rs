@@ -256,7 +256,13 @@ const CONSOLE_OUTPUT: &str = "/sys/module/amba_pl011/parameters/console_output";
 /// Turn kernel messages on the console UART on or off.  Off while the EHS
 /// headset adapter has the UART.  The other kernel consoles (the pstore
 /// crash log) are not affected.
+///
+/// The D80's kernel has no such switch and needs none: its console UART is
+/// the console's alone, and the kernel always writes to it.
 pub fn serial_console_output(on: bool) {
+    if !std::path::Path::new(CONSOLE_OUTPUT).exists() {
+        return;
+    }
     if let Err(e) = std::fs::write(CONSOLE_OUTPUT, if on { "1" } else { "0" }) {
         log::warn!("{CONSOLE_OUTPUT}: {e}");
     }

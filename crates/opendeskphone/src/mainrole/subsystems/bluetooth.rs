@@ -175,20 +175,20 @@ impl Service {
                     s.connected.clear();
                     s.audio_open = false;
                 });
-                self.audio.bluetooth_voice(false);
+                self.audio.bluetooth_voice(false, false);
                 store.update::<Audio, _>(|a| {
                     if a.headset_kind == HeadsetKind::Bluetooth {
                         a.headset_kind = HeadsetKind::Wired;
                     }
                 });
             }
-            BtEvent::AudioOpened => {
+            BtEvent::AudioOpened { wideband } => {
                 self.update(|s| s.audio_open = true);
-                self.audio.bluetooth_voice(true);
+                self.audio.bluetooth_voice(true, wideband);
             }
             BtEvent::AudioClosed => {
                 self.update(|s| s.audio_open = false);
-                self.audio.bluetooth_voice(false);
+                self.audio.bluetooth_voice(false, false);
             }
             BtEvent::Answer => self.answer(),
             BtEvent::HangUp => self.hang_up(),
@@ -349,6 +349,15 @@ pub fn start(ctx: &Context, audio: AudioService) {
         store_dir: dir.clone(),
         // A device that needs a PIN gets the question on the phone's screen.
         default_pin: None,
+        // The D80's voice goes from the controller to its voice processor,
+        // which takes it narrow-band or wide-band; the D65's goes to the
+        // SoC at 8 kHz.
+        sco_pcm_params: if ctx.model == crate::model::Model::D80 {
+            opendeskphone_bt::SCO_PCM_PARAMS_D80
+        } else {
+            opendeskphone_bt::SCO_PCM_PARAMS_D65
+        },
+        wideband: ctx.model == crate::model::Model::D80,
     };
     let bt = match opendeskphone_bt::Bluetooth::spawn(config, move |event| {
         let _ = tx.send(event);

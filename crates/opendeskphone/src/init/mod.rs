@@ -118,7 +118,16 @@ pub const OVERRIDE_QUICK_FAIL_SECS: u64 = 30;
 /// role in place of the installed binary (a build pushed over SSH; `/tmp`
 /// is a tmpfs, so it is gone after a reboot).
 pub const MAIN_OVERRIDE: &str = "/tmp/opendeskphone";
-const SERIAL_CONSOLE: &str = "/dev/ttyAMA0";
+/// The serial console's UART: UART A of the D40 thru D70, which the EHS
+/// headset adapter shares, and on the D80 UART1, which is the console's
+/// alone.  The shell on it is started under the same rule on every model
+/// (`Supervisor::check_console`).
+const SERIAL_CONSOLES: &[&str] = &["/dev/ttyAMA0", "/dev/ttymxc0"];
+
+/// The serial console's device on this phone.
+fn serial_console() -> Option<&'static str> {
+    SERIAL_CONSOLES.iter().copied().find(|p| Path::new(p).exists())
+}
 /// Shells for the serial console and SSH, in order of preference.
 pub const SHELLS: &[&str] = &["/bin/brush", "/bin/sh"];
 
@@ -164,12 +173,15 @@ pub fn run(hooks: Hooks) -> ! {
     let detected = model::detect();
     match detected {
         Some(d) if d.cross_checked => info!("model {}", d.model),
+        // The D80's boot loader does not name the model: its devicetree
+        // is the one source.
+        Some(d) if d.model.family() == model::Family::Touch => info!("model {}", d.model),
         Some(d) => warn!("model {} (command line and devicetree do not both confirm it)", d.model),
         None => error!("model unknown: no digium_board= and no digium compatible"),
     }
     wd.feed();
 
-    let nv_state = nvdata::mount();
+    let nv_state = nvdata::mount(detected.map(|d| d.model.family()));
     wd.feed();
     // A factory reset asked for before the last shutdown, first thing after
     // the mount as on stock.  Not on the stand-in tmpfs, and not in an image
@@ -724,10 +736,8 @@ impl Supervisor {
             None if granted && now >= self.console_next => {
                 self.console_next = now + 10;
                 let Some(shell) = SHELLS.iter().find(|s| Path::new(s).exists()) else { return };
-                if !Path::new(SERIAL_CONSOLE).exists() {
-                    return;
-                }
-                match spawn_console(shell, &self.paths) {
+                let Some(tty) = serial_console() else { return };
+                match spawn_console(shell, tty, &self.paths) {
                     Ok(pid) => self.console = Some(pid),
                     Err(e) => warn!("serial console: {e}"),
                 }
@@ -904,8 +914,8 @@ pub fn shell_environment(paths: &Paths, shell: &str) -> Vec<(String, String)> {
     ]
 }
 
-fn spawn_console(shell: &str, paths: &Paths) -> std::io::Result<libc::pid_t> {
-    let tty = CString::new(SERIAL_CONSOLE).map_err(|_| std::io::Error::other("bad tty path"))?;
+fn spawn_console(shell: &str, tty: &str, paths: &Paths) -> std::io::Result<libc::pid_t> {
+    let tty = CString::new(tty).map_err(|_| std::io::Error::other("bad tty path"))?;
     let mut cmd = Command::new(shell);
     cmd.env_clear();
     cmd.envs(shell_environment(paths, shell));

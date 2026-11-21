@@ -168,6 +168,16 @@ pub fn run(command: UpdateCommand) -> i32 {
 }
 
 fn status() -> Result<(), String> {
+    if model().is_some_and(|m| m.is_touch()) {
+        // No banks to report: one kernel and one root file system, on
+        // the eMMC.
+        let line = cmdline();
+        let root = line.split_ascii_whitespace().find_map(|w| w.strip_prefix("root=")).unwrap_or("?");
+        let installed = if root == crate::init::nvdata::D80_ROOT { "the installed firmware" } else { "not the installed firmware" };
+        crate::outln!("running from:   {root} ({installed})");
+        crate::outln!("{}", opendeskphone_update::D80_NOT_HERE);
+        return Ok(());
+    }
     let mut mtd = open_mtd()?;
     let dir = own_dir();
     let st = inspect(&mut mtd, &cmdline(), dir.exists().then_some(dir.as_path())).map_err(|e| e.to_string())?;

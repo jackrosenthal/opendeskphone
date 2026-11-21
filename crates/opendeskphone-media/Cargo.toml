@@ -13,4 +13,8 @@ libc = "0.2"
 aes = "0.8"
 hmac = "0.12"
 sha1 = "0.10"
+# G.711 for every model, and G.722 for the D80, which has no DSP to run it.
+# Without its default features: no G.729 and no Opus, and so none of their
+# dependencies.
+audio-codec = { version = "0.4.14", default-features = false }
 getrandom = "0.2"

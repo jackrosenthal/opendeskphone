@@ -106,11 +106,20 @@ pub struct Staged {
     pub bad_blocks: (u32, u32),
 }
 
+/// Why nothing here installs an image on a D80.  Its image is an Android
+/// OTA package, which its stock recovery writes to the eMMC; it has no
+/// flash banks, no `ctrl` partition, and no boot2.
+pub const D80_NOT_HERE: &str = "a D80's firmware is an Android OTA package, which the phone's recovery installs; \
+     this firmware cannot install one from the running phone yet";
+
 /// Reads a whole EFF through every check that needs no flash: the
 /// envelope, the model, the OTA header and its CRCs, the kernel's header as
 /// boot2 reads it, both component CRCs, and the end of the stream.
 /// Returns the envelope's version.
 pub fn check_eff<R: Read>(reader: R, model: Model) -> Result<String> {
+    if model.is_touch() {
+        return Err(UpdateError::Refused(D80_NOT_HERE.into()));
+    }
     let eff = EffReader::new(reader)?;
     let header = eff.header().clone();
     let phone = model.to_string();
@@ -217,6 +226,9 @@ impl<'a> Updater<'a> {
     /// The update lock, and the refusal while an installed image is on
     /// trial.  Nothing is written.
     fn begin(&mut self) -> Result<UpdateLock> {
+        if self.model.is_touch() {
+            return Err(UpdateError::Refused(D80_NOT_HERE.into()));
+        }
         let lock = lock::acquire(&self.own_dir)?;
         if let Some(t) = trial::load(&self.own_dir) {
             let mut part = self.mtd.open(CTRL_PART)?;

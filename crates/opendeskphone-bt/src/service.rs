@@ -32,14 +32,33 @@ const DEV_CLASS_MAJOR_PHONE: u8 = 0x02;
 /// class of device's top byte.
 const SERVICE_HINT: u8 = 0x20 | 0x40;
 
-/// Broadcom vendor command `Write_SCO_PCM_Int_Param`: voice on the PCM pins
-/// (routing 0), 1024 kbit/s (rate 3), short frame sync (0), and the
-/// controller as slave for sync (0) and clock (0).  The SoC's PCM/TDM
-/// interface drives both at exactly that rate (`bcmring-pcm.c`).  These are
-/// the same five bytes as `brcm,bt-pcm-int-params` in the devicetree, which
-/// the kernel applies only after loading a patch file.
+/// Broadcom vendor command `Write_SCO_PCM_Int_Param`, whose five bytes are
+/// [`Config::sco_pcm_params`].
 const HCI_WRITE_SCO_PCM_INT_PARAM: u16 = 0xfc1c;
-const SCO_PCM_PARAMS: [u8; 5] = [0, 3, 0, 0, 0];
+/// The D65's: voice on the PCM pins (routing 0), 1024 kbit/s (rate 3),
+/// short frame sync (0), and the controller as slave for sync (0) and
+/// clock (0).  The SoC's PCM/TDM interface drives both at exactly that
+/// rate (`bcmring-pcm.c`).  These are the same five bytes as
+/// `brcm,bt-pcm-int-params` in the devicetree, which the kernel applies
+/// only after loading a patch file.
+pub const SCO_PCM_PARAMS_D65: [u8; 5] = [0, 3, 0, 0, 0];
+/// The D80's, which are the stock firmware's (`bt_sco_param` of its
+/// `libbt-vendor.so`): as the D65's but 512 kbit/s (rate 2).  The clocks
+/// are the ZL38040 voice processor's.
+pub const SCO_PCM_PARAMS_D80: [u8; 5] = [0, 2, 0, 0, 0];
+
+// What the stock D80 firmware sends the controller before each voice
+// connection (`hw_set_audio_state` of its `libbt-vendor.so`), in this
+// order, so that the controller codes the voice on its PCM pins itself:
+// CVSD, or for wide-band speech mSBC.
+/// `Enable_WBS`: on with codec 2 (mSBC), or off.
+const HCI_ENABLE_WBS: u16 = 0xfc7e;
+/// `Write_I2SPCM_Interface_Param`: PCM (0), the controller's clock role,
+/// the sample rate (0 is 8 kHz, 1 is 16 kHz), and the clock rate.
+const HCI_WRITE_I2SPCM_INTERFACE_PARAM: u16 = 0xfc6d;
+/// `Write_PCM_Data_Format_Param`, with the stock firmware's five bytes.
+const HCI_WRITE_PCM_DATA_FORMAT_PARAM: u16 = 0xfc1e;
+const PCM_DATA_FORMAT: [u8; 5] = [0, 0, 3, 0, 0];
 
 /// How long a service query and an outgoing connection may take.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -53,6 +72,14 @@ pub struct Config {
     /// PIN offered to a device that pairs the old way (before Bluetooth
     /// 2.1).  `None` asks through [`Event::PinRequest`].
     pub default_pin: Option<String>,
+    /// How the controller's PCM pins carry voice (`Write_SCO_PCM_Int_Param`):
+    /// [`SCO_PCM_PARAMS_D65`] or [`SCO_PCM_PARAMS_D80`].
+    pub sco_pcm_params: [u8; 5],
+    /// The phone's Bluetooth voice path can be wide-band (the D80's, whose
+    /// voice processor takes either rate from the controller): codecs are
+    /// negotiated with a headset that negotiates them, and the controller
+    /// is switched between the two before each voice connection.
+    pub wideband: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,8 +128,10 @@ pub enum Event {
     Unpaired { addr: Addr },
     HeadsetConnected { addr: Addr, profile: Profile },
     HeadsetDisconnected { addr: Addr },
-    /// Voice is flowing on the ALSA card [`crate::ALSA_CARD`].
-    AudioOpened,
+    /// Voice is flowing on the controller's PCM pins (on the D65, to the
+    /// ALSA card [`crate::ALSA_CARD`]): narrow-band at 8 kHz, or with
+    /// `wideband` at 16 kHz.
+    AudioOpened { wideband: bool },
     AudioClosed,
     Answer,
     HangUp,
@@ -129,6 +158,7 @@ impl Bluetooth {
         let (wake_rx, wake_tx) = pipe()?;
         let (tx, rx) = mpsc::channel();
         let store = Store::open(&config.store_dir);
+        let records = vec![Record::handsfree_ag(HFP_CHANNEL, config.wideband), Record::headset_ag(HSP_CHANNEL)];
         let mut service = Service {
             config,
             events: Box::new(events),
@@ -147,7 +177,7 @@ impl Bluetooth {
             call_state: CallState::Idle,
             pairing: None,
             names: HashMap::new(),
-            records: vec![Record::handsfree_ag(HFP_CHANNEL, hfp::AG_FEATURES), Record::headset_ag(HSP_CHANNEL)],
+            records,
         };
         std::thread::Builder::new().name("bluetooth".into()).spawn(move || service.run())?;
         Ok(Bluetooth { tx, wake: wake_tx })
@@ -209,6 +239,8 @@ struct Link {
 struct Voice {
     fd: OwnedFd,
     connecting: bool,
+    /// Wide-band speech (mSBC).
+    wideband: bool,
 }
 
 struct Service {
@@ -462,7 +494,7 @@ impl Service {
         self.powered = powered;
         if powered {
             if let Some(index) = self.index
-                && let Err(e) = sock::send_hci_command(index, HCI_WRITE_SCO_PCM_INT_PARAM, &SCO_PCM_PARAMS)
+                && let Err(e) = sock::send_hci_command(index, HCI_WRITE_SCO_PCM_INT_PARAM, &self.config.sco_pcm_params)
             {
                 warn!("setting the controller's PCM parameters: {e}");
             }
@@ -715,7 +747,7 @@ impl Service {
             Profile::HandsFree => Dialect::HandsFree,
             Profile::Headset => Dialect::Headset,
         };
-        let mut gateway = Gateway::new(dialect);
+        let mut gateway = Gateway::new(dialect).with_wideband(self.config.wideband);
         gateway.set_call_state(Instant::now(), self.call_state.clone());
         self.link = Some(Link {
             addr,
@@ -827,6 +859,8 @@ impl Service {
                         Action::SpeakerVolume(v) => self.emit(Event::SpeakerVolume(v)),
                         Action::MicVolume(v) => self.emit(Event::MicVolume(v)),
                         Action::Button => self.emit(Event::Button),
+                        Action::OpenAudio => self.set_audio(true),
+                        Action::CodecSelected(codec) => self.connect_voice(codec == hfp::Codec::Msbc),
                     }
                 }
             }
@@ -850,13 +884,69 @@ impl Service {
         if self.voice.is_some() {
             return;
         }
-        let Some(l) = &self.link else { return };
+        let Some(l) = &mut self.link else { return };
         if l.connecting {
             return;
         }
-        match sock::sco_connect(l.addr) {
-            Ok(fd) => self.voice = Some(Voice { fd, connecting: true }),
-            Err(e) => info!("{}: voice connection: {e}", l.addr),
+        if l.gateway.negotiates() {
+            // The headset agrees to the codec first; the connection is
+            // opened when it has (`Action::CodecSelected`).
+            let codec = l.gateway.best_codec();
+            l.gateway.offer_codec(codec);
+            self.flush_link();
+        } else {
+            self.connect_voice(false);
+        }
+    }
+
+    /// Sets the controller up for the voice connection's codec, as the
+    /// stock D80 firmware does.  Only where voice can be wide-band: a
+    /// controller that never leaves narrow-band keeps what it was given
+    /// when it was powered.
+    fn prepare_controller(&self, wideband: bool) {
+        let (Some(index), true) = (self.index, self.config.wideband) else { return };
+        let pcm = self.config.sco_pcm_params;
+        let commands: [(u16, &[u8]); 4] = [
+            (HCI_ENABLE_WBS, if wideband { &[1, 2, 0] } else { &[0, 1, 0] }),
+            (HCI_WRITE_I2SPCM_INTERFACE_PARAM, &[0, pcm[4], u8::from(wideband), pcm[1]]),
+            (HCI_WRITE_SCO_PCM_INT_PARAM, &pcm),
+            (HCI_WRITE_PCM_DATA_FORMAT_PARAM, &PCM_DATA_FORMAT),
+        ];
+        for (opcode, params) in commands {
+            if let Err(e) = sock::send_hci_command(index, opcode, params) {
+                warn!("setting the controller up for {} voice ({opcode:#06x}): {e}", if wideband { "wide-band" } else { "narrow-band" });
+            }
+            // Vendor commands are not held back until the one before has
+            // completed, as the stock firmware holds each back.
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn connect_voice(&mut self, wideband: bool) {
+        if self.voice.is_some() {
+            return;
+        }
+        let Some(l) = &self.link else { return };
+        let addr = l.addr;
+        self.prepare_controller(wideband);
+        match sock::sco_connect(addr, wideband) {
+            Ok(fd) => self.voice = Some(Voice { fd, connecting: true, wideband }),
+            Err(e) => {
+                info!("{addr}: voice connection: {e}");
+                self.voice_failed(wideband);
+            }
+        }
+    }
+
+    /// A voice connection did not open.  A wide-band one is tried again
+    /// narrow-band, which every headset has, after the headset agrees.
+    fn voice_failed(&mut self, wideband: bool) {
+        if wideband && let Some(l) = &mut self.link {
+            info!("{}: no wide-band voice connection; trying narrow-band", l.addr);
+            l.gateway.offer_codec(hfp::Codec::Cvsd);
+            self.flush_link();
+        } else {
+            self.emit(Event::AudioClosed);
         }
     }
 
@@ -864,8 +954,11 @@ impl Service {
         let Some(l) = &self.listeners else { return };
         match sock::accept(l.sco.as_raw_fd(), false) {
             Ok(Some((fd, addr))) if self.voice.is_none() && self.link.as_ref().is_some_and(|l| l.addr == addr) => {
-                self.voice = Some(Voice { fd, connecting: false });
-                self.emit(Event::AudioOpened);
+                // A headset opens the connection itself only without
+                // codec negotiation: narrow-band.
+                self.prepare_controller(false);
+                self.voice = Some(Voice { fd, connecting: false, wideband: false });
+                self.emit(Event::AudioOpened { wideband: false });
             }
             Ok(_) => {}
             Err(e) => debug!("voice accept: {e}"),
@@ -879,12 +972,14 @@ impl Service {
             match sock::take_error(fd) {
                 Ok(()) => {
                     v.connecting = false;
-                    self.emit(Event::AudioOpened);
+                    let wideband = v.wideband;
+                    self.emit(Event::AudioOpened { wideband });
                 }
                 Err(e) => {
                     info!("voice connection: {e}");
+                    let wideband = v.wideband;
                     self.voice = None;
-                    self.emit(Event::AudioClosed);
+                    self.voice_failed(wideband);
                 }
             }
             return;

@@ -1,5 +1,6 @@
 # The shell and the utilities: brush, uutils coreutils, and uutils sed, all
-# Rust, all static ARMv6 binaries with no C in them (spike S7).
+# Rust, all static binaries with no C in them (spike S7), for `target`:
+# ARMv6 for the D40 thru D70, and ARMv7 for the D80 (rust.nix).
 #
 # Not here, because their uutils implementations cannot be built without a C
 # cross compiler, which userspace does not have: `grep` and `find` (uu_grep
@@ -10,6 +11,7 @@
   fetchCrate,
   rustPlatform,
   rust,
+  target ? rust.armTarget,
 }:
 let
   # Applets in the multi-call coreutils binary.  Chosen for a phone: file
@@ -94,7 +96,7 @@ let
         inherit pname version src;
         hash = vendorHash;
       };
-      target = rust.armTarget;
+      inherit target;
       env = rust.sizeProfileEnv;
       commands = [
         (

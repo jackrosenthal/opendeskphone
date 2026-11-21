@@ -2,14 +2,17 @@
 # checks.  The work is split into jobs that run at once, each building some
 # of the flake's outputs (.github/actions/nix-build):
 #
-#   kernel, kernel-d80, web, apps, brush, coreutils, sed,
+#   kernel, kernel-d80, web, apps, brush, coreutils, sed, userland-d80,
 #   workspace, checks-deps, asterisk                      (nothing before them)
 #   rootfs, d80, tests, clippy                            (from those)
 #   one image per model, jffs2-mount                      (from rootfs)
 #   checks                                                (`nix flake check`)
 #   cache                                                 (for the next run)
 #
-# Each image is uploaded as a workflow artifact, `firmware-<model>`.
+# Each image is uploaded as a workflow artifact, `firmware-<model>`.  The
+# D80's, which `d80` builds whole, is the artifact `d80-image`: its EFF and
+# the Android OTA package inside it.  It is not among the images of a
+# release.
 #
 # The DPMA module for Asterisk (open-dpma/) is built, linted, and tested for
 # every pinned Asterisk major version on x86_64 and aarch64.  Each of those
@@ -55,8 +58,7 @@ jobs:
         include:
           - name: kernel
             installables: .#kernel
-          # The D80's kernel.  No image is made of it yet; building it
-          # keeps it building.
+          # The D80's kernel, for its image (`d80`).
           - name: kernel-d80
             installables: .#kernel-d80
           - name: web
@@ -69,6 +71,9 @@ jobs:
             installables: .#coreutils
           - name: sed
             installables: .#sed
+          # The shell and the utilities for the D80's processor.
+          - name: userland-d80
+            installables: .#brush-d80 .#coreutils-d80 .#sed-d80
           # The image tool, and the dependencies of the firmware binary;
           # the binary itself embeds the web frontend, so it is built in
           # `rootfs`.
@@ -109,10 +114,13 @@ jobs:
           stores: nix-new-{kernel,web,apps,brush,coreutils,sed,workspace}
           results: true
 
-  # The firmware binary with the D80's touch skin.  No image is made of it
-  # yet; building it keeps it building, and checks that it has the skin,
-  # as the build of the other binary (in `rootfs`) checks that the D40 thru
-  # D70 do not get it.
+  # The D80's image: its firmware binary (built for its own processor,
+  # with the touch skin, which the build checks it has, as the build of the
+  # other binary in `rootfs` checks that the D40 thru D70 do not get it),
+  # its root file system, and its boot image, as an Android OTA package
+  # and as the EFF that carries the package.  This job downloads the
+  # vendor's stock D80 image for the firmware files of the voice processor
+  # and the wireless module; the cache keeps what it takes from it.
   d80:
     name: d80
     needs: build
@@ -124,9 +132,26 @@ jobs:
       - uses: ./.github/actions/nix-build
         with:
           name: d80
-          installables: .#opendeskphone-d80
+          installables: .#eff-d80 .#ota-d80
           cache: true
-          stores: nix-new-{web,workspace}
+          stores: nix-new-{kernel-d80,web,apps,userland-d80,workspace}
+
+      # Each out-link is a file, under its own name in the store.
+      - name: Copy the image out of the store
+        run: |
+          mkdir dist
+          for link in "$RUNNER_TEMP"/nix/links/result*; do
+            image="$(readlink "$link")"
+            cp "$image" "dist/${image#/nix/store/*-}"
+          done
+          ls -l dist
+
+      - name: Upload the image
+        uses: actions/upload-artifact@v7
+        with:
+          name: d80-image
+          path: dist
+          if-no-files-found: error
 
   model:
     name: ${{ matrix.model }}

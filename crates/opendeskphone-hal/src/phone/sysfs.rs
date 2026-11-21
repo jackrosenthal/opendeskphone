@@ -156,6 +156,10 @@ impl SysBacklight {
 
 /// Parses an LED class name of the port's devicetrees:
 /// `<color>:<function>[-<n>]`, e.g., `green:line-0`, `red:mail`.
+///
+/// The D80 has one lamp, a red and a green LED that its devicetree names
+/// `status`.  It is taken for the message lamp, the one lamp of the other
+/// models that is not a key's: what stock shows on it is not known.
 pub(crate) fn parse_led_name(name: &str) -> Option<(Lamp, bool)> {
     let (color, func) = name.split_once(':')?;
     let red = match color {
@@ -172,7 +176,7 @@ pub(crate) fn parse_led_name(name: &str) -> Option<(Lamp, bool)> {
     let lamp = match (func, n) {
         ("line", Some(n)) => Lamp::Line(n),
         ("blf", Some(n)) => Lamp::Blf(n),
-        ("mail", _) => Lamp::Message,
+        ("mail" | "status", _) => Lamp::Message,
         ("mute", _) => Lamp::Mute,
         ("headset", _) => Lamp::Headset,
         ("speaker", _) => Lamp::Speaker,
@@ -292,6 +296,8 @@ mod tests {
         assert_eq!(parse_led_name("red:mute"), Some((Lamp::Mute, true)));
         assert_eq!(parse_led_name("green:headset"), Some((Lamp::Headset, false)));
         assert_eq!(parse_led_name("red:speaker"), Some((Lamp::Speaker, true)));
+        assert_eq!(parse_led_name("red:status"), Some((Lamp::Message, true)));
+        assert_eq!(parse_led_name("green:status"), Some((Lamp::Message, false)));
         assert_eq!(parse_led_name("mmc0::"), None);
         assert_eq!(parse_led_name("blue:line-0"), None);
         assert_eq!(parse_led_name("green:line"), None);

@@ -2,7 +2,8 @@
 # never in the repository; Nix downloads each from the vendor when
 # something needs it, and checks it against the hash here.  The whole
 # repository uses exactly two: the D40's for the old family and the D60's
-# for the new one.  Two things need them:
+# for the new one, and a third, the D80's (below), only for an image for
+# the D80.  Two things need them:
 #
 # - An image build needs the voice DSP firmware, which is a file in the
 #   stock root file system (dsp-firmware.nix).
@@ -47,6 +48,15 @@ let
     };
   effs = lib.mapAttrs eff images;
 
+  # The D80's stock image, for what an image for the D80 takes from it
+  # (d80-firmware.nix).  Inside it is an Android OTA package, not a kernel
+  # and a root file system image, so it is not among `images`, and the tests
+  # do not read it.
+  d80 = eff "D80" {
+    version = "1_12_14";
+    sha256 = "d64d386d4a9733e92d7aff37eb9251e857195c2e4352c972111c205144cbbbc2";
+  };
+
   # Each image taken apart with our own tool: DIR/kernel.bin and
   # DIR/rootfs.jffs2.
   parts = lib.mapAttrs (
@@ -58,7 +68,7 @@ let
   ) effs;
 in
 {
-  inherit effs parts;
+  inherit effs parts d80;
 
   # The files the tests read (test-inputs/vendor): one directory per
   # model, with the image and its root file system image.

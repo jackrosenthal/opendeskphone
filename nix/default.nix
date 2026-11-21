@@ -5,21 +5,29 @@
 #   kernel-source          v7.3 with the ports applied, unbuilt (for editing)
 #   kernel-<model>         boot image for the k0/k1 slot, D40 thru D70
 #   kernel-d80             the D80's kernel: zImage, DTB, the two as one
-#                          file, and modules (no boot image is made of it
-#                          yet)
+#                          file, and modules
+#   boot-d80               the D80's Android boot image, for mmcblk0p1
 #   opendeskphone          the firmware binary of the D40 thru D70 (ARMv6,
 #                          static)
-#   opendeskphone-d80      the firmware binary with the D80's touch skin (no
-#                          image is made of it yet)
+#   opendeskphone-d80      the D80's firmware binary (ARMv7, static), with
+#                          its touch skin
 #   opendeskphone-image    host tool: EFF, OTA, kernel image, rootfs
 #   brush, coreutils, sed  shell and utilities (ARMv6, static)
+#   brush-d80, coreutils-d80, sed-d80
+#                          the same for the D80 (ARMv7, static)
 #   apps                   built-in phone apps (.wasm)
 #   asterisk-modules       Asterisk with res_open_dpma, for the tests (x86-64)
 #   web                    frontend bundle
-#   rootfs-tree            the root file system as a directory
-#   rootfs                 the JFFS2 image
+#   rootfs-tree            the root file system as a directory (D40 thru
+#                          D70)
+#   rootfs                 the JFFS2 image of it
+#   rootfs-tree-d80        the D80's root file system as a directory
+#   rootfs-d80             the SquashFS image of it, for mmcblk0p5
 #   eff-<model>            flashable image, one per model
-#   all                    the seven EFFs in one directory
+#   ota-d80                the D80's image as the Android OTA package (a
+#                          zip, not signed) that its EFF carries
+#   all                    the seven EFFs of the D40 thru D70 in one
+#                          directory
 {
   pkgs,
   lib,
@@ -37,6 +45,7 @@ let
     ];
     targets = [
       "arm-unknown-linux-musleabi"
+      "armv7-unknown-linux-musleabihf"
       "wasm32-wasip2"
       "wasm32-unknown-unknown"
     ];
@@ -49,14 +58,20 @@ let
   craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
   userland = pkgs.callPackage ./userland.nix { inherit rustPlatform rust; };
+  # The same for the D80's processor.
+  userlandD80 = pkgs.callPackage ./userland.nix {
+    inherit rustPlatform rust;
+    target = rust.armv7Target;
+  };
   kernel = pkgs.callPackage ./kernel.nix {
     kernelSrc = root + "/kernel";
     earlyInit = workspace.opendeskphone-early;
     initramfsList = root + "/crates/opendeskphone-early/initramfs.list";
   };
   # The D80's kernel is built from the same source with its own
-  # configuration.  It has no early-boot stage: the D80's boot loader gives
-  # the kernel a ramdisk from the boot image, and none is made yet.
+  # configuration.  It has no early-boot stage: the D80 has one kernel and
+  # one root file system, so there is no bank to choose, and the kernel
+  # mounts the root file system itself.
   kernelD80 = pkgs.callPackage ./kernel.nix {
     kernelSrc = root + "/kernel";
     pname = "linux-d80";
@@ -65,11 +80,16 @@ let
     dtbs = "nxp/imx/imx6dl-digium-d80.dtb";
     boards.d80 = "imx6dl-digium-d80";
     appendDtb = "imx6dl-digium-d80";
+    depmod = true;
   };
   # The vendor's stock images, downloaded when something needs one, and the
   # DSP firmware taken out of two of them.
   stock = pkgs.callPackage ./vendor-firmware.nix { inherit (workspace) opendeskphone-image; };
   dspFirmware = pkgs.callPackage ./dsp-firmware.nix {
+    inherit stock;
+    inherit (workspace) opendeskphone-image;
+  };
+  d80Firmware = pkgs.callPackage ./d80-firmware.nix {
     inherit stock;
     inherit (workspace) opendeskphone-image;
   };
@@ -126,14 +146,28 @@ let
       null;
 
   image = pkgs.callPackage ./image.nix {
-    inherit (workspace) opendeskphone opendeskphone-image version;
+    inherit (workspace)
+      opendeskphone
+      opendeskphone-d80
+      opendeskphone-image
+      version
+      ;
     inherit (userland)
       brush
       coreutils
       applets
       sed
       ;
-    inherit kernel dspFirmware apps;
+    inherit
+      kernel
+      kernelD80
+      dspFirmware
+      d80Firmware
+      apps
+      ;
+    userlandD80 = {
+      inherit (userlandD80) brush coreutils sed;
+    };
   };
 
   effs = lib.mapAttrs' (m: v: lib.nameValuePair "eff-${m}" v) image.effs;
@@ -143,8 +177,16 @@ in
   packages = {
     inherit kernel;
     kernel-d80 = kernelD80;
+    boot-d80 = image.d80.bootImage;
+    rootfs-tree-d80 = image.d80.rootfsTree;
+    rootfs-d80 = image.d80.rootfs;
+    ota-d80 = image.d80.package;
+    eff-d80 = image.d80.eff;
     kernel-source = kernel.source;
     inherit (userland) brush coreutils sed;
+    brush-d80 = userlandD80.brush;
+    coreutils-d80 = userlandD80.coreutils;
+    sed-d80 = userlandD80.sed;
     inherit (workspace)
       opendeskphone
       opendeskphone-d80

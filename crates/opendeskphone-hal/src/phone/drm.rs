@@ -3,6 +3,12 @@
 //! Color models: the PL111 scans out of the dumb buffer directly.  Gray
 //! models: the `digium-gray-lcd` driver pushes damage to the SPI panel on
 //! `DIRTYFB`.  The D70 has two connector/CRTC pairs: 320x160 and 113x357.
+//!
+//! The D80's panel is mounted upside down: the first line of its
+//! framebuffer is at the bottom of the screen as the phone is viewed, and
+//! the kernel does not turn the picture.  So the frame the caller draws in
+//! is a buffer of our own, the right way up, and a flush copies the damaged
+//! parts into the framebuffer turned by 180 degrees.
 
 use super::sys::*;
 use crate::*;
@@ -192,6 +198,37 @@ struct DrmScreen {
     dirty_ok: bool,
     /// The CRTC shows this screen's framebuffer (`set_power`).
     on: bool,
+    /// The frame the caller draws in, when the panel is upside down: the
+    /// picture the right way up, `info.len()` bytes.  The framebuffer gets
+    /// it turned, on a flush.
+    upright: Option<Vec<u8>>,
+    /// Bytes per row of the framebuffer (`info.stride` is the caller's
+    /// frame's).
+    fb_stride: usize,
+}
+
+/// Copies the part `r` of an upright picture (`src`, laid out as `info`
+/// says) into a framebuffer of the same size and format whose picture is
+/// turned by 180 degrees, and whose rows are `dst_stride` bytes: the pixel
+/// at (x, y) goes to (width - 1 - x, height - 1 - y).
+pub(crate) fn copy_turned(src: &[u8], info: &FrameInfo, dst: &mut [u8], dst_stride: usize, r: Rect) {
+    let r = r.clip(info.width, info.height);
+    let (w, h, bpp) = (info.width as usize, info.height as usize, info.format.bytes_per_pixel());
+    for y in r.y as usize..(r.y + r.height) as usize {
+        let from = &src[y * info.stride + r.x as usize * bpp..][..r.width as usize * bpp];
+        // The row's last pixel is the turned row's first.
+        let first = w - (r.x + r.width) as usize;
+        let to = &mut dst[(h - 1 - y) * dst_stride + first * bpp..][..r.width as usize * bpp];
+        for (d, p) in to.chunks_exact_mut(bpp).zip(from.chunks_exact(bpp).rev()) {
+            d.copy_from_slice(p);
+        }
+    }
+}
+
+/// Where the part `r` of an upright picture is in the turned one.
+pub(crate) fn turned_rect(r: Rect, width: u16, height: u16) -> Rect {
+    let r = r.clip(width, height);
+    Rect { x: width - r.x - r.width, y: height - r.y - r.height, ..r }
 }
 
 /// The phone's panels.  Opening them sets up the framebuffers and nothing
@@ -389,14 +426,12 @@ impl DrmDisplay {
             if map == libc::MAP_FAILED {
                 return Err(HalError::last_os("DRM mmap"));
             }
+            // The D80's panel is upside down (see the top of this file).
+            let turned = model.is_touch() && screen == Screen::Main;
+            let stride = if turned { mode.hdisplay as usize * format.bytes_per_pixel() } else { d.pitch as usize };
             let s = DrmScreen {
                 screen,
-                info: FrameInfo {
-                    width: mode.hdisplay,
-                    height: mode.vdisplay,
-                    stride: d.pitch as usize,
-                    format,
-                },
+                info: FrameInfo { width: mode.hdisplay, height: mode.vdisplay, stride, format },
                 crtc_id,
                 connector_id,
                 fb_id: fb.fb_id,
@@ -406,6 +441,8 @@ impl DrmDisplay {
                 mode,
                 dirty_ok: true,
                 on: false,
+                upright: turned.then(|| vec![0; stride * mode.vdisplay as usize]),
+                fb_stride: d.pitch as usize,
             };
             // SAFETY: `map` is `map_len` writable bytes.
             unsafe { std::ptr::write_bytes(s.map, 0, s.map_len) };
@@ -428,6 +465,19 @@ impl DrmDisplay {
         Ok(())
     }
 
+    /// Brings an upside-down panel's framebuffer up to date with the
+    /// caller's frame: the damaged parts, or all of it for no damage.
+    fn turn_into_framebuffer(s: &DrmScreen, damage: &[Rect]) {
+        let Some(upright) = &s.upright else { return };
+        // SAFETY: the mapping is `map_len` writable bytes and lives as long
+        // as the screen; nothing else holds a reference into it.
+        let fb = unsafe { std::slice::from_raw_parts_mut(s.map, s.map_len) };
+        let whole = [Rect::new(0, 0, s.info.width, s.info.height)];
+        for r in if damage.is_empty() { &whole[..] } else { damage } {
+            copy_turned(upright, &s.info, fb, s.fb_stride, *r);
+        }
+    }
+
     fn get(&self, screen: Screen) -> Result<&DrmScreen> {
         self.screens
             .iter()
@@ -446,7 +496,14 @@ impl Display for DrmDisplay {
     }
 
     fn frame(&mut self, screen: Screen) -> Result<&mut [u8]> {
-        let s = self.get(screen)?;
+        let s = self
+            .screens
+            .iter_mut()
+            .find(|s| s.screen == screen)
+            .ok_or(HalError::Unsupported("no such screen on this phone"))?;
+        if let Some(upright) = s.upright.as_mut() {
+            return Ok(upright);
+        }
         // SAFETY: the mapping is at least `info.len()` bytes (pitch x
         // height) and lives as long as `self`; `&mut self` gives exclusive
         // access.
@@ -462,15 +519,20 @@ impl Display for DrmDisplay {
             .ok_or(HalError::Unsupported("no such screen on this phone"))?;
         // A panel that is off shows nothing; turning it on shows the whole
         // buffer (the gray driver pushes it to the panel as it enables it).
-        if !s.on || !s.dirty_ok {
+        if !s.on {
             return Ok(());
         }
+        Self::turn_into_framebuffer(s, damage);
+        if !s.dirty_ok {
+            return Ok(());
+        }
+        let turned = s.upright.is_some();
         let mut clips: Vec<DrmClipRect> = if damage.len() > DRM_MODE_FB_DIRTY_MAX_CLIPS {
             Vec::new()
         } else {
             damage
                 .iter()
-                .map(|r| r.clip(s.info.width, s.info.height))
+                .map(|r| if turned { turned_rect(*r, s.info.width, s.info.height) } else { r.clip(s.info.width, s.info.height) })
                 .filter(|r| !r.is_empty())
                 .map(|r| DrmClipRect { x1: r.x, y1: r.y, x2: r.x + r.width, y2: r.y + r.height })
                 .collect()
@@ -497,6 +559,9 @@ impl Display for DrmDisplay {
 
     fn capture(&self, screen: Screen) -> Result<Frame> {
         let s = self.get(screen)?;
+        if let Some(upright) = &s.upright {
+            return Ok(Frame { info: s.info, pixels: upright.clone() });
+        }
         // SAFETY: as in `frame`; shared read of our own mapping.
         let pixels = unsafe { std::slice::from_raw_parts(s.map, s.info.len().min(s.map_len)) }.to_vec();
         Ok(Frame { info: s.info, pixels })
@@ -504,6 +569,10 @@ impl Display for DrmDisplay {
 
     fn set_power(&mut self, screen: Screen, on: bool) -> Result<()> {
         let s = self.get(screen)?;
+        if on {
+            // The panel shows the frame as it is now.
+            Self::turn_into_framebuffer(s, &[]);
+        }
         self.set_crtc(s, on)?;
         if let Some(s) = self.screens.iter_mut().find(|s| s.screen == screen) {
             s.on = on;
@@ -523,5 +592,41 @@ impl Drop for DrmDisplay {
             let mut dd = DrmModeDestroyDumb { handle: s.handle };
             let _ = ioctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &mut dd);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 4 x 3 picture of one byte a pixel, numbered by rows, in rows of
+    /// five bytes; the framebuffer has rows of six.
+    #[test]
+    fn a_picture_is_turned_into_the_framebuffer() {
+        let src: Vec<u8> = (0..3).flat_map(|y| [10 * y, 10 * y + 1, 10 * y + 2, 10 * y + 3, 99]).collect();
+        let info = FrameInfo { width: 4, height: 3, stride: 5, format: PixelFormat::R8 };
+        let mut fb = vec![0u8; 18];
+        copy_turned(&src, &info, &mut fb, 6, Rect::new(0, 0, 4, 3));
+        assert_eq!(fb, [23, 22, 21, 20, 0, 0, 13, 12, 11, 10, 0, 0, 3, 2, 1, 0, 0, 0]);
+        // A part: the pixels (1, 0) and (2, 0) only, which are the two in
+        // the middle of the last row.
+        let mut fb = vec![0u8; 18];
+        copy_turned(&src, &info, &mut fb, 6, Rect::new(1, 0, 2, 1));
+        assert_eq!(fb, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0]);
+        assert_eq!(turned_rect(Rect::new(1, 0, 2, 1), 4, 3), Rect::new(1, 2, 2, 1));
+        // What is outside the picture is left out.
+        let mut fb = vec![0u8; 18];
+        copy_turned(&src, &info, &mut fb, 6, Rect::new(3, 2, 10, 10));
+        assert_eq!(fb, [23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// Four bytes a pixel stay in their order within the pixel.
+    #[test]
+    fn a_turned_pixel_keeps_its_bytes_in_order() {
+        let src = [1, 2, 3, 4, 5, 6, 7, 8];
+        let mut fb = [0u8; 8];
+        let info = FrameInfo { width: 2, height: 1, stride: 8, format: PixelFormat::Xrgb8888 };
+        copy_turned(&src, &info, &mut fb, 8, Rect::new(0, 0, 2, 1));
+        assert_eq!(fb, [5, 6, 7, 8, 1, 2, 3, 4]);
     }
 }

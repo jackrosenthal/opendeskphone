@@ -100,8 +100,16 @@ pub struct PhoneEhs {
 }
 
 impl PhoneEhs {
+    /// The port of the D40 thru D70: UART A, which the serial console
+    /// shares.
     pub fn new() -> PhoneEhs {
         PhoneEhs { path: "/dev/ttyAMA0" }
+    }
+
+    /// The port of `model`.  The D80's is UART2, which is the EHS jack's
+    /// alone (its console is UART1).
+    pub fn for_model(model: Model) -> PhoneEhs {
+        if model.is_touch() { PhoneEhs { path: "/dev/ttymxc1" } } else { PhoneEhs::new() }
     }
 }
 

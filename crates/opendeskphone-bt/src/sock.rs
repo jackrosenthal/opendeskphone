@@ -203,9 +203,21 @@ pub fn sco_listen() -> io::Result<OwnedFd> {
     Ok(fd)
 }
 
+/// The socket option that sets a voice connection's air coding
+/// (`BT_VOICE`), and its value for data the controller passes as it is
+/// (`BT_VOICE_TRANSPARENT`): what wide-band speech takes.
+const BT_VOICE: libc::c_int = 11;
+const BT_VOICE_TRANSPARENT: u16 = 0x0003;
+
 /// Open a voice (SCO) connection to a device that already has a link.
-pub fn sco_connect(addr: Addr) -> io::Result<OwnedFd> {
+/// `transparent` asks for the connection wide-band speech uses, whose air
+/// coding is the codec's own and not the controller's CVSD.
+pub fn sco_connect(addr: Addr, transparent: bool) -> io::Result<OwnedFd> {
     let fd = socket(libc::SOCK_SEQPACKET, BTPROTO_SCO)?;
+    if transparent {
+        // SAFETY: `struct bt_voice` is one 16-bit setting.
+        cvt(unsafe { libc::setsockopt(fd.as_raw_fd(), SOL_BLUETOOTH, BT_VOICE, (&BT_VOICE_TRANSPARENT as *const u16).cast(), 2) })?;
+    }
     connect(&fd, &SockaddrSco { family: AF_BLUETOOTH as _, bdaddr: addr.0 })?;
     Ok(fd)
 }

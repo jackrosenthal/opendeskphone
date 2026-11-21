@@ -59,4 +59,4 @@ pub use bank::Bank;
 pub use ctrl::{Replication, replication_for};
 pub use error::{Result, UpdateError};
 pub use inspect::{BankStatus, Status, inspect, verify_bank};
-pub use install::{Installed, Options, Staged, Updater, abandon, check_eff, is_stock_version, select_bank};
+pub use install::{D80_NOT_HERE, Installed, Options, Staged, Updater, abandon, check_eff, is_stock_version, select_bank};

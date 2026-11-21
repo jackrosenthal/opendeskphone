@@ -3,8 +3,8 @@
 //! audio front end that the ARM does.
 //!
 //! The DSP runs the codecs other than G.711, the echo cancellers, and (on the
-//! new family) the band filter, as jobs through `opendeskphone-vpm`.  The rest
-//! is here: RTP/RTCP, SRTP, the jitter buffer, RFC 4733 DTMF, G.711, tones and
+//! new family) the band filter, as jobs through `opendeskphone-vpm`.  (The
+//! D80 has no such DSP: see [`softdsp`].)  The rest is here: RTP/RTCP, SRTP, the jitter buffer, RFC 4733 DTMF, G.711 (coded by the `audio-codec` crate), tones and
 //! ringing, and the real-time engine that ties them to the audio device and
 //! the DSP.
 //!
@@ -65,7 +65,6 @@
 
 pub mod bands;
 pub mod dtmf;
-pub mod g711;
 pub mod jitter;
 pub mod ring;
 pub mod rtp;
@@ -75,6 +74,7 @@ pub mod device;
 pub mod engine;
 pub mod fake;
 pub mod net;
+pub mod softdsp;
 pub mod vpmdsp;
 
 pub use bands::BandFrame;
@@ -82,4 +82,6 @@ pub use device::{AudioDevice, AudioPath, Dsp, GainControl};
 pub use engine::{
     Command, DtmfMode, Engine, EngineCore, EngineOptions, Event, Meters, PayloadCodec, SrtpConfig, StreamConfig, StreamStats,
 };
+pub use engine::Law;
+pub use softdsp::SoftDsp;
 pub use vpmdsp::{VpmDsp, VpmDspOptions};

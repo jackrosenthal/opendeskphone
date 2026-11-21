@@ -25,7 +25,19 @@
 //! ```
 //!
 //! The stock web page (firmware upload) accepts the same file.
+//!
+//! The D80's image is an Android OTA package, made of an Android boot image
+//! and a SquashFS image of the root file system (`mksquashfs` makes that);
+//! see `d80.rs`:
+//!
+//! ```text
+//! opendeskphone-image d80 boot-image --kernel zImage-dtb --out boot.img
+//! opendeskphone-image d80 package --boot boot.img --rootfs rootfs.squashfs \
+//!     --update-binary update-binary --version 3_1_0 --out 3_1_0_D80_firmware.zip
+//! opendeskphone-image eff pack 3_1_0_D80_firmware.zip 3_1_0_D80_firmware.eff --model D80 --version 3_1_0
+//! ```
 
+mod d80;
 mod date;
 mod kernel;
 
@@ -68,6 +80,54 @@ enum Cmd {
     /// Whole firmware images
     #[command(subcommand)]
     Image(ImageCmd),
+    /// The D80's images: Android boot image, OTA package, voice processor firmware
+    #[command(subcommand)]
+    D80(D80Cmd),
+}
+
+#[derive(Subcommand)]
+enum D80Cmd {
+    /// zImage with its devicetree after it -> Android boot image for mmcblk0p1
+    BootImage {
+        /// The kernel: a zImage and then the D80's devicetree
+        #[arg(long)]
+        kernel: PathBuf,
+        /// A ramdisk; default: an empty one, so that the kernel mounts the root file system itself
+        #[arg(long)]
+        ramdisk: Option<PathBuf>,
+        /// Command line for the header (the D80's U-Boot passes its own, and the kernel uses the one built into it)
+        #[arg(long, default_value = "")]
+        cmdline: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Print the header of an Android boot image and check its id
+    BootImageInfo { image: PathBuf },
+    /// Boot image + SquashFS root file system -> unsigned Android OTA package (zip)
+    Package {
+        /// Image made by `d80 boot-image`
+        #[arg(long)]
+        boot: PathBuf,
+        /// SquashFS image of the root file system
+        #[arg(long)]
+        rootfs: PathBuf,
+        /// The `update-binary` of a stock OTA package (META-INF/com/google/android/update-binary)
+        #[arg(long)]
+        update_binary: PathBuf,
+        /// Version text, e.g., 3_1_0
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Stock boot image -> the ZL38040's firmware as the mainline driver loads it (zl38040.fw)
+    Zl38040Firmware {
+        /// `boot.img` of a stock OTA package
+        #[arg(long)]
+        boot_image: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -557,6 +617,57 @@ fn image_cmd(cmd: ImageCmd) -> Res<()> {
     Ok(())
 }
 
+fn d80_cmd(cmd: D80Cmd) -> Res<()> {
+    match cmd {
+        D80Cmd::BootImage { kernel, ramdisk, cmdline, out } => {
+            let ramdisk = match ramdisk {
+                Some(p) => read(&p)?,
+                None => d80::empty_ramdisk(),
+            };
+            let image = d80::BootImage::new(read(&kernel)?, ramdisk, &cmdline);
+            let data = image.build()?;
+            write(&out, &data)?;
+            println!(
+                "{}: kernel {} bytes, ramdisk {} bytes, {} bytes in all ({} spare in the 8 MiB partition)",
+                out.display(),
+                image.kernel.len(),
+                image.ramdisk.len(),
+                data.len(),
+                d80::BOOT_PARTITION - data.len()
+            );
+        }
+        D80Cmd::BootImageInfo { image } => {
+            let b = d80::BootImage::parse(&read(&image)?)?;
+            println!("Android boot image, header version 0, id valid");
+            println!("  kernel {} bytes, loaded at {:#010x}", b.kernel.len(), b.kernel_addr);
+            println!("  ramdisk {} bytes, loaded at {:#010x}", b.ramdisk.len(), b.ramdisk_addr);
+            println!("  second-stage address {:#010x}, tags address {:#010x}", b.second_addr, b.tags_addr);
+            println!("  command line {:?}", b.cmdline);
+            for p in b.problems() {
+                println!("  not as this tool builds one: {p}");
+            }
+        }
+        D80Cmd::Package { boot, rootfs, update_binary, version, out } => {
+            let (boot, rootfs) = (read(&boot)?, read(&rootfs)?);
+            let data = d80::package(&boot, &rootfs, &read(&update_binary)?, &version)?;
+            write(&out, &data)?;
+            println!(
+                "{}: D80 {version} ({} bytes, not signed): boot image {} bytes, root file system {} bytes",
+                out.display(),
+                data.len(),
+                boot.len(),
+                rootfs.len()
+            );
+        }
+        D80Cmd::Zl38040Firmware { boot_image, out } => {
+            let fw = d80::zl38040_firmware(&read(&boot_image)?)?;
+            write(&out, &fw)?;
+            println!("{}: {} bytes", out.display(), fw.len());
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     let res = match Cli::parse().cmd {
         Cmd::Eff(c) => eff_cmd(c),
@@ -564,6 +675,7 @@ fn main() {
         Cmd::Jffs2(c) => jffs2_cmd(c),
         Cmd::KernelImage(k) => kernel_image(k),
         Cmd::Image(c) => image_cmd(c),
+        Cmd::D80(c) => d80_cmd(c),
     };
     if let Err(e) = res {
         eprintln!("error: {e}");

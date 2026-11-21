@@ -1,12 +1,23 @@
 # Boot images, the root file system, and the per-model EFFs.  Every step is one
 # call of the `opendeskphone-image` tool; the root file system's contents are
 # listed here and laid out with plain installs.
+#
+# The D40 thru D70 share one root file system, a JFFS2 image for their NAND
+# flash, and an EFF with an OTA container of the kernel and that image.  The
+# D80 has its own (`d80` below): a SquashFS image for its eMMC, an Android
+# boot image, and an Android OTA package of the two, which is also what its
+# EFF carries.
 {
   lib,
   runCommand,
+  squashfsTools,
   opendeskphone-image,
   kernel,
+  kernelD80,
   opendeskphone,
+  opendeskphone-d80,
+  d80Firmware,
+  userlandD80, # brush, coreutils, and sed built for the D80
   brush,
   coreutils,
   applets,
@@ -66,14 +77,29 @@ let
         --out $out/kernel.bin
     '';
 
-  # The root file system tree.  It is the same for every model: both DSP
-  # firmware variants are present, each in its family's directory, and the
-  # init role points the kernel's firmware loader at the right one.
-  rootfsTree = runCommand "opendeskphone-rootfs-tree-${version}" { } ''
-    mkdir -p $out/{bin,sbin,etc/opendeskphone,lib/firmware/old-family,lib/firmware/new-family,usr/share/opendeskphone/apps}
+  # A root file system tree: the firmware binary, the shell and the
+  # utilities, a kernel's modules, the apps, and the sounds.  `firmware`
+  # is the commands that put the family's firmware files under
+  # $out/lib/firmware.
+  tree =
+    {
+      name,
+      dphone,
+      kernel,
+      firmware,
+      brush,
+      coreutils,
+      sed,
+      # The ELF header's flags word of every program: the ABI version, and
+      # whether floating point values are passed in the floating point
+      # unit's registers.
+      elfFlags,
+    }:
+    runCommand name { } ''
+    mkdir -p $out/{bin,sbin,etc/opendeskphone,lib/firmware,usr/share/opendeskphone/apps}
     mkdir -p $out/{dev,proc,sys,tmp,run,var,nvdata,root}
 
-    install -m 0755 ${opendeskphone}/bin/dphone $out/sbin/init
+    install -m 0755 ${dphone}/bin/dphone $out/sbin/init
     ln -s ../sbin/init $out/bin/dphone
     # System commands `dphone` provides under its own name.
     for c in mount umount insmod rmmod lsmod modprobe reboot poweroff halt dmesg ps; do
@@ -91,8 +117,7 @@ let
 
     cp -r ${kernel}/lib/modules $out/lib/modules
 
-    install -m 0644 ${dspFirmware.old} $out/lib/firmware/old-family/dspapp1107_lcc.bin
-    install -m 0644 ${dspFirmware.new} $out/lib/firmware/new-family/dspapp1107_lcc.bin
+    ${firmware}
 
     ${lib.optionalString (
       apps != null
@@ -149,7 +174,33 @@ let
       test "$(od -An -tx1 -N6 "$file" | tr -d ' \n')" = 7f454c460101
       test "$(od -An -tu2 -j18 -N2 "$file" | tr -d ' \n')" = 40
     done
+    # Every program is built for this family's processor: an image must
+    # not mix the two.
+    for program in sbin/init bin/brush bin/coreutils bin/sed; do
+      test "$(od -An -tx4 -j36 -N4 $out/$program | tr -d ' \n')" = ${elfFlags}
+    done
   '';
+
+  # The root file system tree of the D40 thru D70.  It is the same for
+  # every one of them: both DSP firmware variants are present, each in its
+  # family's directory, and the init role points the kernel's firmware
+  # loader at the right one.
+  rootfsTree = tree {
+    name = "opendeskphone-rootfs-tree-${version}";
+    dphone = opendeskphone;
+    inherit
+      kernel
+      brush
+      coreutils
+      sed
+      ;
+    # EABI version 5, soft-float.
+    elfFlags = "05000200";
+    firmware = ''
+      install -D -m 0644 ${dspFirmware.old} $out/lib/firmware/old-family/dspapp1107_lcc.bin
+      install -D -m 0644 ${dspFirmware.new} $out/lib/firmware/new-family/dspapp1107_lcc.bin
+    '';
+  };
 
   # JFFS2 image of the tree: little-endian, 128 KiB erase blocks, all files
   # owned by root.
@@ -171,9 +222,76 @@ let
         --mtime 0 \
         --out $out
     '';
+
+  # The D80.  Its eMMC keeps the stock partitions (the table is in
+  # crates/opendeskphone-image/src/d80.rs): the boot image goes to the
+  # first, the root file system to the stock `/system`, and nvdata is the
+  # stock `/cache`.  The stock recovery and `/data` are left as they are.
+  d80 = rec {
+    # The firmware binary, the shell, and the utilities built for the
+    # D80, its kernel's modules, and the firmware files its kernel loads,
+    # under the names the mainline drivers ask for (kernel/README.md).
+    rootfsTree = tree {
+      name = "opendeskphone-d80-rootfs-tree-${version}";
+      dphone = opendeskphone-d80;
+      kernel = kernelD80;
+      inherit (userlandD80) brush coreutils sed;
+      # EABI version 5, hard-float.
+      elfFlags = "05000400";
+      firmware = ''
+        install -D -m 0644 ${d80Firmware.zl38040} $out/lib/firmware/zl38040.fw
+        install -D -m 0644 ${d80Firmware.wifi} $out/lib/firmware/brcm/brcmfmac43430a0-sdio.bin
+        install -D -m 0644 ${d80Firmware.wifiNvram} $out/lib/firmware/brcm/brcmfmac43430a0-sdio.txt
+        install -D -m 0644 ${d80Firmware.bluetooth} $out/lib/firmware/brcm/BCM4343A0.hcd
+      '';
+    };
+
+    # SquashFS image of the tree, as the kernel mounts it read-only from
+    # mmcblk0p5 (`root=` in kernel/configs/d80_defconfig): every file owned
+    # by root, every time zero.  It needs no device nodes: the kernel
+    # mounts devtmpfs on /dev before it starts init.
+    rootfs = runCommand "opendeskphone-d80-rootfs-${version}.squashfs" { nativeBuildInputs = [ squashfsTools ]; } ''
+      # mksquashfs takes its times from the options, and refuses both.
+      unset SOURCE_DATE_EPOCH
+      mksquashfs ${rootfsTree} $out -all-root -noappend -no-xattrs -no-progress \
+        -comp xz -b 131072 -mkfs-time 0 -all-time 0
+    '';
+
+    # The Android boot image for mmcblk0p1: the kernel with its
+    # devicetree after it, and an empty ramdisk.  The tool fails when the
+    # result does not fit the 8 MiB partition.
+    bootImage = runCommand "boot-d80-${version}.img" { nativeBuildInputs = [ opendeskphone-image ]; } ''
+      opendeskphone-image d80 boot-image \
+        --kernel ${kernelD80}/zImage-dtb \
+        --cmdline "$(sed -n 's/^CONFIG_CMDLINE="\(.*\)"$/\1/p' ${kernelD80}/config)" \
+        --out $out
+    '';
+
+    # The Android OTA package that writes the two: what the stock recovery
+    # installs.  It is not signed.
+    package = runCommand "${wireVersion}_D80_firmware.zip" { nativeBuildInputs = [ opendeskphone-image ]; } ''
+      opendeskphone-image d80 package \
+        --boot ${bootImage} \
+        --rootfs ${rootfs} \
+        --update-binary ${d80Firmware.updateBinary} \
+        --version ${wireVersion} \
+        --out $out
+    '';
+
+    # The package in the vendor's envelope.  A stock image has the vendor's
+    # signature after the package, which this has not.
+    eff = runCommand "${wireVersion}_D80_firmware.eff" { nativeBuildInputs = [ opendeskphone-image ]; } ''
+      opendeskphone-image eff pack ${package} $out --model D80 --version ${wireVersion}
+    '';
+  };
 in
 {
-  inherit models rootfsTree rootfs;
+  inherit
+    models
+    rootfsTree
+    rootfs
+    d80
+    ;
   kernelImages = lib.mapAttrs kernelImage models;
   effs = lib.mapAttrs eff models;
 }

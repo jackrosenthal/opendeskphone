@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use opendeskphone_media::dtmf::{DtmfEdge, EventPayload};
 use opendeskphone_media::fake::{FakeAudio, FakeAudioState};
-use opendeskphone_media::g711::Law;
+use opendeskphone_media::Law;
 use opendeskphone_media::ring::RingSource;
 use opendeskphone_media::rtp::{self, RtpHeader};
 use opendeskphone_media::srtp::{MasterKey, SrtpContext, Suite};

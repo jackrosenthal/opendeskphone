@@ -1049,6 +1049,14 @@ fn a_bad_file_touches_neither_the_flash_nor_the_trial_record() {
         .unwrap_err();
     assert!(matches!(err, UpdateError::WrongModel { .. }), "{err}");
     assert_eq!(nand.ops(), ops);
+    // A D80 has no banks: nothing is installed on one from here, whatever
+    // the image, and nothing is read or written for the attempt.
+    let err = Updater::new(&mut m, Model::D80, CMD_A, dir.path())
+        .install_eff_file(std::io::Cursor::new(&new.eff))
+        .unwrap_err();
+    assert!(matches!(&err, UpdateError::Refused(why) if why.contains("D80")), "{err}");
+    assert!(matches!(check_eff(&new.eff[..], Model::D80), Err(UpdateError::Refused(_))));
+    assert_eq!(nand.ops(), ops);
     assert_eq!(check_eff(&new.eff[..], Model::D60).unwrap(), "3_0_0");
     Updater::new(&mut m, Model::D60, CMD_A, dir.path()).install_eff_file(std::io::Cursor::new(&new.eff)).unwrap();
     assert_bank_holds(&nand, Bank::B, &new);

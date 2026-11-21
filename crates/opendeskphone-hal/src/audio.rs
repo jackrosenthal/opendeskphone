@@ -132,7 +132,13 @@ pub trait Audio: Send {
     /// [`BLUETOOTH_CARD`] (D65), mono, 16-bit, at [`BLUETOOTH_RATE`].  It
     /// carries the headset's microphone and earpiece while the Bluetooth
     /// voice link is up.  Other models and backends have none.
-    fn open_bluetooth(&mut self, _config: PcmConfig) -> Result<Box<dyn Pcm>> {
+    ///
+    /// On the D80 there is no such card: the voice processor exchanges
+    /// the audio with the Bluetooth module itself.  This opens the phone's
+    /// own device, at [`Audio::rate`], with the voice processor on its
+    /// Bluetooth path, exchanging audio with the module at 8 kHz, or with
+    /// `wideband` (a wide-band speech link) at 16 kHz.
+    fn open_bluetooth(&mut self, _config: PcmConfig, _wideband: bool) -> Result<Box<dyn Pcm>> {
         Err(crate::HalError::Unsupported("Bluetooth audio"))
     }
     fn mixer(&mut self) -> Result<Box<dyn Mixer>>;

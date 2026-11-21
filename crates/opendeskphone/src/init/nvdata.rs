@@ -1,12 +1,27 @@
 //! Mounting nvdata.  The partition is found by name, never by number or
 //! offset (the layout comes from boot2's `mtdparts=`).
+//!
+//! The D80 has no flash partitions: its storage is an eMMC with the stock
+//! Android partitions, and its nvdata is the one stock mounts as `/cache`
+//! ([`D80_NVDATA`]), with the ext4 file system stock made there.  Stock
+//! keeps nothing in it that must last (its recovery reads its orders from
+//! `recovery/` there and writes its log), and stock's own settings, which
+//! are in `/data`, are left as they are.
 
 use std::io;
 
 use log::{error, info, warn};
 
+use crate::model::Family;
 use crate::paths::NVDATA;
 use crate::sys;
+
+/// The D80's nvdata: the sixth partition of its eMMC (512 MiB, ext4),
+/// which is the stock firmware's `/cache`.
+pub const D80_NVDATA: &str = "/dev/mmcblk0p6";
+/// The D80's root file system: the fifth partition of its eMMC, which is
+/// the stock firmware's `/system`.
+pub const D80_ROOT: &str = "/dev/mmcblk0p5";
 
 /// Index of the MTD partition called `name`, from `/proc/mtd` text.
 pub fn mtd_index(proc_mtd: &str, name: &str) -> Option<u32> {
@@ -27,13 +42,20 @@ pub enum NvdataState {
     Recovery,
 }
 
-/// Mount nvdata read-write at `/nvdata`.
-pub fn mount() -> NvdataState {
+/// Mount nvdata read-write at `/nvdata`: the flash partition of that name,
+/// or for the touch family (the D80) [`D80_NVDATA`].
+pub fn mount(family: Option<Family>) -> NvdataState {
     let flags = libc::MS_NOATIME | libc::MS_NOSUID | libc::MS_NODEV;
     // The early-boot stage mounts nvdata to read the trial record and hands
     // it over mounted (with the same flags), which saves a second scan.
     let mounted = std::fs::read_to_string("/proc/mounts").is_ok_and(|m| is_mounted(&m));
-    let result = if mounted { Ok("the early-boot stage".to_string()) } else { try_mount(flags) };
+    let result = if mounted {
+        Ok("the early-boot stage".to_string())
+    } else if family == Some(Family::Touch) {
+        sys::mount(D80_NVDATA, NVDATA, "ext4", flags, "").map(|()| D80_NVDATA.to_string())
+    } else {
+        try_mount(flags)
+    };
     match result {
         Ok(source) => {
             info!("nvdata mounted from {source}");

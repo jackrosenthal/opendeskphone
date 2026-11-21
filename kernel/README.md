@@ -21,6 +21,7 @@ Nix builds the kernel, and `nix/kernel.nix` is the recipe.
 | `nix build .#kernel` | The compressed kernel (`zImage`), one device tree for each model (`dtbs/`), the loadable modules (`lib/modules/7.3.0/`), and the full configuration that was used (`config`). |
 | `nix build .#kernel-d60` | `kernel.bin`, the file that is written to the kernel partition of a D60.  There is one such output for each model. |
 | `nix build .#kernel-d80` | The D80's kernel.  See [The D80's kernel](#the-d80s-kernel). |
+| `nix build .#boot-d80` | The D80's Android boot image, which is written to the first partition of its eMMC. |
 | `nix build .#kernel-source` | The Linux 7.3 tree with both ports applied and nothing built. |
 | `nix build .#eff-d60` | The complete firmware image for a D60, which contains `kernel.bin`. |
 
@@ -46,22 +47,27 @@ The compiled kernel is the same for all seven BCMRING models, and only the devic
 | `zImage` | The compressed kernel. |
 | `dtbs/imx6dl-digium-d80.dtb` | The device tree (`files/arch/arm/boot/dts/nxp/imx/imx6dl-digium-d80.dts`). |
 | `zImage-dtb` | `zImage` followed by the device tree, which is the form the boot loader starts. |
-| `lib/modules/7.3.0/` | The loadable modules: sound, Wi-Fi, Bluetooth, and some file systems. |
+| `lib/modules/7.3.0/` | The loadable modules (sound, Wi-Fi, Bluetooth, and some file systems), and `modules.dep`, from which the firmware takes the order to load them in. |
 | `config` | The full configuration that was used. |
 
 The port adds one driver, for the ZL38040 voice processor (`files/sound/soc/codecs/zl38040.c`), and an entry for the RTL8363NB Ethernet switch in the `rtl8365mb` driver.  Everything else is the device tree and the configuration.
 
-The build does not make a boot image or a root file system for the D80 yet, and the kernel has no early-boot stage.
+`nix build .#boot-d80` wraps `zImage-dtb` as the boot image, with `opendeskphone-image d80 boot-image`.  The build fails if the image does not fit the 8 MiB partition.
+
+The kernel has no early-boot stage.  The D80 has one kernel and one root file system, so there is no firmware bank to select: the kernel mounts the root file system itself, read-only, from the fifth partition of the eMMC (`root=/dev/mmcblk0p5 rootfstype=squashfs` in `CONFIG_CMDLINE`).  The boot image's ramdisk is an empty archive.  With no `/init` in it, the kernel goes on to mount the root file system.
+
+The firmware loads the sound and Bluetooth modules when it starts, from the lists in `crates/opendeskphone/src/init/modules.rs`.  It loads no Wi-Fi module: the firmware does not use Wi-Fi.
 
 ### Constraints to know about
 
-- **The boot loader starts an Android boot image.**  The phone's U-Boot reads the image from the first partition of the eMMC, which is 8 MiB.  The image has a version 0 header and 2048-byte pages.  Its kernel is `zImage-dtb`, loaded at 0x10808000, and its ramdisk is loaded at 0x11800000.  U-Boot passes the memory layout and the location of the ramdisk in ATAGs, which the kernel merges into the appended device tree (`CONFIG_ARM_ATAG_DTB_COMPAT`).
+- **The boot loader starts an Android boot image.**  The phone's U-Boot reads the image from the first partition of the eMMC, which is 8 MiB.  The image has a version 0 header and 2048-byte pages.  Its kernel is `zImage-dtb`, loaded at 0x10808000, and its ramdisk is loaded at 0x11800000.  The image always has a ramdisk: the stock U-Boot has not been seen to start an image without one.  U-Boot passes the memory layout and the location of the ramdisk in ATAGs, which the kernel merges into the appended device tree (`CONFIG_ARM_ATAG_DTB_COMPAT`).
 - **The kernel ignores the boot loader's command line.**  U-Boot passes the command line of the stock Android system, which has `init=/init` and parameters for the stock kernel's drivers.  The configuration replaces it with its own (`CONFIG_CMDLINE` with `CONFIG_CMDLINE_FORCE`).  To add a kernel parameter, add it to `CONFIG_CMDLINE` in `configs/d80_defconfig`.
-- **Three devices need firmware files that are not in the repository.**  The kernel loads them from `/lib/firmware`:
+- **The root file system must be SquashFS.**  `CONFIG_CMDLINE` names the file system type, and `CONFIG_SQUASHFS` is built in for it.  To change the root file system's partition or type, change `CONFIG_CMDLINE`, the image build (`nix/image.nix`), and the partition that the firmware takes for the installed one (`D80_ROOT` in `crates/opendeskphone/src/init/nvdata.rs`).
+- **Three devices need firmware files that are not in the repository.**  The image build takes them from the vendor's stock D80 image, which Nix downloads (`nix/d80-firmware.nix`).  The kernel loads them from `/lib/firmware`:
 
   | Device | File |
   | --- | --- |
-  | ZL38040 voice processor | `zl38040.fw`: the stock firmware (`ZLS38040App_v2.2.2.s3`, built into the stock kernel), converted to Intel HEX and then with the kernel's `ihex2fw -j`.  The driver does not start without it. |
+  | ZL38040 voice processor | `zl38040.fw`: the stock firmware (`ZLS38040App_v2.2.2.s3`, built into the stock kernel), in the form that the kernel's `ihex2fw -j` gives it.  `opendeskphone-image d80 zl38040-firmware` makes it from the stock boot image.  The driver does not start without it. |
   | Wi-Fi (BCM43430 revision 0, in the AP6212 module) | `brcm/brcmfmac43430a0-sdio.bin` and the board's NVRAM file, `brcm/brcmfmac43430a0-sdio.txt` |
   | Bluetooth (in the same module) | `brcm/BCM4343A0.hcd` |
 

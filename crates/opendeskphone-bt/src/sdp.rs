@@ -208,12 +208,17 @@ impl Record {
         Record { handle, attrs }
     }
 
-    /// The Hands-Free audio gateway record (profile version 1.5).
-    pub fn handsfree_ag(channel: u8, features: u16) -> Record {
-        let mut r = Record::new(0x0001_0001, uuid::HANDSFREE_AG, uuid::HANDSFREE, 0x0105, channel, "Voice Gateway");
+    /// The Hands-Free audio gateway record: profile version 1.5, or with
+    /// wide-band speech 1.6, the version that has it.
+    pub fn handsfree_ag(channel: u8, wideband: bool) -> Record {
+        let version = if wideband { 0x0106 } else { 0x0105 };
+        let mut r = Record::new(0x0001_0001, uuid::HANDSFREE_AG, uuid::HANDSFREE, version, channel, "Voice Gateway");
         // Network: 1 = the gateway can reject a call.
         r.attrs.push((ATTR_NETWORK, De::U8(1)));
-        r.attrs.push((ATTR_FEATURES, De::U16(features)));
+        // None of the optional features the attribute's first five bits
+        // name (three-way calling, echo control, voice recognition, an
+        // in-band ring tone, voice tags).
+        r.attrs.push((ATTR_FEATURES, De::U16(if wideband { crate::hfp::SDP_WIDEBAND_SPEECH } else { 0 })));
         r
     }
 
@@ -424,7 +429,7 @@ mod tests {
     use super::*;
 
     fn records() -> Vec<Record> {
-        vec![Record::handsfree_ag(13, 0x20), Record::headset_ag(12)]
+        vec![Record::handsfree_ag(13, false), Record::headset_ag(12)]
     }
 
     #[test]

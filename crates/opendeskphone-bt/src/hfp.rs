@@ -1,6 +1,11 @@
 //! The audio gateway's side of the AT command dialogue of the Hands-Free
-//! profile (1.5, without three-way calling, voice recognition, or codec
-//! negotiation: narrow-band voice only) and of the Headset profile.
+//! profile (without three-way calling or voice recognition) and of the
+//! Headset profile.
+//!
+//! Voice is narrow-band (CVSD) unless the gateway is made with
+//! [`Gateway::with_wideband`] and the headset negotiates codecs too: then
+//! the two agree on a codec before each voice connection (`+BCS`), and
+//! wide-band speech (mSBC, 16 kHz) is chosen when the headset has it.
 //!
 //! Pure protocol: bytes from the RFCOMM link go in through
 //! [`Gateway::receive`], bytes to send come out of [`Gateway::take_output`],
@@ -11,6 +16,23 @@ use std::time::{Duration, Instant};
 /// Gateway feature bits for `+BRSF` and the service record: bit 5, "ability
 /// to reject a call".
 pub const AG_FEATURES: u16 = 1 << 5;
+/// Gateway feature bit 9 of `+BRSF`: codec negotiation.
+pub const AG_CODEC_NEGOTIATION: u16 = 1 << 9;
+/// Feature bit 7 of the headset's `AT+BRSF`: codec negotiation.
+const HF_CODEC_NEGOTIATION: u32 = 1 << 7;
+/// Bit 5 of the service record's feature attribute: wide-band speech.  (The
+/// attribute's bits are not `+BRSF`'s: its first five are, and this is its
+/// sixth.)
+pub const SDP_WIDEBAND_SPEECH: u16 = 1 << 5;
+
+/// A voice codec, by its number in `+BCS` and `AT+BAC`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Codec {
+    /// Narrow-band, 8 kHz.  Every headset has it.
+    Cvsd = 1,
+    /// Wide-band speech, 16 kHz.
+    Msbc = 2,
+}
 
 /// How often `RING` repeats while a call alerts.
 pub const RING_INTERVAL: Duration = Duration::from_secs(3);
@@ -46,6 +68,12 @@ pub enum Action {
     MicVolume(u8),
     /// The single button of a Headset-profile device.
     Button,
+    /// The headset asks the gateway to open the voice connection
+    /// (`AT+BCC`), which with codec negotiation only the gateway does.
+    OpenAudio,
+    /// The headset agreed to the codec offered with
+    /// [`Gateway::offer_codec`]: the voice connection can be opened.
+    CodecSelected(Codec),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +106,14 @@ pub struct Gateway {
     indicators: [u8; 7],
     state: CallState,
     next_ring: Option<Instant>,
+    /// This gateway negotiates codecs and has wide-band speech.
+    wideband: bool,
+    /// The headset negotiates codecs (its `AT+BRSF`).
+    hf_negotiates: bool,
+    /// The headset has mSBC (its `AT+BAC`).
+    hf_msbc: bool,
+    /// The codec offered with `+BCS` and not yet answered.
+    offered: Option<Codec>,
 }
 
 impl Gateway {
@@ -100,7 +136,41 @@ impl Gateway {
             indicators,
             state: CallState::Idle,
             next_ring: None,
+            wideband: false,
+            hf_negotiates: false,
+            hf_msbc: false,
+            offered: None,
         }
+    }
+
+    /// The gateway of a phone whose Bluetooth voice can be wide-band: it
+    /// negotiates codecs with a headset that does.
+    pub fn with_wideband(mut self, wideband: bool) -> Gateway {
+        self.wideband = wideband && self.dialect == Dialect::HandsFree;
+        self
+    }
+
+    /// The feature bits of this gateway's `+BRSF`.
+    pub fn features(&self) -> u16 {
+        AG_FEATURES | if self.wideband { AG_CODEC_NEGOTIATION } else { 0 }
+    }
+
+    /// Whether a codec is agreed on before each voice connection: when
+    /// both sides negotiate codecs.
+    pub fn negotiates(&self) -> bool {
+        self.wideband && self.hf_negotiates
+    }
+
+    /// The best codec both sides have.
+    pub fn best_codec(&self) -> Codec {
+        if self.negotiates() && self.hf_msbc { Codec::Msbc } else { Codec::Cvsd }
+    }
+
+    /// Offers the headset a codec for the voice connection (`+BCS`).  Its
+    /// agreement comes as [`Action::CodecSelected`].
+    pub fn offer_codec(&mut self, codec: Codec) {
+        self.offered = Some(codec);
+        self.send(&format!("+BCS: {}", codec as u8));
     }
 
     pub fn is_connected(&self) -> bool {
@@ -243,9 +313,26 @@ impl Gateway {
             return self.send("ERROR");
         }
 
-        if body.starts_with("+BRSF=") {
-            self.send(&format!("+BRSF: {AG_FEATURES}"));
+        if let Some(v) = body.strip_prefix("+BRSF=") {
+            self.hf_negotiates = v.trim().parse::<u32>().is_ok_and(|f| f & HF_CODEC_NEGOTIATION != 0);
+            self.send(&format!("+BRSF: {}", self.features()));
             self.ok();
+        } else if let Some(list) = body.strip_prefix("+BAC=").filter(|_| self.wideband) {
+            // The codecs the headset has now.  It may send this again,
+            // e.g., to take one back.
+            self.hf_msbc = list.split(',').any(|c| c.trim() == "2");
+            self.ok();
+        } else if body == "+BCC" && self.negotiates() {
+            self.ok();
+            self.actions.push(Action::OpenAudio);
+        } else if let Some(v) = body.strip_prefix("+BCS=").filter(|_| self.offered.is_some()) {
+            match self.offered.take() {
+                Some(codec) if v.trim().parse() == Ok(codec as u8) => {
+                    self.ok();
+                    self.actions.push(Action::CodecSelected(codec));
+                }
+                _ => self.send("ERROR"),
+            }
         } else if body == "+CIND=?" {
             self.send(CIND_TEST);
             self.ok();
@@ -314,8 +401,8 @@ impl Gateway {
             }
         } else {
             // Everything optional that we do not offer (three-way calling,
-            // voice recognition, echo control, codec negotiation, vendor
-            // extensions).
+            // voice recognition, echo control, vendor extensions, and
+            // without wide-band speech, codec negotiation).
             self.send("ERROR");
         }
     }
@@ -477,5 +564,54 @@ mod tests {
         assert_eq!(g.take_actions(), [Action::Button, Action::SpeakerVolume(7)]);
         g.set_call_state(t0, CallState::Active);
         assert!(text(&mut g).is_empty());
+    }
+
+    /// A gateway with wide-band speech and a headset that negotiates
+    /// codecs: the headset names its codecs, and each voice connection
+    /// starts with the gateway's offer and the headset's agreement.
+    #[test]
+    fn codecs_are_negotiated_for_wideband_speech() {
+        let mut g = Gateway::new(Dialect::HandsFree).with_wideband(true);
+        // Headset features 0x9f: bit 7 is codec negotiation.
+        g.receive(b"AT+BRSF=159\rAT+BAC=1,2\rAT+CIND=?\rAT+CIND?\rAT+CMER=3,0,0,1\r");
+        assert_eq!(lines(&mut g)[..3], ["+BRSF: 544", "OK", "OK"]);
+        assert!(g.negotiates());
+        assert_eq!(g.best_codec(), Codec::Msbc);
+        // The headset asks for the voice connection.
+        g.take_actions();
+        g.receive(b"AT+BCC\r");
+        assert_eq!(g.take_actions(), [Action::OpenAudio]);
+        assert_eq!(lines(&mut g), ["OK"]);
+        g.offer_codec(Codec::Msbc);
+        assert_eq!(lines(&mut g), ["+BCS: 2"]);
+        // Another codec than the one offered is refused; the offer is
+        // then over.
+        g.receive(b"AT+BCS=1\r");
+        assert_eq!((lines(&mut g), g.take_actions()), (vec!["ERROR".to_string()], vec![]));
+        g.offer_codec(Codec::Msbc);
+        g.receive(b"AT+BCS=2\r");
+        assert_eq!(lines(&mut g), ["+BCS: 2", "OK"]);
+        assert_eq!(g.take_actions(), [Action::CodecSelected(Codec::Msbc)]);
+        // The headset takes mSBC back.
+        g.receive(b"AT+BAC=1\r");
+        assert_eq!(g.best_codec(), Codec::Cvsd);
+    }
+
+    /// Without both sides negotiating, voice is narrow-band and nothing is
+    /// offered: a headset of the older profile, and a gateway without
+    /// wide-band speech.
+    #[test]
+    fn no_negotiation_unless_both_sides_have_it() {
+        let mut g = Gateway::new(Dialect::HandsFree).with_wideband(true);
+        g.receive(b"AT+BRSF=27\rAT+BCC\r");
+        assert_eq!(lines(&mut g), ["+BRSF: 544", "OK", "ERROR"]);
+        assert!(!g.negotiates());
+        assert_eq!(g.best_codec(), Codec::Cvsd);
+        let mut g = Gateway::new(Dialect::HandsFree);
+        g.receive(b"AT+BRSF=159\rAT+BAC=1,2\rAT+BCS=2\r");
+        assert_eq!(lines(&mut g), ["+BRSF: 32", "OK", "ERROR", "ERROR"]);
+        assert!(!g.negotiates());
+        // The Headset profile has no such dialogue.
+        assert!(!Gateway::new(Dialect::Headset).with_wideband(true).negotiates());
     }
 }

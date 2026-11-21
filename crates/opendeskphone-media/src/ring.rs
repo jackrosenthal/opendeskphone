@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::bands::WB;
-use crate::g711::Law;
+use crate::engine::Law;
 
 /// Samples per second of everything the player plays.
 pub const RING_RATE: u32 = 16_000;
@@ -175,8 +175,12 @@ pub fn decode_wav(data: &[u8]) -> Result<Vec<i16>, WavError> {
     let first: Vec<i16> = match (tag, bits) {
         (1, 16) => pcm.chunks_exact(frame).map(|f| i16::from_le_bytes([f[0], f[1]])).collect(),
         (1, 8) => pcm.chunks_exact(frame).map(|f| (i16::from(f[0]) - 128) << 8).collect(),
-        (7, 8) => pcm.chunks_exact(frame).map(|f| Law::Mu.decode_sample(f[0])).collect(),
-        (6, 8) => pcm.chunks_exact(frame).map(|f| Law::A.decode_sample(f[0])).collect(),
+        (7 | 6, 8) => {
+            let coded: Vec<u8> = pcm.chunks_exact(frame).map(|f| f[0]).collect();
+            let mut out = vec![0i16; coded.len()];
+            (if tag == 7 { Law::Mu } else { Law::A }).decode(&coded, &mut out);
+            out
+        }
         _ => return Err(WavError::Unsupported("sample format")),
     };
     if rate == RING_RATE || first.is_empty() {
@@ -229,7 +233,8 @@ mod tests {
         assert_eq!(up.len(), 8);
         assert_eq!((up[0], up[1], up[2]), (100, -50, -200));
         // mu-law
-        let mu = [Law::Mu.encode_sample(1000), Law::Mu.encode_sample(-1000)];
+        let mut mu = [0u8; 2];
+        Law::Mu.encode(&[1000, -1000], &mut mu);
         let d = decode_wav(&wav(7, 1, 16_000, 8, &mu)).unwrap();
         assert!((d[0] - 1000).abs() < 40 && (d[1] + 1000).abs() < 40);
         assert_eq!(decode_wav(b"nope"), Err(WavError::NotWav));

@@ -36,7 +36,6 @@ use opendeskphone_vpm::Codec;
 use crate::bands::{BandFrame, NB, SWB, Split2, WB, mix_into, scale};
 use crate::device::{AudioDevice, AudioPath, Dsp, GainControl};
 use crate::dtmf::{DtmfEdge, DtmfReceiver, DtmfSender, EventPayload};
-use crate::g711::Law;
 use crate::jitter::{JitterBuffer, JitterStats, Pop, UNIT_MAX};
 use crate::ring::{RingPlayer, RingSource};
 use crate::rtp::{self, RtcpItem, RtpHeader, RxStats, SenderInfo, TS_PER_TICK};
@@ -51,6 +50,47 @@ const REPORT_TICKS: u32 = 500;
 const MAX_PACKET: usize = 1500;
 /// Largest payload of one packet: 60 ms.
 const MAX_UNITS: usize = 6;
+
+/// The two companding laws of G.711.  G.711 runs on the ARM on every model,
+/// because the DSP has no G.711 job (the stock firmware codes it host-side
+/// as well).  The coding itself is the `audio-codec` crate's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Law {
+    Mu,
+    A,
+}
+
+impl Law {
+    /// One sample for each byte of `input`; `out` is at least as long.
+    pub fn decode(self, input: &[u8], out: &mut [i16]) {
+        use audio_codec::Decoder;
+        let n = input.len().min(out.len());
+        // Neither decoder keeps anything between calls, and neither fails
+        // when the output is as long as the input.
+        let _ = match self {
+            Law::Mu => audio_codec::pcmu::PcmuDecoder::new().decode_into(&input[..n], out),
+            Law::A => audio_codec::pcma::PcmaDecoder::new().decode_into(&input[..n], out),
+        };
+    }
+
+    /// One byte for each sample of `input`; `out` is at least as long.
+    pub fn encode(self, input: &[i16], out: &mut [u8]) {
+        use audio_codec::Encoder;
+        let n = input.len().min(out.len());
+        let _ = match self {
+            Law::Mu => audio_codec::pcmu::PcmuEncoder::new().encode_into(&input[..n], out),
+            Law::A => audio_codec::pcma::PcmaEncoder::new().encode_into(&input[..n], out),
+        };
+    }
+
+    /// The byte that decodes to silence.
+    pub fn silence(self) -> u8 {
+        match self {
+            Law::Mu => 0xff,
+            Law::A => 0xd5,
+        }
+    }
+}
 
 /// Codecs a stream can carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

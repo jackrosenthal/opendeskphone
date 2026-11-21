@@ -4,6 +4,12 @@
 //! mono S16_LE at the family rate.  Only blocking `READI`/`WRITEI` are
 //! used, which keeps clear of the ioctls whose layout depends on the
 //! 64-bit time ABI.
+//!
+//! The D80's card (its ZL38040 voice processor) is otherwise: one PCM
+//! device for every path, and a mixer control, `Audio Path`, that selects
+//! the path.  The device is stereo, with the voice in the left channel in
+//! both directions (`kernel/README.md`); the samples here are mono all the
+//! same, as on the other models.
 
 #![allow(clippy::unnecessary_cast)] // c_long is i32 on ARM, i64 on the host
 
@@ -139,6 +145,8 @@ fn pcm_err(what: &str, e: std::io::Error) -> HalError {
 
 struct Stream {
     file: File,
+    /// Samples a frame: 1, or on the D80 2.
+    channels: usize,
     buffer_frames: u32,
     /// The last transfer ended in an overrun or underrun.
     xrun: bool,
@@ -158,12 +166,8 @@ fn playback_start_threshold(period: u32, buffer: u32) -> u32 {
 }
 
 impl Stream {
-    fn open(card: u32, device: PcmDevice, playback: bool, rate: u32, cfg: &PcmConfig) -> Result<(Stream, u32, u32)> {
-        let path = PathBuf::from(format!(
-            "/dev/snd/pcmC{card}D{}{}",
-            device.index(),
-            if playback { 'p' } else { 'c' }
-        ));
+    fn open(card: u32, device: u32, channels: usize, playback: bool, rate: u32, cfg: &PcmConfig) -> Result<(Stream, u32, u32)> {
+        let path = PathBuf::from(format!("/dev/snd/pcmC{card}D{device}{}", if playback { 'p' } else { 'c' }));
         // Non-blocking open so a busy device fails instead of hanging;
         // then switch to blocking I/O.
         let file = open_rw(&path, libc::O_NONBLOCK).map_err(|e| HalError::io(path.display().to_string(), e))?;
@@ -174,7 +178,7 @@ impl Stream {
         hw.set_mask(HW_PARAM_ACCESS, ACCESS_RW_INTERLEAVED);
         hw.set_mask(HW_PARAM_FORMAT, FORMAT_S16_LE);
         hw.set_mask(HW_PARAM_SUBFORMAT, SUBFORMAT_STD);
-        hw.set_int(HW_PARAM_CHANNELS, 1);
+        hw.set_int(HW_PARAM_CHANNELS, channels as u32);
         hw.set_int(HW_PARAM_RATE, rate);
         hw.set_int(HW_PARAM_PERIOD_SIZE, cfg.period_frames);
         hw.set_int(HW_PARAM_PERIODS, cfg.periods.max(2));
@@ -185,7 +189,7 @@ impl Stream {
             hw2.set_mask(HW_PARAM_ACCESS, ACCESS_RW_INTERLEAVED);
             hw2.set_mask(HW_PARAM_FORMAT, FORMAT_S16_LE);
             hw2.set_mask(HW_PARAM_SUBFORMAT, SUBFORMAT_STD);
-            hw2.set_int(HW_PARAM_CHANNELS, 1);
+            hw2.set_int(HW_PARAM_CHANNELS, channels as u32);
             hw2.set_int(HW_PARAM_RATE, rate);
             hw2.intervals[HW_PARAM_PERIOD_SIZE - HW_PARAM_FIRST_INTERVAL].min = cfg.period_frames;
             if ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS, &mut *hw2).is_err() {
@@ -213,17 +217,19 @@ impl Stream {
         sw.boundary = boundary;
         ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS, &mut sw).map_err(|e| HalError::io("PCM SW_PARAMS", e))?;
         ioctl_none(fd, SNDRV_PCM_IOCTL_PREPARE).map_err(|e| HalError::io("PCM PREPARE", e))?;
-        Ok((Stream { file, buffer_frames: buffer, xrun: false }, period, periods))
+        Ok((Stream { file, channels, buffer_frames: buffer, xrun: false }, period, periods))
     }
 
+    /// Transfers `frames` frames; `ptr` covers `frames * self.channels`
+    /// samples.
     fn xfer(&mut self, req: u32, what: &str, ptr: *mut i16, frames: usize) -> Result<()> {
         let mut done = 0usize;
         while done < frames {
             let mut x = SndXferi {
                 result: 0,
-                // SAFETY of the pointer: `ptr` covers `frames` samples, and
+                // SAFETY of the pointer: `ptr` covers `frames` frames, and
                 // `done < frames`.
-                buf: unsafe { ptr.add(done) } as *mut libc::c_void,
+                buf: unsafe { ptr.add(done * self.channels) } as *mut libc::c_void,
                 frames: (frames - done) as c_ulong,
             };
             if let Err(e) = ioctl(self.file.as_raw_fd(), req, &mut x) {
@@ -246,6 +252,24 @@ struct AlsaPcm {
     capture: Option<Stream>,
     playback: Option<Stream>,
     open_set: Arc<Mutex<[bool; 3]>>,
+    /// The frames of a stereo device, for a transfer of mono samples.
+    stereo: Vec<i16>,
+}
+
+/// Mono samples as the frames of the D80's stereo device: the voice goes
+/// in the left channel, and the right, which the voice processor does not
+/// play, gets the same.
+pub(crate) fn mono_to_stereo(mono: &[i16], stereo: &mut Vec<i16>) {
+    stereo.clear();
+    stereo.extend(mono.iter().flat_map(|s| [*s, *s]));
+}
+
+/// The left channel of the D80's stereo frames: the voice.  The right
+/// channel is not driven.
+pub(crate) fn stereo_to_mono(stereo: &[i16], mono: &mut [i16]) {
+    for (m, frame) in mono.iter_mut().zip(stereo.as_chunks::<2>().0) {
+        *m = frame[0];
+    }
 }
 
 impl Pcm for AlsaPcm {
@@ -255,11 +279,21 @@ impl Pcm for AlsaPcm {
 
     fn read(&mut self, buf: &mut [i16]) -> Result<()> {
         let s = self.capture.as_mut().ok_or_else(|| HalError::Invalid("PCM not opened for capture".into()))?;
+        if s.channels == 2 {
+            self.stereo.resize(2 * buf.len(), 0);
+            s.xfer(SNDRV_PCM_IOCTL_READI_FRAMES, "read", self.stereo.as_mut_ptr(), buf.len())?;
+            stereo_to_mono(&self.stereo, buf);
+            return Ok(());
+        }
         s.xfer(SNDRV_PCM_IOCTL_READI_FRAMES, "read", buf.as_mut_ptr(), buf.len())
     }
 
     fn write(&mut self, buf: &[i16]) -> Result<()> {
         let s = self.playback.as_mut().ok_or_else(|| HalError::Invalid("PCM not opened for playback".into()))?;
+        if s.channels == 2 {
+            mono_to_stereo(buf, &mut self.stereo);
+            return s.xfer(SNDRV_PCM_IOCTL_WRITEI_FRAMES, "write", self.stereo.as_mut_ptr(), buf.len());
+        }
         // The kernel only reads through this pointer for WRITEI.
         s.xfer(SNDRV_PCM_IOCTL_WRITEI_FRAMES, "write", buf.as_ptr() as *mut i16, buf.len())
     }
@@ -565,11 +599,89 @@ pub struct AlsaAudio {
     card: u32,
     rate: u32,
     open_set: Arc<Mutex<[bool; 3]>>,
+    /// The D80's card: one stereo PCM device, and a control for the path.
+    one_device: bool,
 }
+
+/// The control of the D80's card that selects the path.  Its items are in
+/// the order of [`PcmDevice::index`]: `Speaker`, `Handset`, `Headset` (and
+/// then `Bluetooth`).
+pub const D80_PATH_CONTROL: &str = "Audio Path";
+/// The item of [`D80_PATH_CONTROL`] for a Bluetooth headset.  On it the
+/// voice processor exchanges the call's audio with the Bluetooth module by
+/// itself, over its other audio port, and the SoC's side of the call stays
+/// on the one PCM device, at its own rate.
+pub const D80_PATH_BLUETOOTH: i32 = 3;
+/// The control of the D80's card for the rate of the audio between the
+/// voice processor and the Bluetooth module.  Its items are `8000`, for a
+/// narrow-band voice link, and `16000`, for wide-band speech.
+pub const D80_BLUETOOTH_RATE_CONTROL: &str = "Bluetooth Sample Rate";
+/// The control of the D80's card for the voice processor's output level,
+/// 0 (silence, which it starts at) to 10.
+pub const D80_VOLUME_CONTROL: &str = "Master Playback Volume";
+/// The level the D80's voice processor is left at.  The volume the user
+/// sets is applied to the samples before they reach it, as the DSP of the
+/// other models applies it, so this is a fixed level: the highest that
+/// stock does not add a further speaker gain at (it does at 8, 9, and 10).
+/// How loud that is has not been measured.
+pub const D80_VOLUME: i32 = 7;
 
 impl AlsaAudio {
     pub fn open(model: Model) -> Result<AlsaAudio> {
-        Ok(AlsaAudio { card: find_card()?, rate: model.audio_rate(), open_set: Default::default() })
+        Ok(AlsaAudio { card: find_card()?, rate: model.audio_rate(), open_set: Default::default(), one_device: model.is_touch() })
+    }
+}
+
+impl AlsaAudio {
+    /// Opens the streams of PCM device `number`, with `channels` samples a
+    /// frame, for the path `device`, which is marked busy while they are
+    /// open.
+    fn open_streams(&mut self, device: PcmDevice, number: u32, channels: usize, config: PcmConfig) -> Result<Box<dyn Pcm>> {
+        if config.period_frames == 0 || !(config.capture || config.playback) {
+            return Err(HalError::Invalid("empty PCM configuration".into()));
+        }
+        {
+            let mut set = self.open_set.lock().unwrap();
+            for other in [PcmDevice::Speaker, PcmDevice::Handset, PcmDevice::Headset] {
+                // The D80's one device carries one path at a time.
+                if set[other.index() as usize] && (other == device || other.conflicts_with(device) || self.one_device) {
+                    return Err(HalError::Invalid(format!("{device:?} is busy ({other:?} is open)")));
+                }
+            }
+            set[device.index() as usize] = true;
+        }
+        let mut pcm = AlsaPcm { device, config, capture: None, playback: None, open_set: self.open_set.clone(), stereo: Vec::new() };
+        // On error `pcm` drops and clears the busy flag.
+        if config.playback {
+            let (s, period, periods) = Stream::open(self.card, number, channels, true, self.rate, &config)?;
+            pcm.config.period_frames = period;
+            pcm.config.periods = periods;
+            pcm.playback = Some(s);
+        }
+        if config.capture {
+            let (s, period, periods) = Stream::open(self.card, number, channels, false, self.rate, &config)?;
+            pcm.config.period_frames = period;
+            pcm.config.periods = periods;
+            pcm.capture = Some(s);
+        }
+        Ok(Box::new(pcm))
+    }
+
+    /// The D80: selects the item `path` of [`D80_PATH_CONTROL`] and opens
+    /// the one stereo device.  `device` is the path it counts as open for.
+    /// `wideband` is the Bluetooth path's rate.
+    fn open_one_device(&mut self, device: PcmDevice, path: i32, wideband: bool, config: PcmConfig) -> Result<Box<dyn Pcm>> {
+        // The voice processor changes path in steps, over up to about a
+        // second, after the control is written; the streams can be opened
+        // meanwhile.
+        let mut mixer = AlsaMixer::open(self.card)?;
+        if path == D80_PATH_BLUETOOTH {
+            // Before the path, which is loaded with the rate.
+            mixer.set(D80_BLUETOOTH_RATE_CONTROL, &[i32::from(wideband)])?;
+        }
+        mixer.set(D80_PATH_CONTROL, &[path])?;
+        mixer.set(D80_VOLUME_CONTROL, &[D80_VOLUME])?;
+        self.open_streams(device, 0, 2, config)
     }
 }
 
@@ -579,54 +691,34 @@ impl Audio for AlsaAudio {
     }
 
     fn open(&mut self, device: PcmDevice, config: PcmConfig) -> Result<Box<dyn Pcm>> {
-        if config.period_frames == 0 || !(config.capture || config.playback) {
-            return Err(HalError::Invalid("empty PCM configuration".into()));
+        if self.one_device {
+            return self.open_one_device(device, device.index() as i32, false, config);
         }
-        {
-            let mut set = self.open_set.lock().unwrap();
-            for other in [PcmDevice::Speaker, PcmDevice::Handset, PcmDevice::Headset] {
-                if set[other.index() as usize] && (other == device || other.conflicts_with(device)) {
-                    return Err(HalError::Invalid(format!("{device:?} is busy ({other:?} is open)")));
-                }
-            }
-            set[device.index() as usize] = true;
-        }
-        let mut pcm = AlsaPcm { device, config, capture: None, playback: None, open_set: self.open_set.clone() };
-        // On error `pcm` drops and clears the busy flag.
-        if config.playback {
-            let (s, period, periods) = Stream::open(self.card, device, true, self.rate, &config)?;
-            pcm.config.period_frames = period;
-            pcm.config.periods = periods;
-            pcm.playback = Some(s);
-        }
-        if config.capture {
-            let (s, period, periods) = Stream::open(self.card, device, false, self.rate, &config)?;
-            pcm.config.period_frames = period;
-            pcm.config.periods = periods;
-            pcm.capture = Some(s);
-        }
-        Ok(Box::new(pcm))
+        self.open_streams(device, device.index(), 1, config)
     }
 
     fn mixer(&mut self) -> Result<Box<dyn Mixer>> {
         Ok(Box::new(AlsaMixer::open(self.card)?))
     }
 
-    fn open_bluetooth(&mut self, config: PcmConfig) -> Result<Box<dyn Pcm>> {
+    fn open_bluetooth(&mut self, config: PcmConfig, wideband: bool) -> Result<Box<dyn Pcm>> {
+        if self.one_device {
+            return self.open_one_device(PcmDevice::Headset, D80_PATH_BLUETOOTH, wideband, config);
+        }
         let card = find_card_named(crate::BLUETOOTH_CARD)
             .ok_or_else(|| HalError::Unavailable(format!("no ALSA card named {}", crate::BLUETOOTH_CARD)))?;
         // The card has one device, number 0 (the number `Speaker` has on
         // the phone's own card), and its own busy flags.
         let device = PcmDevice::Speaker;
-        let mut pcm = AlsaPcm { device, config, capture: None, playback: None, open_set: Default::default() };
+        let mut pcm = AlsaPcm { device, config, capture: None, playback: None, open_set: Default::default(), stereo: Vec::new() };
         if config.playback {
-            let (s, period, periods) = Stream::open(card, device, true, crate::BLUETOOTH_RATE, &config)?;
+            let (s, period, periods) = Stream::open(card, device.index(), 1, true, crate::BLUETOOTH_RATE, &config)?;
             pcm.config.period_frames = period;
             pcm.config.periods = periods;
             pcm.playback = Some(s);
         }
         if config.capture {
-            let (s, period, periods) = Stream::open(card, device, false, crate::BLUETOOTH_RATE, &config)?;
+            let (s, period, periods) = Stream::open(card, device.index(), 1, false, crate::BLUETOOTH_RATE, &config)?;
             pcm.config.period_frames = period;
             pcm.config.periods = periods;
             pcm.capture = Some(s);
@@ -641,7 +733,18 @@ unsafe impl Send for AlsaMixer {}
 
 #[cfg(test)]
 mod tests {
-    use super::playback_start_threshold;
+    use super::{mono_to_stereo, playback_start_threshold, stereo_to_mono};
+
+    /// The D80's device is stereo with the voice in the left channel.
+    #[test]
+    fn mono_samples_go_through_the_stereo_device() {
+        let mut stereo = vec![9; 3];
+        mono_to_stereo(&[1, -2, 3], &mut stereo);
+        assert_eq!(stereo, [1, 1, -2, -2, 3, 3]);
+        let mut mono = [0i16; 3];
+        stereo_to_mono(&[5, 100, 6, 200, 7, 300], &mut mono);
+        assert_eq!(mono, [5, 6, 7]);
+    }
 
     #[test]
     fn playback_starts_with_half_the_buffer_queued() {

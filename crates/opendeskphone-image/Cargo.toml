@@ -12,6 +12,8 @@ clap = { version = "4", features = ["derive", "env"] }
 eff = { path = "../eff" }
 jffs2-image = { path = "../jffs2-image" }
 md-5 = "0.10"
+miniz_oxide = "0.8"
+sha1 = "0.10"
 
 [dev-dependencies]
 test-inputs = { path = "../test-inputs" }

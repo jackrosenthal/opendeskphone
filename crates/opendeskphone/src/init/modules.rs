@@ -2,7 +2,9 @@
 //! `modules.dep` when the image carries one.
 //!
 //! The kernel slot is too small for every driver, so display (old family),
-//! audio, DMA, and the DSP driver live in the rootfs.
+//! audio, DMA, and the DSP driver live in the rootfs.  The D80's kernel has
+//! room, and has its sound and Bluetooth drivers as modules all the same;
+//! its image carries `modules.dep`.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -34,13 +36,23 @@ pub fn boot_list(family: Family) -> Vec<String> {
     if family == Family::Old {
         list.extend(OLD_FAMILY_DISPLAY.iter().map(|s| s.to_string()));
     }
-    // The D80 is not a BCMRING phone: none of these modules is its.  What
-    // it loads is to be settled when its kernel is.
-    if family != Family::Touch {
-        list.extend(ALL_MODELS.iter().map(|s| s.to_string()));
-    }
+    // The D80 is not a BCMRING phone: none of those modules is its.
+    let rest = if family == Family::Touch { TOUCH } else { ALL_MODELS };
+    list.extend(rest.iter().map(|s| s.to_string()));
     list
 }
+
+/// The D80: its sound card (the SoC's audio port and serial audio
+/// interface, the ZL38040 voice processor, and the card that joins them).
+/// What each needs loaded before it comes from the image's `modules.dep`.
+/// The voice processor's driver loads `zl38040.fw` as it starts, so the
+/// firmware path is set first.
+const TOUCH: &[&str] = &["snd-soc-imx-audmux", "snd-soc-fsl-ssi", "snd-soc-zl38040", "snd-soc-simple-card"];
+
+/// The D80's Bluetooth: the AP6212 module's controller on UART4, which
+/// `hci_uart` drives with the Broadcom protocol (and loads its patch file,
+/// `brcm/BCM4343A0.hcd`).  As for [`TOUCH`], `modules.dep` names the rest.
+const TOUCH_BLUETOOTH: &[&str] = &["rfcomm", "hci_uart"];
 
 /// Old family only, first, so the SPI display comes up early.
 const OLD_FAMILY_DISPLAY: &[&str] = &["spi-pl022", "lcd", "drm_shmem_helper", "digium-gray-lcd"];
@@ -219,10 +231,12 @@ pub fn modprobe(index: &Index, name: &str, params: &str) -> io::Result<Vec<Strin
     Ok(done)
 }
 
-/// Modules one model needs beyond its family's list: Bluetooth on the D65.
+/// Modules one model needs beyond its family's list: Bluetooth on the D65
+/// and the D80.
 pub fn model_list(model: Model) -> Vec<String> {
     match model {
         Model::D65 => opendeskphone_bt::KERNEL_MODULES.iter().map(|s| s.to_string()).collect(),
+        Model::D80 => TOUCH_BLUETOOTH.iter().map(|s| s.to_string()).collect(),
         _ => Vec::new(),
     }
 }
@@ -301,6 +315,24 @@ mod tests {
     #[test]
     fn list_file() {
         assert_eq!(parse_list("# comment\ndw_dmac\n\n  bcmring_vpm # dsp\n"), ["dw_dmac", "bcmring_vpm"]);
+    }
+
+    /// The D80's lists are its own, and the dependencies of the built
+    /// kernel's `modules.dep` put each module after what it needs.
+    #[test]
+    fn the_d80_loads_its_sound_card_and_bluetooth() {
+        let family: Vec<String> = TOUCH.iter().map(|s| s.to_string()).collect();
+        assert!(!family.iter().any(|m| m.contains("bcmring") || m.contains("dw_dmac")));
+        assert!(family.contains(&"snd-soc-zl38040".to_string()));
+        assert_eq!(model_list(Model::D80), ["rfcomm", "hci_uart"]);
+        let mut index = Index::default();
+        index.add_dep_file(
+            "kernel/drivers/bluetooth/hci_uart.ko: kernel/drivers/bluetooth/btbcm.ko kernel/net/bluetooth/bluetooth.ko kernel/lib/crypto/libaes.ko kernel/crypto/ecdh_generic.ko kernel/crypto/ecc.ko\n\
+             kernel/drivers/bluetooth/btbcm.ko: kernel/net/bluetooth/bluetooth.ko kernel/lib/crypto/libaes.ko kernel/crypto/ecdh_generic.ko kernel/crypto/ecc.ko\n\
+             kernel/net/bluetooth/bluetooth.ko: kernel/lib/crypto/libaes.ko kernel/crypto/ecdh_generic.ko kernel/crypto/ecc.ko\n\
+             kernel/crypto/ecdh_generic.ko: kernel/crypto/ecc.ko\n",
+        );
+        assert_eq!(index.load_order("hci_uart"), ["ecc", "ecdh_generic", "libaes", "bluetooth", "btbcm", "hci_uart"]);
     }
 
     /// The D60 shares the D65's family but has no Bluetooth.

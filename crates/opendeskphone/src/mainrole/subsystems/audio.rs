@@ -138,6 +138,10 @@ struct Inner {
     engine: Option<Engine>,
     why_no_engine: String,
     family: opendeskphone_vpm::Family,
+    /// The phone has the DSP, which runs every codec but G.711.  The D80
+    /// has none: what stands in for it runs G.722 and no other
+    /// (`opendeskphone_media::SoftDsp`).
+    dsp_codecs: bool,
     /// Which call uses each engine slot.
     slots: [Option<CallId>; SLOTS],
     /// Sockets reserved by `open` and not yet handed to the engine.
@@ -234,6 +238,7 @@ impl AudioService {
                 engine: None,
                 why_no_engine: "not started".into(),
                 family,
+                dsp_codecs: true,
                 slots: [None; SLOTS],
                 reserved: HashMap::new(),
                 ports: HashMap::new(),
@@ -269,7 +274,11 @@ impl AudioService {
         if inner.engine.is_none() {
             return Vec::new();
         }
-        PayloadCodec::ALL.into_iter().filter(|c| c.is_available(inner.family)).collect()
+        PayloadCodec::ALL
+            .into_iter()
+            .filter(|c| c.is_available(inner.family))
+            .filter(|c| inner.dsp_codecs || c.dsp_codec().is_none_or(opendeskphone_media::SoftDsp::runs))
+            .collect()
     }
 
     /// Whether the audio engine is running at all.
@@ -412,8 +421,13 @@ impl AudioService {
     /// A Bluetooth headset's voice link came up or went down.  While it is
     /// up the headset path uses the Bluetooth voice device; a headset path
     /// that is open now is reopened on the other device.
-    pub fn bluetooth_voice(&self, up: bool) {
-        if BLUETOOTH_VOICE.swap(up, std::sync::atomic::Ordering::Relaxed) == up {
+    ///
+    /// `wideband`: the link carries wide-band speech (16 kHz), which only
+    /// the D80's can.
+    pub fn bluetooth_voice(&self, up: bool, wideband: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let same = BLUETOOTH_WIDEBAND.swap(wideband, Relaxed) == wideband;
+        if BLUETOOTH_VOICE.swap(up, Relaxed) == up && same {
             return;
         }
         let inner = self.inner.lock().unwrap();
@@ -922,6 +936,8 @@ struct CardDevice {
 /// A Bluetooth headset's voice link is up: the headset path is then the
 /// Bluetooth voice device.  Set by [`AudioService::bluetooth_voice`].
 static BLUETOOTH_VOICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// That link carries wide-band speech.
+static BLUETOOTH_WIDEBAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 8 kHz samples to the engine's rate (`factor` times as many), by linear
 /// interpolation from the previous sample.
@@ -962,10 +978,23 @@ impl AudioDevice for CardDevice {
 
     fn open(&mut self, path: MPath) -> std::io::Result<()> {
         self.close();
-        if path == MPath::Headset && BLUETOOTH_VOICE.load(std::sync::atomic::Ordering::Relaxed) {
+        if path == MPath::Headset && BLUETOOTH_VOICE.load(std::sync::atomic::Ordering::Relaxed) && self.model.is_touch() {
+            // The D80's voice processor exchanges the audio with the
+            // Bluetooth module itself: the device is the phone's own, at
+            // its own rate, and nothing is converted here.
+            match self.card.open_bluetooth(PcmConfig::voice(self.model), BLUETOOTH_WIDEBAND.load(std::sync::atomic::Ordering::Relaxed)) {
+                Ok(pcm) => {
+                    self.pcm = Some(pcm);
+                    self.open = Some(path);
+                    return Ok(());
+                }
+                // Fall back to the wired headset jack.
+                Err(e) => warn!("audio: Bluetooth voice path: {e}"),
+            }
+        } else if path == MPath::Headset && BLUETOOTH_VOICE.load(std::sync::atomic::Ordering::Relaxed) {
             let factor = (self.card.rate() / opendeskphone_hal::BLUETOOTH_RATE).max(1) as usize;
             let config = PcmConfig { period_frames: opendeskphone_hal::BLUETOOTH_RATE / 200, periods: 4, capture: true, playback: true };
-            match self.card.open_bluetooth(config) {
+            match self.card.open_bluetooth(config, false) {
                 Ok(pcm) => {
                     self.pcm = Some(pcm);
                     self.open = Some(path);
@@ -977,14 +1006,18 @@ impl AudioDevice for CardDevice {
             }
         }
         let device = pcm_device(path);
-        // The mainline driver does not apply the board's gain table.
-        match self.card.mixer() {
-            Ok(mut mixer) => {
-                if let Err(e) = opendeskphone_hal::apply_board_gains(mixer.as_mut(), self.model, device, 0) {
-                    warn!("audio: board gains for {device:?}: {e}");
+        // The mainline driver does not apply the board's gain table.  (The
+        // D80 has none: its voice processor's driver loads the path's
+        // settings when the card selects the path.)
+        if !self.model.is_touch() {
+            match self.card.mixer() {
+                Ok(mut mixer) => {
+                    if let Err(e) = opendeskphone_hal::apply_board_gains(mixer.as_mut(), self.model, device, 0) {
+                        warn!("audio: board gains for {device:?}: {e}");
+                    }
                 }
+                Err(e) => warn!("audio: mixer: {e}"),
             }
-            Err(e) => warn!("audio: mixer: {e}"),
         }
         let pcm = self.card.open(device, PcmConfig::voice(self.model)).map_err(io_err)?;
         self.pcm = Some(pcm);
@@ -1073,6 +1106,15 @@ fn build_phone(card: Box<dyn HalAudioCard>, model: opendeskphone_state::Model) -
     Ok((Box::new(CardDevice { card, model, pcm: None, open: None, bluetooth: None, narrow: Vec::new(), last: 0 }), Box::new(dsp)))
 }
 
+/// The engine's two devices on the D80: its sound card, and in the place
+/// of the DSP it does not have, [`opendeskphone_media::SoftDsp`].
+fn build_phone_without_dsp(card: Box<dyn HalAudioCard>, model: opendeskphone_state::Model) -> Built {
+    (
+        Box::new(CardDevice { card, model, pcm: None, open: None, bluetooth: None, narrow: Vec::new(), last: 0 }),
+        Box::new(opendeskphone_media::SoftDsp::new()),
+    )
+}
+
 fn build_sim(family: opendeskphone_vpm::Family) -> Result<Built, String> {
     let (fake, state) = opendeskphone_media::fake::FakeAudio::new(family.device_rate());
     {
@@ -1091,11 +1133,16 @@ pub async fn start(ctx: &Context, hal: Option<SharedHal>) -> AudioService {
         crate::model::Family::Old => opendeskphone_vpm::Family::Old,
         crate::model::Family::New => opendeskphone_vpm::Family::New,
         // The D80 has no such voice processor (its own is a ZL38040, at
-        // 16 kHz); its audio is still to be done.  The simulator gives it
-        // the new family's.
-        crate::model::Family::Touch => opendeskphone_vpm::Family::New,
+        // 16 kHz, which nothing is sent to but the audio): on the phone
+        // the engine runs as for the old family, whose front end is at
+        // 16 kHz too, with the DSP's part done on the ARM.  The simulator
+        // gives it the new family's.
+        crate::model::Family::Touch if ctx.sim => opendeskphone_vpm::Family::New,
+        crate::model::Family::Touch => opendeskphone_vpm::Family::Old,
     };
+    let without_dsp = model.is_touch() && !ctx.sim;
     let service = AudioService::new(ctx.store.clone(), family);
+    service.inner.lock().unwrap().dsp_codecs = !without_dsp;
     ctx.store.update::<Audio, _>(|a| a.dsp = DspStatus::Starting);
 
     let built = if ctx.sim {
@@ -1110,6 +1157,7 @@ pub async fn start(ctx: &Context, hal: Option<SharedHal>) -> AudioService {
             Some(std::mem::replace(&mut h.audio, Box::new(opendeskphone_hal::Null("audio"))))
         });
         match card {
+            Some(card) if without_dsp => Ok(build_phone_without_dsp(card, model)),
             Some(card) => contained("dsp-start", Duration::from_secs(30), move || build_phone(card, model))
                 .await
                 .and_then(|r| r),

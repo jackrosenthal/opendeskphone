@@ -4,3 +4,8 @@ xtask = "run -p xtask --"
 [target.arm-unknown-linux-musleabi]
 linker = "rust-lld"
 rustflags = ["-C", "target-cpu=arm1176jz-s", "-C", "target-feature=+crt-static", "-C", "link-self-contained=yes"]
+
+# The D80 (an i.MX 6DualLite: two Cortex-A9 cores).
+[target.armv7-unknown-linux-musleabihf]
+linker = "rust-lld"
+rustflags = ["-C", "target-cpu=cortex-a9", "-C", "target-feature=+crt-static", "-C", "link-self-contained=yes"]

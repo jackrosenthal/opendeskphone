@@ -772,6 +772,15 @@
 		clock-names = "lpo";
 		vbat-supply = <&reg_3v3>;
 		vddio-supply = <&reg_3v3>;
+		/*
+		 * A voice link's audio goes over the module's PCM pins to
+		 * the ZL38040 (its TDM-A port), which provides both clocks.
+		 * The stock firmware's values (bt_sco_param in its
+		 * libbt-vendor.so): routed to PCM, 512 kHz, short frame
+		 * sync, and the module the consumer of the frame sync and
+		 * of the bit clock.
+		 */
+		brcm,bt-pcm-int-params = [00 02 00 00 00];
 	};
 };
 

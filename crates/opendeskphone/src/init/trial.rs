@@ -137,7 +137,13 @@ pub fn count_boot(own_dir: &Path) -> Option<TrialRecord> {
 /// the root file system is one of the two firmware banks.  A system
 /// started from RAM (`dphone ramboot`: `root=mtd:ramroot`; or a test
 /// kernel with its root in `userdata`) is from neither.
+///
+/// The D80 has one installed firmware and no banks: its root file system
+/// partition ([`super::nvdata::D80_ROOT`]) counts as the installed one.
 pub fn root_is_a_bank(cmdline: &str, proc_mtd: &str) -> bool {
+    if cmdline.split_ascii_whitespace().any(|w| w.strip_prefix("root=") == Some(super::nvdata::D80_ROOT)) {
+        return true;
+    }
     opendeskphone_update::bank::root_mtd_index(cmdline).is_some_and(|index| {
         ["root0", "root1"].iter().any(|name| super::nvdata::mtd_index(proc_mtd, name) == Some(index))
     })
@@ -169,6 +175,9 @@ mod tests {
         assert!(!root_is_a_bank("root=/dev/mtdblock8 ro", mtd));
         assert!(!root_is_a_bank("root=mtd:ramroot rootfstype=jffs2 ro phram.phram=ramroot,0x6ec0000,0x1140000,0x20000", mtd));
         assert!(!root_is_a_bank("", mtd));
+        // The D80: its one root file system partition, and no MTD table.
+        assert!(root_is_a_bank("console=ttymxc0,115200 root=/dev/mmcblk0p5 rootfstype=squashfs ro rootwait", ""));
+        assert!(!root_is_a_bank("console=ttymxc0,115200 root=/dev/mmcblk0p4 ro", ""));
         // With the RAM device registered first, the flash partitions count
         // from one: the bank is still found by name.
         let shifted = "mtd0: 01140000 00020000 \"ramroot\"\nmtd7: 02d00000 00020000 \"root0\"\nmtd8: 02d00000 00020000 \"root1\"\n";

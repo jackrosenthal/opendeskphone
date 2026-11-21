@@ -20,8 +20,12 @@
 #   zImage-dtb                   with `appendDtb`: zImage and then that
 #                                board's DTB, which is how the D80's boot
 #                                loader takes the two
-#   lib/modules/<release>/...    stripped modules; no depmod indexes (the
-#                                init role carries its own load list)
+#   lib/modules/<release>/...    stripped modules.  With `depmod`, also
+#                                `modules.dep`, from which the init role
+#                                takes what each module needs loaded before
+#                                it; without, no indexes (the init role's
+#                                load list for the D40 thru D70 spells out
+#                                the order)
 #   config                       the resolved .config
 {
   lib,
@@ -35,6 +39,7 @@
   perl,
   xz,
   openssl,
+  kmod,
   kernelSrc, # path: the repository's kernel/ directory
   pname ? "linux-bcmring",
   defconfig ? "bcmring_tiny_defconfig",
@@ -60,6 +65,8 @@
   # A devicetree name: also install zImage-dtb, the zImage with that
   # devicetree after it.
   appendDtb ? null,
+  # Write `modules.dep` for the installed modules.
+  depmod ? false,
 }:
 let
   version = "7.3";
@@ -125,7 +132,8 @@ stdenv.mkDerivation {
     perl
     xz
     openssl
-  ];
+  ]
+  ++ lib.optional depmod kmod;
 
   # The compiler wrapper's hardening flags are for hosted userspace.
   hardeningDisable = [ "all" ];
@@ -166,6 +174,14 @@ stdenv.mkDerivation {
     cp build/.config $out/config
     make $makeFlags INSTALL_MOD_PATH=$out INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
     rm -f $out/lib/modules/*/build $out/lib/modules/*/source
+    ${lib.optionalString depmod ''
+      depmod --basedir $out ${version}.0
+      # Only the text index is read; the others are for a `modprobe` that
+      # the root file system does not have.
+      find $out/lib/modules/${version}.0 -maxdepth 1 -name 'modules.*' \
+        ! -name modules.dep ! -name modules.order ! -name modules.builtin -delete
+      test -s $out/lib/modules/${version}.0/modules.dep
+    ''}
     runHook postInstall
   '';
 

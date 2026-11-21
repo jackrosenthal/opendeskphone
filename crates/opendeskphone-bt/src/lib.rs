@@ -33,7 +33,7 @@ use std::fmt;
 use std::str::FromStr;
 
 pub use hfp::CallState;
-pub use service::{Bluetooth, Command, Config, Event, Profile};
+pub use service::{Bluetooth, Command, Config, Event, Profile, SCO_PCM_PARAMS_D65, SCO_PCM_PARAMS_D80};
 
 /// Name of the ALSA card that carries headset audio.
 pub const ALSA_CARD: &str = "Digium Bluetooth";

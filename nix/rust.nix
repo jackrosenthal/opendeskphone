@@ -1,7 +1,9 @@
 # Rust toolchain helpers.  Userspace for the phone is built for
 # arm-unknown-linux-musleabi (ARMv6, soft-float, static) and linked with the
 # toolchain's own rust-lld and self-contained musl objects, so no C cross
-# compiler is involved.  The stdenv's native C compiler is only used to link
+# compiler is involved.  The D80's userspace is built the same way for
+# armv7-unknown-linux-musleabihf (its Cortex-A9, with its floating point
+# unit).  The stdenv's native C compiler is only used to link
 # build scripts and proc macros, which run on the build machine.
 {
   lib,
@@ -18,6 +20,19 @@ rec {
     CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABI_LINKER = "rust-lld";
     CARGO_TARGET_ARM_UNKNOWN_LINUX_MUSLEABI_RUSTFLAGS = lib.concatStringsSep " " [
       "-C target-cpu=arm1176jz-s"
+      "-C target-feature=+crt-static"
+      "-C link-self-contained=yes"
+    ];
+  };
+
+  # The D80: an i.MX 6DualLite, two Cortex-A9 cores with VFPv3 and NEON.
+  armv7Target = "armv7-unknown-linux-musleabihf";
+
+  armv7Env = {
+    CARGO_BUILD_TARGET = armv7Target;
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER = "rust-lld";
+    CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUSTFLAGS = lib.concatStringsSep " " [
+      "-C target-cpu=cortex-a9"
       "-C target-feature=+crt-static"
       "-C link-self-contained=yes"
     ];
@@ -77,7 +92,10 @@ rec {
           removeReferencesTo
         ]
         ++ nativeBuildInputs;
-        env = (lib.optionalAttrs (target == armTarget) armEnv) // env;
+        env =
+          (lib.optionalAttrs (target == armTarget) armEnv)
+          // (lib.optionalAttrs (target == armv7Target) armv7Env)
+          // env;
         # The hardening wrapper flags are for the native C compiler; they
         # must not leak into the ARM link, which rust-lld does by itself.
         hardeningDisable = [ "all" ];
