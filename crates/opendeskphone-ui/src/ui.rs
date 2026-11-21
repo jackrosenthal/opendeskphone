@@ -39,6 +39,8 @@ pub enum IdleSoftkey {
     /// The call forwarding menu.
     Forward,
     Redial,
+    /// Voicemail: what the Messages key does.
+    Voicemail,
     /// The theme selector; not shown on a gray model, which has no
     /// themes.
     Theme,
@@ -101,6 +103,12 @@ pub struct UiConfig {
     /// The provisioning server fixed the theme: the phone's selector
     /// shows the choices and changes nothing.
     pub theme_locked: bool,
+    /// The voicemail app has its application account, with which it
+    /// reaches the server.  Without it the Messages key calls the
+    /// account's voicemail number, though the app is installed.
+    pub voicemail_app_account: bool,
+    /// The phone has a parking extension: a call can be parked.
+    pub park: bool,
 }
 
 impl Default for UiConfig {
@@ -127,7 +135,33 @@ impl Default for UiConfig {
             theme: String::new(),
             wallpaper_picture: None,
             theme_locked: false,
+            voicemail_app_account: false,
+            park: false,
         }
+    }
+}
+
+impl UiConfig {
+    /// The configuration of `model` with nothing set: [`UiConfig::default`],
+    /// and on the touch skin, whose home screen has buttons where the
+    /// others have softkeys and keys, the home buttons of
+    /// [`IdleSoftkey::touch_defaults`].
+    pub fn for_model(model: Model) -> UiConfig {
+        let mut cfg = UiConfig::default();
+        if crate::skin::is_touch(model) {
+            cfg.idle_softkeys = IdleSoftkey::touch_defaults();
+        }
+        cfg
+    }
+}
+
+impl IdleSoftkey {
+    /// The home buttons of the touch skin when none are configured: what
+    /// a desk phone is used for daily, with voicemail and redial in place
+    /// of the keys the phone does not have.
+    pub fn touch_defaults() -> Vec<IdleSoftkey> {
+        use IdleSoftkey::*;
+        vec![CallLog, Contacts, Voicemail, Redial, Dnd, Forward, Apps, Menu]
     }
 }
 
@@ -705,13 +739,7 @@ impl Stack {
                 }
             }
             Key::Redial if !live => cx.post(Command::Redial),
-            Key::Messages => {
-                if st.apps.installed.iter().any(|a| a.name == "voicemail") {
-                    cx.post(Command::LaunchApp { name: "voicemail".into() });
-                } else {
-                    cx.post(Command::DialVoicemail { account: None });
-                }
-            }
+            Key::Messages => idle::open_voicemail(cx),
             Key::Line(n) => {
                 let Some(k) = st.keys.line_keys.iter().find(|k| k.index + 1 == n) else {
                     // No key table yet: line 1 goes home.
@@ -1175,7 +1203,11 @@ impl Ui {
             let delta = if key == Key::VolumeUp { 1 } else { -1 };
             self.store.post(Command::AdjustVolume { target: VolumeTarget::Current, delta });
             // (Touch: long enough to reach for the popup's own buttons.)
-            self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch() { 4000 } else { 2000 } });
+            // (Touch: not over the call screen, which shows the level
+            // between its own two buttons.)
+            if !(self.th.touch() && self.nav.top_ref().tag() == Tag::Call) {
+                self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch() { 4000 } else { 2000 } });
+            }
             self.needs_draw = true;
             return;
         }
@@ -1415,6 +1447,14 @@ impl Ui {
                     }
                     Err(e) => Err(CommandError::Failed(e.to_string())),
                 }
+            }
+            // The volume keys' popup, for a phone that has no volume
+            // keys (the touch skin's idle screen has a button for it).
+            Command::ShowScreen { name } if name == "volume" => {
+                self.activity();
+                self.popup = Some(Popup { until_ms: self.now().0 + 4000 });
+                self.needs_draw = true;
+                Ok(Reply::Done)
             }
             Command::ShowScreen { name } => {
                 let screen: Option<Option<Box<dyn Screen>>> = match name.as_str() {

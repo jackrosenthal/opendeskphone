@@ -158,7 +158,9 @@ fn the_lines_are_on_the_screen_and_are_the_line_keys() {
     assert_eq!(Model::D80.line_keys(), 0);
     assert!(Model::D80.lines() > 0);
     let th = Theme::for_model(Model::D80);
-    let line = r.region(Hit::Key(Key::Line(1)));
+    // (A free line is the idle screen's own region: it opens the dialer
+    // for the line's account.)
+    let line = r.region(Hit::Custom(101));
     assert!(line.h >= th.touch_min && line.w >= th.touch_min);
     // A model with keys registers nothing.
     let d60 = Rig::new(Model::D60);
