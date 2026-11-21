@@ -36,6 +36,13 @@
 //! The board is one canvas per row, and the cursor one more over them, so
 //! a key draws again only the rows it changed.  The app makes no sound,
 //! and like any app it leaves the screen to a call.
+//!
+//! On a phone without keys (the touchscreen) there is no cursor and no
+//! picture of keys.  The board is as wide as the upright window, under a
+//! line with the time; a touch on a cell puts a light there, a touch on a
+//! light makes it a square, and a touch on a square clears the cell.
+//! "Auto" is a softkey there, and does what 8 does.  A line under the
+//! board says what a touch does.
 
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::StorageLocation::{Local, PbxShared};
@@ -59,6 +66,11 @@ const SK_UNDO: u32 = 8;
 const SK_SCORES: u32 = 9;
 const SK_SIZE: u32 = 10;
 const SK_LEVEL: u32 = 11;
+/// On a phone without keys: what the key 8 does.
+const SK_AUTO: u32 = 12;
+
+/// What the line under the board says on a phone without keys.
+const TOUCH_HINT: &str = "Touch a cell: a light, then a square, then empty.";
 
 /// The key, in the app's storage, that holds the puzzle with its
 /// lights and marks, the time spent on it, and the cursor.
@@ -98,13 +110,18 @@ struct Board {
     painter: Painter,
     /// A canvas per row, and what it shows.
     rows: Vec<(Widget, Vec<Look>)>,
+    /// The canvas over the board: the cursor's, and on a phone without
+    /// keys, where there is no cursor, the one that takes the touches.
     cursor: Widget,
+    /// Whether the cells are touched (and no cursor is drawn).
+    touch: bool,
     cursor_at: Option<(usize, usize)>,
     /// The time spent, over the picture of the keys, and what it says.
     clock: Widget,
     clock_shown: String,
-    /// The picture of the keys beside the board; "Solved!" and the time
-    /// take the place of both.
+    /// The picture of the keys beside the board (on a phone without
+    /// keys, the line that says what a touch does); "Solved!" and the
+    /// time take the place of both.
     keys: Widget,
     solved_shown: bool,
     status: Widget,
@@ -765,6 +782,9 @@ impl LightUp {
         claims.extend([1, 2, 3, 4, 5, 6, 8].map(Key::Digit));
         ui::claim_keys(ROOT, &claims);
         let m = ui::get_metrics();
+        if !m.keys {
+            return self.show_play_touch();
+        }
         let l = Layout::new(m.width, m.height, self.side);
         let palette = palette();
         let painter = Painter::new(self.side, l.pitch, palette);
@@ -809,6 +829,7 @@ impl LightUp {
             painter,
             rows,
             cursor,
+            touch: false,
             cursor_at: None,
             clock,
             clock_shown: shown,
@@ -834,6 +855,114 @@ impl LightUp {
         self.run_clock(true);
     }
 
+    /// The playing screen of a phone without keys, in its upright window:
+    /// a line with the time (beside the back button, which the phone
+    /// draws), under it the board, as wide as the window allows, and
+    /// under that what a touch does; "Solved!" and the time take that
+    /// line's place.  The cells are touched ([`LightUp::touched`]): there
+    /// is no cursor, and no picture of keys.
+    fn show_play_touch(&mut self) {
+        let Some(game) = &self.game else { return };
+        let m = ui::get_metrics();
+        let cells = self.side.max(1) as u16;
+        let top = m.title_height;
+        // Under the board: half a line of space, and two lines.
+        let under = 2 * m.line_height + m.line_height / 2;
+        let room = m.width.min(m.height.saturating_sub(top + under));
+        let pitch = (room.saturating_sub(1) / cells).max(4);
+        let side = pitch * cells + 1;
+        let (board_x, board_y) = ((m.width.saturating_sub(side) / 2) as i16, top as i16);
+        let painter = Painter::new(self.side, pitch, palette());
+        let rows = (0..game.grid().height())
+            .map(|row| {
+                let (x, y, width, height) = painter.row_bounds(row);
+                let w = canvas::create(ROOT, Rect::new(board_x + x, board_y + y, width, height));
+                (w, Vec::new())
+            })
+            .collect();
+        // Nothing is drawn on this one: it is what a finger touches.
+        let cursor = canvas::create(ROOT, Rect::new(board_x, board_y, side, side));
+        ui::claim_touch(cursor, true);
+
+        let shown = clock(self.elapsed);
+        let time = Rect::new(
+            m.back_width as i16,
+            0,
+            m.width.saturating_sub(2 * m.back_width),
+            m.title_height,
+        );
+        let clock = text(time, Font::Bold, Align::Center, &shown);
+        let gap = m.line_height / 2;
+        let y = board_y + (side + gap) as i16;
+        let line = |n: u16| {
+            Rect::new(
+                gap as i16,
+                y + (n * m.line_height) as i16,
+                m.width.saturating_sub(2 * gap),
+                m.line_height,
+            )
+        };
+        let hint = text(
+            Rect::new(gap as i16, y, m.width.saturating_sub(2 * gap), 2 * m.line_height),
+            Font::Normal,
+            Align::Center,
+            TOUCH_HINT,
+        );
+        ui::set_wrap(hint, true);
+        self.board = Some(Board {
+            painter,
+            rows,
+            cursor,
+            touch: true,
+            cursor_at: None,
+            clock,
+            clock_shown: shown,
+            keys: hint,
+            solved_shown: false,
+            status: text(line(0), Font::Bold, Align::Center, ""),
+            time: text(line(1), Font::Normal, Align::Center, ""),
+        });
+        // More than four: the phone shows three and "More".  Undo and
+        // "Auto" (what the key 8 does) are on the first page.
+        ui::set_softkeys(
+            ROOT,
+            &[
+                Softkey::new(SK_UNDO, "Undo"),
+                Softkey::new(SK_AUTO, "Auto"),
+                Softkey::new(SK_NEW, "New"),
+                Softkey::new(SK_HELP, "Help"),
+                Softkey::new(SK_SCORES, "Scores"),
+            ],
+        );
+        self.update();
+        self.run_clock(true);
+    }
+
+    /// A finger touched the board at a place counted from its corner: the
+    /// cell there gets a light; one that has a light gets a square in its
+    /// place; and one that has a square is cleared.
+    fn touched(&mut self, x: i16, y: i16) {
+        let Some(board) = &self.board else { return };
+        let pitch = board.painter.pitch().max(1) as i16;
+        if x < 0 || y < 0 {
+            return;
+        }
+        // (The last grid line belongs to the last cell.)
+        let last = self.side.saturating_sub(1);
+        let (cx, cy) = (((x / pitch) as usize).min(last), ((y / pitch) as usize).min(last));
+        self.changed(|game| {
+            game.set_cursor(cx, cy);
+            let i = game.grid().index(cx, cy);
+            game.act(if game.grid().has_light(i) {
+                Act::Mark
+            } else if game.grid().is_marked(i) {
+                Act::Clear
+            } else {
+                Act::Light
+            })
+        });
+    }
+
     /// Draws the rows that no longer show what the puzzle has, the cursor
     /// if it moved, and the time once the puzzle is solved.
     fn update(&mut self) {
@@ -847,7 +976,7 @@ impl LightUp {
                 *shown = now;
             }
         }
-        let at = (!game.solved()).then(|| game.cursor());
+        let at = (!game.solved() && !board.touch).then(|| game.cursor());
         if board.cursor_at != at {
             paint(board.cursor, board.painter.cursor(game));
             board.cursor_at = at;
@@ -890,6 +1019,36 @@ impl LightUp {
         let m = ui::get_metrics();
         let shown = &PAGES[self.page];
         let grid = shown.grid();
+        if !m.keys {
+            // The upright window: the picture, six tenths of the width,
+            // and the sentences under it.
+            let pitch = m.width * 6 / 10 / grid.width() as u16;
+            let (width, height, ops) = draw::picture(&grid, pitch, palette());
+            let gap = m.line_height as i16;
+            let picture = canvas::create(
+                ROOT,
+                Rect::new((m.width.saturating_sub(width) / 2) as i16, area.y + gap, width, height),
+            );
+            paint(picture, ops);
+            let y = area.y + 2 * gap + height as i16;
+            let words = text(
+                Rect::new(
+                    gap,
+                    y,
+                    m.width.saturating_sub(2 * gap as u16),
+                    (area.y as u16 + area.height).saturating_sub(y as u16).min(5 * m.line_height),
+                ),
+                Font::Normal,
+                Align::Left,
+                shown.words(false),
+            );
+            ui::set_wrap(words, true);
+            ui::set_softkeys(
+                ROOT,
+                &[Softkey::new(SK_NEXT, "Next"), Softkey::new(SK_BACK, "Back")],
+            );
+            return;
+        }
         // The picture takes three tenths of the width.
         let pitch = (m.width * 3 / 10 / grid.width() as u16).max(7);
         let (mut width, mut height, mut ops) = draw::picture(&grid, pitch, palette());
@@ -1257,6 +1416,15 @@ impl App for LightUp {
                         self.update();
                     }
                 }
+            }
+            Event::Softkey(SK_AUTO) if self.screen == Screen::Play => {
+                self.changed(|game| game.auto())
+            }
+            Event::Touch((w, Touch::Tap(at)))
+                if self.screen == Screen::Play
+                    && self.board.as_ref().is_some_and(|b| b.touch && b.cursor == w) =>
+            {
+                self.touched(at.x, at.y)
             }
             Event::Softkey(SK_NEXT) => self.show_help(self.page + 1),
             Event::Softkey(SK_RETRY) => self.generate(),
