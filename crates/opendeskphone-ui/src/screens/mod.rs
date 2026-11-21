@@ -227,11 +227,27 @@ pub(crate) struct Item {
     pub label: String,
     pub value: String,
     pub act: Action,
+    /// Touch: a setting that is on or off, drawn as a switch in place of
+    /// its value ([`menus::switch`]).
+    pub switch: Option<bool>,
+    /// Touch: an item that erases something, its label in red.
+    pub danger: bool,
 }
 
 impl Item {
     pub fn new(label: impl Into<String>, act: impl Fn(&Cx) -> Nav + Send + 'static) -> Item {
-        Item { icon: None, label: label.into(), value: String::new(), act: Box::new(act) }
+        Item { icon: None, label: label.into(), value: String::new(), act: Box::new(act), switch: None, danger: false }
+    }
+    /// Touch: the item is a setting that is `on` or off (the other skins
+    /// show its value).
+    pub fn switch(mut self, on: bool) -> Item {
+        self.switch = Some(on);
+        self
+    }
+    /// Touch: the item erases something.
+    pub fn danger(mut self) -> Item {
+        self.danger = true;
+        self
     }
     pub fn value(mut self, v: impl Into<String>) -> Item {
         self.value = v.into();
@@ -351,10 +367,15 @@ impl Screen for Menu {
                 c.text_in(f, num, &n.to_string(), if sel { fg } else { th.secondary }, HAlign::Center);
             }
             let rest = IRect { w: rest.w - th.pad, ..rest };
-            if it.value.is_empty() {
-                c.text_in(f, rest, &it.label, fg, HAlign::Left);
+            let label_fg = if it.danger && th.touch() { th.error } else { fg };
+            if let (true, Some(on)) = (th.touch(), it.switch) {
+                let (text, at) = rest.split_right(menus::SWITCH_W);
+                c.text_in(f, text, &it.label, label_fg, HAlign::Left);
+                menus::switch(c, th, at, on);
+            } else if it.value.is_empty() {
+                c.text_in(f, rest, &it.label, label_fg, HAlign::Left);
             } else {
-                widgets::key_value(c, th, rest, &it.label, &it.value, fg, if sel { fg } else { th.secondary });
+                widgets::key_value(c, th, rest, &it.label, &it.value, label_fg, if sel { fg } else { th.secondary });
             }
         });
     }

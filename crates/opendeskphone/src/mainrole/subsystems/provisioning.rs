@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn setup_is_for_a_phone_with_no_server_and_no_accounts() {
         use opendeskphone_state::Phase;
-        let failed = ProvisionPhase::Failed { reason: "no answer".into(), code: None };
+        let failed = ProvisionPhase::Failed { reason: "no answer".into(), code: None, detail: String::new() };
         // After a factory reset: no saved server, so the client waits for
         // one, and no accounts.  The server menu takes the display.
         assert_eq!(system_phase(Phase::Running, &ProvisionPhase::AwaitingServer, 0), Phase::Provisioning);

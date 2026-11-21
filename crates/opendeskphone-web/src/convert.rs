@@ -144,7 +144,10 @@ pub fn provisioning(p: &st::Provisioning) -> pb::ProvisioningStatus {
         st::ProvisionPhase::Applying => (P::Applying, String::new(), None),
         st::ProvisionPhase::Provisioned => (P::Provisioned, String::new(), None),
         st::ProvisionPhase::Standalone => (P::Standalone, String::new(), None),
-        st::ProvisionPhase::Failed { reason, code } => (P::Failed, reason.clone(), *code),
+        // Whoever reads the web page set the phone up: the technical
+        // line too.
+        st::ProvisionPhase::Failed { reason, code, detail } if !detail.is_empty() => (P::Failed, format!("{reason} ({detail})"), *code),
+        st::ProvisionPhase::Failed { reason, code, .. } => (P::Failed, reason.clone(), *code),
     };
     pb::ProvisioningStatus {
         phase: phase.into(),

@@ -362,7 +362,11 @@ fn all_screens(model: Model) {
     r.shot("08-prov-pin");
     r.tap(Key::Cancel);
     r.store.update::<Provisioning, _>(|p| {
-        p.phase = ProvisionPhase::Failed { reason: "The server did not answer".into(), code: Some(-398) }
+        p.phase = ProvisionPhase::Failed {
+            reason: "The server at \u{201c}pbx.example.invalid\u{201d} did not answer. Check the address and the network cable.".into(),
+            code: None,
+            detail: "transport: the MESSAGE was refused: 408".into(),
+        }
     });
     r.shot("09-prov-failed");
     r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Provisioned);

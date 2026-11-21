@@ -101,6 +101,11 @@ pub struct UiConfig {
     /// The provisioning server fixed the theme: the phone's selector
     /// shows the choices and changes nothing.
     pub theme_locked: bool,
+    /// The network settings the network menu changes, as configured
+    /// (stock `network_enable_dhcp` and `network_vlan_discovery_mode`);
+    /// the network uses them once it is applied.
+    pub network_dhcp: bool,
+    pub vlan_discovery: String,
 }
 
 impl Default for UiConfig {
@@ -127,6 +132,8 @@ impl Default for UiConfig {
             theme: String::new(),
             wallpaper_picture: None,
             theme_locked: false,
+            network_dhcp: true,
+            vlan_discovery: String::new(),
         }
     }
 }

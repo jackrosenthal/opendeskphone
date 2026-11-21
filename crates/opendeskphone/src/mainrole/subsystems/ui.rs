@@ -146,6 +146,9 @@ fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
     if let Some(v) = cfg.setting_num::<u8>("contrast") {
         out.contrast = v;
     }
+    let network = cfg.network();
+    out.network_dhcp = network.dhcp;
+    out.vlan_discovery = network.vlan_discovery_mode;
     out.idle_softkeys = idle_softkeys(&cfg.idle_softkeys().keys);
     super::wallpaper::apply(cfg, &opendeskphone_config::Nvdata::new(&ctx.paths.nvdata), &mut out);
     let active = cfg.ringtones().active;
