@@ -862,7 +862,8 @@ fn diagnostics_menu_tests_and_status_pages() {
 //
 // The D80 has a touchscreen and no keys: the apps are used through their
 // lists, their softkey buttons, and the back button (which is the key
-// `Cancel`).
+// `Cancel`).  A touch on a row does what the row is for, and no softkey
+// does what the back button does.
 
 use opendeskphone_state::Model;
 
@@ -899,8 +900,10 @@ fn status_by_touch() {
     r.pbx.on("switchvox.users.presence.update", |_| Ok(json!({"success": {}})));
     r.launch("status");
     assert_eq!(r.ui.items("status").len(), 3);
+    assert_eq!(r.ui.softkeys("status"), ["Message"]);
     // The message's screen, and the back button out of it.
     r.softkey("status", "Message");
+    assert_eq!(r.ui.softkeys("status"), ["OK"]);
     r.ui.type_text("status", "Back at 1");
     r.settle();
     back(&mut r, "status");
@@ -926,6 +929,7 @@ fn parking_by_touch() {
     });
     r.launch("parking");
     assert_eq!(r.ui.items("parking").len(), 2);
+    assert_eq!(r.ui.softkeys("parking"), ["Refresh"]);
     // Touching a parked call takes it.
     tap_list_row(&mut r, "parking", 1);
     assert!(r.commands().iter().any(|c| matches!(c, Command::Dial { target, .. } if target == "702")));
@@ -949,20 +953,26 @@ fn queues_by_touch() {
         )
     });
     r.launch("queues");
-    assert_eq!(r.ui.softkeys("queues"), ["Pause", "Details", "Exit"]);
-    // Touching a queue highlights it, and the softkeys are that queue's:
-    // nothing else happens, so the other queue can be reached.
+    // The list has no softkeys: no queue is the highlighted one.
+    assert_eq!(r.ui.softkeys("queues"), [] as [&str; 0]);
+    // Touching a queue shows its numbers, with the softkeys for it.
     tap_list_row(&mut r, "queues", 1);
-    assert_eq!(r.ui.softkeys("queues"), ["Log In", "Details", "Exit"]);
-    assert_eq!(r.ui.items("queues").len(), 2);
-    assert_eq!(r.pbx.count("switchvox.users.callQueues.getTodaysStatus"), 0);
+    assert!(r.ui.shows("queues", "Waiting: 3"));
+    assert_eq!(
+        r.pbx.last("switchvox.users.callQueues.getTodaysStatus").unwrap()["call_queue_account_id"],
+        "601"
+    );
+    assert_eq!(r.ui.softkeys("queues"), ["Log In", "Refresh"]);
     r.softkey("queues", "Log In");
     assert_eq!(r.pbx.last("switchvox.users.callQueues.login").unwrap()["call_queue_account_id"], "601");
-    // The first queue again, and its details, by the softkey.
+    assert_eq!(r.ui.items("queues").len(), 2, "the list again, as it now is");
+    // The first queue, which the user is always in: it can be paused, and
+    // the back button leaves the question for the queue's numbers.
     tap_list_row(&mut r, "queues", 0);
-    tap_list_row(&mut r, "queues", 0);
-    assert_eq!(r.pbx.count("switchvox.users.callQueues.getTodaysStatus"), 0);
-    r.softkey("queues", "Details");
+    assert_eq!(r.ui.softkeys("queues"), ["Pause", "Refresh"]);
+    r.softkey("queues", "Pause");
+    assert_eq!(r.ui.softkeys("queues"), ["Pause"]);
+    back(&mut r, "queues");
     assert!(r.ui.shows("queues", "Waiting: 3"));
     assert_eq!(
         r.pbx.last("switchvox.users.callQueues.getTodaysStatus").unwrap()["call_queue_account_id"],
@@ -995,6 +1005,7 @@ fn hotdesking_by_touch() {
     // A label is not an input.
     r.ui.tap("hotdesking", 100, 96 + 8 + 96 + 16 + 48);
     assert_eq!(r.ui.focused("hotdesking"), extension);
+    assert_eq!(r.ui.softkeys("hotdesking"), ["Log In"]);
     r.softkey("hotdesking", "Log In");
     assert!(
         r.commands()
@@ -1009,10 +1020,12 @@ fn contacts_by_touch() {
     let mut r = touch_rig(contacts_config(true));
     r.launch("contacts");
     // The groups; touching one opens it.
+    assert_eq!(r.ui.softkeys("contacts"), ["Search"]);
     tap_list_row(&mut r, "contacts", 0);
     assert_eq!(r.ui.items("contacts").len(), 2);
-    // No softkey is for a highlighted row: a contact is touched.
-    assert_eq!(r.ui.softkeys("contacts"), ["Search", "Groups", "Exit"]);
+    // No softkey is for a highlighted row (a contact is touched), and
+    // the back button is the way back to the groups.
+    assert_eq!(r.ui.softkeys("contacts"), ["Search"]);
     // Touching a contact shows its numbers, and dials nothing yet.
     tap_list_row(&mut r, "contacts", 0);
     assert_eq!(
@@ -1022,12 +1035,12 @@ fn contacts_by_touch() {
             ("Mobile".to_string(), "5550101".to_string())
         ]
     );
-    assert_eq!(r.ui.softkeys("contacts"), ["Back"]);
+    assert_eq!(r.ui.softkeys("contacts"), [] as [&str; 0]);
     assert!(!r.commands().iter().any(|c| matches!(c, Command::Dial { .. })));
     // The back button, and the search: its list is under the input.
     back(&mut r, "contacts");
     r.softkey("contacts", "Search");
-    assert_eq!(r.ui.softkeys("contacts"), ["Back"]);
+    assert_eq!(r.ui.softkeys("contacts"), [] as [&str; 0]);
     r.ui.type_text("contacts", "bo");
     r.settle();
     assert_eq!(r.ui.items("contacts"), vec![("Bob Young".to_string(), String::new())]);
@@ -1038,6 +1051,12 @@ fn contacts_by_touch() {
     tap_list_row(&mut r, "contacts", 0);
     assert!(r.commands().iter().any(|c| matches!(c, Command::Dial { target, .. } if target == "102")));
     assert_eq!(r.ui.top(), None);
+    // From the list of a group, the back button goes to the groups.
+    r.launch("contacts");
+    tap_list_row(&mut r, "contacts", 0);
+    assert_eq!(r.ui.items("contacts").len(), 2);
+    back(&mut r, "contacts");
+    assert_eq!(r.ui.items("contacts")[0].0, "Internal Extensions");
 }
 
 #[test]
@@ -1045,18 +1064,15 @@ fn voicemail_by_touch() {
     let mut r = touch_rig(FakeConfig::dasp());
     voicemail_pbx(&r);
     r.launch("voicemail");
-    assert_eq!(r.ui.softkeys("voicemail")[3], "Read");
-    // Touching a message highlights it, for the softkeys: it does not
-    // play by that.
-    tap_list_row(&mut r, "voicemail", 1);
-    assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 0);
-    assert_eq!(r.ui.softkeys("voicemail")[3], "Unread");
-    tap_list_row(&mut r, "voicemail", 1);
-    assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 0);
-    r.softkey("voicemail", "Play");
-    assert_eq!(r.pbx.last("switchvox.users.voicemail.play").unwrap()["message_id"], "msg0000");
-    // What `*`, `0`, and `#` do on the other phones are softkeys.
-    assert_eq!(r.ui.softkeys("voicemail"), ["Stop", "Rewind", "Pause", "Skip"]);
+    // The list's softkeys are not for a message: none is highlighted.
+    assert_eq!(r.ui.softkeys("voicemail"), ["Folders"]);
+    // Touching a message plays it, on its own screen: what `*`, `0`, and
+    // `#` do on the other phones are softkeys, and so is what else is done
+    // with the message.
+    tap_list_row(&mut r, "voicemail", 0);
+    assert_eq!(r.pbx.last("switchvox.users.voicemail.play").unwrap()["message_id"], "msg0001");
+    assert!(r.ui.shows("voicemail", "Connecting"));
+    assert_eq!(r.ui.softkeys("voicemail"), ["Rewind", "Pause", "Skip", "Delete", "Call Back", "Move"]);
     let mut call = Call::new(CallId(9), AccountId(0), Direction::Incoming, Party::default());
     call.state = CallState::Ringing;
     r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.push(call.clone()));
@@ -1069,14 +1085,62 @@ fn voicemail_by_touch() {
             "{key}"
         );
     }
-    // The back button stops it.
+    // The message plays to its end: it is marked read, and its screen
+    // stays, with what is done with a message that does not play.
+    call.state = CallState::Ended(EndCause::RemoteHangup);
+    r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.clear());
+    r.store.emit(Event::CallEnded { call });
+    r.settle();
+    assert_eq!(r.pbx.last("switchvox.users.voicemail.markRead").unwrap()["message_ids"], json!(["msg0001"]));
+    assert!(r.ui.shows("voicemail", "Alice") && !r.ui.shows("voicemail", "Connecting"));
+    assert_eq!(r.ui.softkeys("voicemail"), ["Play", "Delete", "Call Back", "Move", "Unread"]);
+    // It is played again, and the back button stops it: the list.
+    r.softkey("voicemail", "Play");
+    assert_eq!(r.pbx.count("switchvox.users.voicemail.play"), 2);
+    let mut call = Call::new(CallId(10), AccountId(0), Direction::Incoming, Party::default());
+    call.state = CallState::Ringing;
+    r.store.update::<opendeskphone_state::Calls, _>(|c| c.calls.push(call.clone()));
+    r.store.emit(Event::Push { name: "digium.incomingCall.voicemail".into(), body: String::new() });
+    r.settle();
     back(&mut r, "voicemail");
-    assert!(r.commands().iter().any(|c| matches!(c, Command::Hangup { call } if call.0 == 9)));
+    assert!(r.commands().iter().any(|c| matches!(c, Command::Hangup { call } if call.0 == 10)));
     assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
+
+    // The other message: "Delete" stops it and asks; "No" leaves the
+    // message on its screen, and "Yes" deletes it.
+    tap_list_row(&mut r, "voicemail", 1);
+    assert_eq!(r.pbx.last("switchvox.users.voicemail.play").unwrap()["message_id"], "msg0000");
+    r.softkey("voicemail", "Delete");
+    assert!(r.ui.shows("voicemail", "Delete the message from 5551234?"));
+    r.softkey("voicemail", "No");
+    assert_eq!(r.ui.softkeys("voicemail"), ["Play", "Delete", "Call Back", "Move", "Unread"]);
+    // It is moved by touching a folder, which has no softkeys.
+    r.softkey("voicemail", "Move");
+    assert_eq!(r.ui.softkeys("voicemail"), [] as [&str; 0]);
+    back(&mut r, "voicemail");
+    assert_eq!(r.ui.softkeys("voicemail"), ["Play", "Delete", "Call Back", "Move", "Unread"]);
+    r.softkey("voicemail", "Move");
+    tap_list_row(&mut r, "voicemail", 1);
+    let mv = r.pbx.last("switchvox.users.voicemail.move").unwrap();
+    assert_eq!((mv["folder_to"].as_str(), &mv["message_ids"]), (Some("Old"), &json!(["msg0000"])));
+    assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
+    tap_list_row(&mut r, "voicemail", 1);
+    r.softkey("voicemail", "Delete");
+    r.softkey("voicemail", "Yes");
+    assert_eq!(r.pbx.last("switchvox.users.voicemail.remove").unwrap()["message_ids"], json!(["msg0000"]));
+    // From a message's screen, the back button goes to the list.
+    tap_list_row(&mut r, "voicemail", 1);
+    r.softkey("voicemail", "Delete");
+    r.softkey("voicemail", "No");
+    back(&mut r, "voicemail");
+    assert_eq!(r.ui.items("voicemail").len(), 2, "back on the list");
+
     // A folder is opened by touching it.
     r.softkey("voicemail", "Folders");
+    assert_eq!(r.ui.softkeys("voicemail"), [] as [&str; 0]);
     tap_list_row(&mut r, "voicemail", 1);
     assert!(r.ui.shows("voicemail", "No messages."));
+    assert_eq!(r.ui.softkeys("voicemail"), ["Folders", "Refresh"]);
     assert_eq!(r.pbx.last("switchvox.users.voicemail.getList").unwrap()["folder"], "Old");
 }
 
@@ -1104,6 +1168,10 @@ struct TouchPhone {
 
 impl TouchPhone {
     fn new() -> TouchPhone {
+        TouchPhone::with(FakeConfig::dasp())
+    }
+
+    fn with(fake: FakeConfig) -> TouchPhone {
         use opendeskphone_apps::testutil::{FakePbx, FakeStore, services_with_store};
         use opendeskphone_state::{Domain, Phase, Reply, Store, System};
         let model = Model::D80;
@@ -1123,7 +1191,7 @@ impl TouchPhone {
         let shell = opendeskphone_apps::uishell::UiShell::new(ui.handle(), model);
         let mut cfg = opendeskphone_apps::ManagerConfig::rooted(common::staged(), &dir.0.join("nvdata"));
         cfg.target = opendeskphone_apps::engine::Target::Pulley64;
-        let services = services_with_store(&FakePbx::default(), FakeConfig::dasp(), &FakeStore::default());
+        let services = services_with_store(&FakePbx::default(), fake, &FakeStore::default());
         let mut mgr =
             opendeskphone_apps::AppManager::new(cfg, store.clone(), Box::new(shell), services).expect("engine");
         mgr.scan();

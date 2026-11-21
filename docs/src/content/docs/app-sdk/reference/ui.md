@@ -52,11 +52,18 @@ The D80 has a touchscreen and no keys ([`Skin::Touch`](types.md#metrics-and-skin
 
 A list row is `row_height` tall, which is tall enough for a finger.  A list doesn't scroll to keep the selection visible while the user scrolls by hand; `set_selected` scrolls the selected row into view.  A `Scroll` brings a newly focused descendant into view once.
 
-The phone draws the back button over the top-left corner of the window, `back_width` wide and `title_height` tall, also in a [full-screen](#set_full_screen) window.  Keep that corner free: [`screen`](helpers.md#screen) starts the title to the right of the button.
+The phone draws the back button over the top-left corner of the window, `back_width` wide and `title_height` tall, also in a [full-screen](#set_full_screen) window.  Keep that corner free: [`screen`](helpers.md#screen) starts the title to the right of the button.  The button is an arrow in the foreground color, on the window's own background.  In a full-screen window, where the app draws what it likes, the arrow is on a round button of its own, so that it shows on any picture.
 
 To handle touches itself, a widget takes touches with [`claim_touch`](#claim_touch), and the touches arrive as [`Event::Touch`](app-events.md#touch).  A touch goes to the topmost widget under the finger that takes touches or is a `TextList`, an `Input`, or a `Scroll`.  Widgets of other kinds that don't take touches let a touch through to what is under them.  The window is under every widget, and gets a touch only if the window takes touches and no widget does.
 
 An app written for keys needs changes only where a key has no counterpart on the screen: a key claimed with [`claim_keys`](#claim_keys) never arrives (except `cancel`), so check `keys` in the metrics and offer the action as a softkey, a list row, or a touch.
+
+Two habits of a screen made for keys don't suit the touchscreen:
+
+- A softkey that acts on the highlighted row ("Play", "Details", "Delete").  The user touches a row to act on it, so make `Activated` do the row's main action, and put the other actions on the screen that the row opens.  A row that was touched stays highlighted, but no softkey should depend on that.
+- A softkey that does what `cancel` does ("Back", "Exit").  The back button is always there.
+
+[`nav::softkeys`](helpers.md#navsoftkeys) leaves such softkeys out on the touchscreen.
 
 ## Softkeys
 

@@ -6,15 +6,16 @@
 //! list of fields; Select on a field opens a dialog over the list in which
 //! the field is changed.
 //!
-//! On the touchscreen, which has no keys, touching an alarm chooses it for
-//! the buttons under the list, touching a field opens its dialog, and the
-//! time is not typed but chosen: the hours and the minutes are two lists
-//! side by side.
+//! On the touchscreen, which has no keys, touching an alarm opens it:
+//! its fields, and under them the buttons that save it, switch it on or
+//! off, and delete it.  Touching a field opens its dialog, and the time
+//! is not typed but chosen: the hours and the minutes are two lists side
+//! by side.  The phone's back button is Cancel.
 
 use opendeskphone_app_sdk::alarms::{self, Alarm};
 use opendeskphone_app_sdk::canvas::{self, Op, Role};
 use opendeskphone_app_sdk::prelude::*;
-use opendeskphone_app_sdk::{Align, Error, Font};
+use opendeskphone_app_sdk::{Align, Error, Font, nav};
 
 mod text;
 
@@ -32,6 +33,12 @@ const SK_OK: u32 = 9;
 const SK_MERIDIEM: u32 = 10;
 const SK_ERASE: u32 = 11;
 const SK_PLAY: u32 = 12;
+
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    nav::softkeys(keys, &[SK_EXIT, SK_CANCEL])
+}
 
 const DAY_NAMES: [&str; 7] = [
     "Sunday",
@@ -131,18 +138,26 @@ impl Alarms {
         self.alarms.get(self.row as usize)
     }
 
+    /// The softkeys for the alarm `a`: what switches it, ends its snooze,
+    /// and deletes it.
+    fn alarm_keys(a: &Alarm) -> Vec<Softkey> {
+        let mut keys = vec![Softkey::new(SK_SWITCH, if a.enabled { "Disable" } else { "Enable" })];
+        if alarms::snoozed().is_some_and(|(id, _)| id == a.id) {
+            keys.push(Softkey::new(SK_DISMISS, "Dismiss"));
+        }
+        keys.push(Softkey::new(SK_DELETE, "Delete"));
+        keys
+    }
+
     fn list_softkeys(&self) {
         let mut keys = vec![Softkey::new(SK_NEW, "New")];
-        if let Some(a) = self.selected() {
-            keys.push(Softkey::new(SK_EDIT, "Edit"));
-            keys.push(Softkey::new(SK_SWITCH, if a.enabled { "Disable" } else { "Enable" }));
-            if alarms::snoozed().is_some_and(|(id, _)| id == a.id) {
-                keys.push(Softkey::new(SK_DISMISS, "Dismiss"));
-            }
-            keys.push(Softkey::new(SK_DELETE, "Delete"));
-        }
-        // (Touch: the back button leaves.)
+        // (Touch: no alarm is the highlighted one; an alarm's softkeys
+        // are with its fields, and the back button leaves.)
         if has_keys() {
+            if let Some(a) = self.selected() {
+                keys.push(Softkey::new(SK_EDIT, "Edit"));
+                keys.extend(Self::alarm_keys(a));
+            }
             keys.push(Softkey::new(SK_EXIT, "Exit"));
         }
         ui::set_softkeys(ROOT, &keys);
@@ -236,8 +251,15 @@ impl Alarms {
             ListItem::with_detail("Tone", d.tone.clone()),
         ];
         let title = if d.id == 0 { "New Alarm" } else { "Edit Alarm" };
+        let mut softkeys = vec![Softkey::new(SK_SAVE, "Save")];
+        // Touch: the softkeys the list has for the highlighted alarm on
+        // the other phones.
+        if !has_keys() && d.id != 0 {
+            softkeys.extend(Self::alarm_keys(d));
+        }
+        softkeys.push(Softkey::new(SK_CANCEL, "Cancel"));
         self.list_widget(title, &items, self.edit_row);
-        ui::set_softkeys(ROOT, &[Softkey::new(SK_SAVE, "Save"), Softkey::new(SK_CANCEL, "Cancel")]);
+        ui::set_softkeys(ROOT, &keys(&softkeys));
     }
 
     fn save(&mut self) {
@@ -366,7 +388,7 @@ impl Alarms {
                     softkeys.push(Softkey::new(SK_MERIDIEM, "AM/PM"));
                 }
                 softkeys.push(Softkey::new(SK_CANCEL, "Cancel"));
-                ui::set_softkeys(group, &softkeys);
+                ui::set_softkeys(group, &keys(&softkeys));
                 ui::claim_keys(group, &[Key::Cancel]);
                 ui::set_focus(hours);
                 self.field = hours;
@@ -414,7 +436,7 @@ impl Alarms {
                     ],
                     _ => vec![Softkey::new(SK_OK, "OK"), Softkey::new(SK_CANCEL, "Cancel")],
                 };
-                ui::set_softkeys(list, &softkeys);
+                ui::set_softkeys(list, &keys(&softkeys));
                 self.field = list;
                 self.draw_choices();
             }
@@ -555,9 +577,21 @@ impl Alarms {
         match id {
             SK_NEW => self.new_alarm(),
             SK_EDIT => self.edit_alarm(),
+            // Touch: the alarm as its fields now are, switched.
+            SK_SWITCH if self.screen == Screen::Edit => {
+                if let Some(d) = &mut self.draft {
+                    d.enabled = !d.enabled;
+                }
+                self.save();
+            }
             SK_SWITCH => self.switch(),
             SK_DELETE => {
-                if let Some(id) = self.selected().map(|a| a.id) {
+                // (Touch: the alarm whose fields are shown.)
+                let alarm = match self.screen {
+                    Screen::Edit => self.draft.as_ref(),
+                    _ => self.selected(),
+                };
+                if let Some(id) = alarm.map(|a| a.id) {
                     self.after(alarms::remove(id));
                 }
             }
@@ -646,13 +680,7 @@ impl App for Alarms {
                     Screen::Edit => self.edit_row = row,
                     Screen::Error => {}
                 }
-                // Touch: an alarm that is touched is the one the buttons
-                // under the list are for; "Edit" opens it.
-                if self.screen == Screen::List && !has_keys() {
-                    self.list_softkeys();
-                } else {
-                    self.activate();
-                }
+                self.activate();
             }
             Event::Softkey(id) => self.softkey(id),
             Event::Key(k) => self.key(k),

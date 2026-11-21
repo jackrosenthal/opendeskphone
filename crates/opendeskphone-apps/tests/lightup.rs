@@ -1351,7 +1351,7 @@ fn on_the_touchscreen_a_puzzle_is_played_by_touching_its_cells() {
     assert_eq!(texts.len(), 2, "{texts:?}");
     assert_eq!(texts[0], "Solved!");
     assert!(texts[1].starts_with("Time "), "{texts:?}");
-    assert_eq!(r.ui.softkeys(APP), ["New", "Help", "Exit", "Scores"]);
+    assert_eq!(r.ui.softkeys(APP), ["New", "Help", "Scores"]);
     // A solved puzzle does not change.
     let kept = state(&mut r).0;
     touch(&mut r, 7, cell(white));
@@ -1390,7 +1390,8 @@ fn on_the_touchscreen_the_other_screens_name_no_key_and_fit() {
     assert!(r.ui.texts(APP)[0].contains("7x7 Hard"), "{:?}", r.ui.texts(APP));
     r.softkey(APP, "Size");
     assert!(r.ui.texts(APP)[0].contains("10x10 Hard"), "{:?}", r.ui.texts(APP));
-    r.softkey(APP, "Back");
+    assert_eq!(r.ui.softkeys(APP), ["Size", "Level"]);
+    r.key(APP, Key::Cancel);
     assert_eq!(state(&mut r), kept);
 
     // The largest board is as wide as the window allows too.

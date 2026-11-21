@@ -729,12 +729,14 @@ fn drawn_on_the_touchscreen() {
     let count = |p: &[u32], color: u32| p.iter().filter(|c| **c == color).count();
     assert!(count(&start, 0xD9_D0BA) > 5 * 72 * 72 / 2, "the floor");
     assert!(count(&start, 0x5F_6E8C) > 16 * 72 * 72 / 2, "the walls");
-    // The phone's back button and the four softkeys are there to touch.
+    // The phone's back button and the three softkeys are there to touch:
+    // no "Exit", which the back button is.
     let back = ui.canvas().hit_rect(Hit::Key(Key::Cancel)).expect("a back button");
     assert_eq!((back.x, back.y, back.w, back.h), (0, 0, 96, 96));
-    for n in 1..=4 {
+    for n in 1..=3 {
         assert!(ui.canvas().hit_rect(Hit::Key(Key::Soft(n))).is_some(), "softkey {n}");
     }
+    assert!(ui.canvas().hit_rect(Hit::Key(Key::Soft(4))).is_none(), "three softkeys");
 
     // A swipe on the glass moves the figure; a touch beside it pushes the
     // box; one more swipe pushes it home.

@@ -69,6 +69,17 @@ const SK_LEVEL: u32 = 11;
 /// On a phone without keys: what the key 8 does.
 const SK_AUTO: u32 = 12;
 
+/// The softkeys the touchscreen does without: the back button is the way
+/// back and out, and a touch chooses a row.
+fn keys(keys: &[Softkey]) -> Vec<Softkey> {
+    opendeskphone_app_sdk::nav::softkeys(keys, &[SK_EXIT, SK_BACK, SK_PLAY])
+}
+
+/// Sets the window's softkeys: of `all`, those the phone needs.
+fn set_keys(all: &[Softkey]) {
+    ui::set_softkeys(ROOT, &keys(all));
+}
+
 /// What the line under the board says on a phone without keys.
 const TOUCH_HINT: &str = "Touch a cell: a light, then a square, then empty.";
 
@@ -650,15 +661,12 @@ impl LightUp {
         } else {
             Softkey::new(SK_EXIT, "Exit")
         };
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_PLAY, "Play"),
-                Softkey::new(SK_HELP, "Help"),
-                other,
-                Softkey::new(SK_SCORES, "Scores"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_PLAY, "Play"),
+            Softkey::new(SK_HELP, "Help"),
+            other,
+            Softkey::new(SK_SCORES, "Scores"),
+        ]);
         ui::set_focus(list);
         self.list = Some(list);
     }
@@ -698,10 +706,7 @@ impl LightUp {
         ui::claim_keys(ROOT, &[Key::Cancel]);
         let name = format!("{} {}", size_name(self.wanted.0), self.wanted.1.name());
         centered(content_rect(), &[&name, "Generating\u{2026}"]);
-        ui::set_softkeys(
-            ROOT,
-            &[Softkey::new(SK_NEW, "New"), Softkey::new(SK_EXIT, "Exit")],
-        );
+        set_keys(&[Softkey::new(SK_NEW, "New"), Softkey::new(SK_EXIT, "Exit")]);
         if let Some(making) = &mut self.making {
             making.timer = timers::set(PAUSE_MS, false).ok();
         }
@@ -761,14 +766,11 @@ impl LightUp {
         ui::clear(ROOT);
         ui::claim_keys(ROOT, &[Key::Cancel]);
         centered(content_rect(), &["No puzzle was found.", "Try again."]);
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_RETRY, "Retry"),
-                Softkey::new(SK_NEW, "New"),
-                Softkey::new(SK_EXIT, "Exit"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_RETRY, "Retry"),
+            Softkey::new(SK_NEW, "New"),
+            Softkey::new(SK_EXIT, "Exit"),
+        ]);
     }
 
     fn show_play(&mut self) {
@@ -842,15 +844,12 @@ impl LightUp {
         // the best times on the fourth key.  The Cancel key leaves the
         // app; a solved puzzle, which has nothing to take back, has a
         // softkey for that as well (`update` sets its keys).
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_UNDO, "Undo"),
-                Softkey::new(SK_NEW, "New"),
-                Softkey::new(SK_HELP, "Help"),
-                Softkey::new(SK_SCORES, "Scores"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_UNDO, "Undo"),
+            Softkey::new(SK_NEW, "New"),
+            Softkey::new(SK_HELP, "Help"),
+            Softkey::new(SK_SCORES, "Scores"),
+        ]);
         self.update();
         self.run_clock(true);
     }
@@ -924,16 +923,13 @@ impl LightUp {
         });
         // More than four: the phone shows three and "More".  Undo and
         // "Auto" (what the key 8 does) are on the first page.
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_UNDO, "Undo"),
-                Softkey::new(SK_AUTO, "Auto"),
-                Softkey::new(SK_NEW, "New"),
-                Softkey::new(SK_HELP, "Help"),
-                Softkey::new(SK_SCORES, "Scores"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_UNDO, "Undo"),
+            Softkey::new(SK_AUTO, "Auto"),
+            Softkey::new(SK_NEW, "New"),
+            Softkey::new(SK_HELP, "Help"),
+            Softkey::new(SK_SCORES, "Scores"),
+        ]);
         self.update();
         self.run_clock(true);
     }
@@ -989,15 +985,12 @@ impl LightUp {
             ui::set_visible(board.clock, false);
             ui::set_text(board.status, "Solved!");
             ui::set_text(board.time, &format!("Time {}", clock(self.elapsed)));
-            ui::set_softkeys(
-                ROOT,
-                &[
-                    Softkey::new(SK_NEW, "New"),
-                    Softkey::new(SK_HELP, "Help"),
-                    Softkey::new(SK_EXIT, "Exit"),
-                    Softkey::new(SK_SCORES, "Scores"),
-                ],
-            );
+            set_keys(&[
+                Softkey::new(SK_NEW, "New"),
+                Softkey::new(SK_HELP, "Help"),
+                Softkey::new(SK_EXIT, "Exit"),
+                Softkey::new(SK_SCORES, "Scores"),
+            ]);
         }
     }
 
@@ -1043,10 +1036,7 @@ impl LightUp {
                 shown.words(false),
             );
             ui::set_wrap(words, true);
-            ui::set_softkeys(
-                ROOT,
-                &[Softkey::new(SK_NEXT, "Next"), Softkey::new(SK_BACK, "Back")],
-            );
+            set_keys(&[Softkey::new(SK_NEXT, "Next"), Softkey::new(SK_BACK, "Back")]);
             return;
         }
         // The picture takes three tenths of the width.
@@ -1073,10 +1063,7 @@ impl LightUp {
             shown.text,
         );
         ui::set_wrap(words, true);
-        ui::set_softkeys(
-            ROOT,
-            &[Softkey::new(SK_NEXT, "Next"), Softkey::new(SK_BACK, "Back")],
-        );
+        set_keys(&[Softkey::new(SK_NEXT, "Next"), Softkey::new(SK_BACK, "Back")]);
     }
 
     /// Leaves the help or the tables for where they were opened: the
@@ -1157,14 +1144,11 @@ impl LightUp {
             let at = table.place(&id).unwrap_or(0);
             self.lines = Some(Lines::new(area, &table, at));
         }
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_SIZE, "Size"),
-                Softkey::new(SK_LEVEL, "Level"),
-                Softkey::new(SK_BACK, "Back"),
-            ],
-        );
+        set_keys(&[
+            Softkey::new(SK_SIZE, "Size"),
+            Softkey::new(SK_LEVEL, "Level"),
+            Softkey::new(SK_BACK, "Back"),
+        ]);
     }
 
     /// A table as the PBX has it now.
