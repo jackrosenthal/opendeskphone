@@ -274,7 +274,7 @@ impl Screen for CallLogScreen {
             // The log is cleared from any tab, while it has anything.
             if !cx.st.call_log.entries.is_empty() {
                 let (rest, buttons) = bottom_buttons(th, body, 1);
-                action_button(c, th, buttons[0], tr::CLEAR_LOG, Role::Secondary, Hit::Soft(LOG_CLEAR));
+                widgets::button_styled(c, th, buttons[0], tr::CLEAR_LOG, widgets::ButtonStyle::Secondary, Hit::Soft(LOG_CLEAR));
                 body = rest;
             }
         } else {
@@ -412,7 +412,7 @@ impl Screen for EntryDetails {
         }
         let (rest, buttons) = bottom_buttons(cx.th, area, 1);
         self.info.draw(cx, c, rest);
-        action_button(c, cx.th, buttons[0], &format!("{} {number}", tr::CALL), Role::Call, Hit::Soft(DETAILS_CALL));
+        widgets::button_styled(c, cx.th, buttons[0], &format!("{} {number}", tr::CALL), widgets::ButtonStyle::Call, Hit::Soft(DETAILS_CALL));
     }
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         self.info.deadline(cx)
@@ -827,9 +827,9 @@ impl Screen for ForwardScreen {
             match rows[i] {
                 ForwardRow::Rule(k) => {
                     let (kind, label) = FORWARD_RULES[k];
-                    let (text, at) = r.split_right(SWITCH_W);
-                    c.text_in(f, text, label, fg, HAlign::Left);
-                    switch(c, th, at, !forward_target(fwd, kind).is_empty());
+                    // (Where a menu's switch is.)
+                    let at = widgets::switch(c, th, IRect { w: r.w - th.pad, ..r }, !forward_target(fwd, kind).is_empty());
+                    c.text_in(f, IRect { w: at.x - th.pad - r.x, ..r }, label, fg, HAlign::Left);
                 }
                 // Under its rule, set in.
                 ForwardRow::Number(k) => {
@@ -1032,7 +1032,7 @@ pub(crate) fn network_menu() -> Box<dyn Screen> {
             tr::VLAN_ID,
             "network_vlan_id",
             n.vlan.voice_id.map(|v| v.to_string()).unwrap_or_default(),
-            InputMode::Numeric,
+            InputMode::Digits,
         ));
         v.push(Item::new(tr::APPLY_NETWORK, |cx| {
             cx.post(Command::ReconfigureNetwork);
@@ -1168,7 +1168,7 @@ fn display_menu() -> Box<dyn Screen> {
         if cx.th.touch() {
             v.push(Item::new(tr::BACKLIGHT_TIMEOUT, |_| Nav::Push(backlight_timeouts())).value(timeout_text(timeout)));
         } else {
-            v.push(edit_setting(tr::BACKLIGHT_TIMEOUT, "backlight_timeout", timeout.to_string(), InputMode::Numeric));
+            v.push(edit_setting(tr::BACKLIGHT_TIMEOUT, "backlight_timeout", timeout.to_string(), InputMode::Digits));
         }
         // Gray screens have no themes.
         if !cx.th.gray {
@@ -1709,54 +1709,14 @@ pub(crate) fn about() -> Box<dyn Screen> {
     })
 }
 
-// --------------------------------------------------------- touch controls
-//
-// Drawn here until the shared widgets have them: a switch, and buttons in
-// their roles.  Each is replaced in one place.
-
-/// Touch: the width [`switch`] takes at the right of a row.
-pub(crate) const SWITCH_W: i32 = 128;
-
-/// Touch: a switch at the right end of `r`, in its middle: a track with
-/// round ends, filled when it is on, and a knob at the end it is at.
-pub(crate) fn switch(c: &mut Canvas, th: &Theme, r: IRect, on: bool) {
-    let (w, h) = (th.px(48), th.px(28));
-    let track = IRect::new(r.right() - w, r.y + (r.h - h) / 2, w, h);
-    c.fill_round_aa(track, h / 2, if on { th.sel_bg } else { th.border });
-    let knob = h - th.px(6);
-    let x = if on { track.right() - th.px(3) - knob } else { track.x + th.px(3) };
-    c.fill_round_aa(IRect::new(x, track.y + th.px(3), knob, knob), knob / 2, if on { th.sel_fg } else { th.secondary });
-}
-
-/// Touch: what a button is for, which is how it looks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Role {
-    /// The screen's main action: filled.
-    Primary,
-    /// Places a call: green.
-    Call,
-    /// Erases or forgets something: red.
-    Destructive,
-    /// Any other action: outlined.
-    Secondary,
-}
-
-/// Touch: a button in `r` that looks as its `role` is.
-pub(crate) fn action_button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, role: Role, hit: Hit) {
-    let (fill, edge, fg) = match role {
-        Role::Primary => (th.sel_bg, None, th.sel_fg),
-        Role::Call => (th.sk_go, None, th.sk_fg),
-        Role::Destructive => (th.sk_stop, None, th.sk_fg),
-        Role::Secondary => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
-    };
-    widgets::button(c, th, r, label, fill, edge, fg, hit);
-}
+// --------------------------------------------------------- touch layout
 
 /// Touch: the places of `n` buttons as wide as the screen, one above the
 /// other at the bottom of `area` (the last at the bottom), and what is
 /// left of `area` above them.
 pub(crate) fn bottom_buttons(th: &Theme, area: IRect, n: usize) -> (IRect, Vec<IRect>) {
-    let (side, below, gap) = (th.px(10), th.px(6), th.pad);
+    // (At the sides, where the home and call screens' buttons are.)
+    let (side, below, gap) = (dialpad::MARGIN, th.px(6), th.pad);
     let n = n as i32;
     let band = n * th.row_h + (n - 1).max(0) * gap + below + gap;
     let (rest, band) = area.split_bottom(band);
@@ -1803,9 +1763,10 @@ pub(crate) struct Ask {
 
 /// The screen that asks `a`, and does `yes` when the answer is yes.
 pub(crate) fn ask(cx: &Cx, a: Ask, yes: impl Fn(&Cx) -> Nav + Send + 'static) -> Box<dyn Screen> {
-    // `Confirm` as it is on main takes the question only.  Once it takes a
-    // title, a verb, and whether the action is destructive, they go there,
-    // with the sentence in place of the question on touch.
-    let _ = (cx.th.touch(), a.title, &a.sentence, a.action, a.destructive);
-    Confirm::boxed(a.question, yes)
+    // Touch: a card that says what happens, with the verb on its button.
+    if !cx.th.touch() {
+        return Confirm::boxed(a.question, yes);
+    }
+    let confirm = Confirm::boxed(a.sentence, yes).title(a.title).action(a.action);
+    if a.destructive { confirm.destructive() } else { confirm }
 }

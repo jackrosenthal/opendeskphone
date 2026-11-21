@@ -69,7 +69,7 @@ fn line_h(th: &Theme, line: &Line) -> i32 {
 /// Touch: the PIN, typed for the device at `addr` while it asks for one
 /// (its question may be gone by the time the PIN is typed).
 fn pin_entry(addr: String, typed: &str) -> Box<dyn Screen> {
-    EditScreen::boxed("bluetooth-pin", tr::PROV_ENTER_PIN, typed, InputMode::Numeric, move |cx, pin| {
+    EditScreen::boxed("bluetooth-pin", tr::PROV_ENTER_PIN, typed, InputMode::Digits, move |cx, pin| {
         let pin: String = pin.chars().filter(char::is_ascii_digit).take(PIN_MAX).collect();
         if pin.is_empty() {
             return Nav::Stay;
@@ -79,6 +79,7 @@ fn pin_entry(addr: String, typed: &str) -> Box<dyn Screen> {
         }
         Nav::Pop
     })
+    .action(tr::BT_PAIR)
 }
 
 fn label(d: &BluetoothDevice) -> &str {
@@ -374,7 +375,7 @@ fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
             if d.addr == bt.connected {
                 (tr::BT_CONNECTED, th.good, &[(SK_DISCONNECT, tr::BT_DISCONNECT)])
             } else {
-                (tr::BT_NOT_CONNECTED, th.secondary, &[(SK_CONNECT, tr::BT_CONNECT)])
+                (tr::BT_NOT_CONNECTED, th.secondary, &[(SK_CONNECT, tr::CONNECT)])
             }
         }
         Row::Available(d) if d.addr == bt.pairing_with => (tr::BT_PAIRING, th.accent, &[]),
@@ -435,7 +436,9 @@ fn searching(c: &mut Canvas, th: &Theme, title: IRect, now_ms: u64) {
     let dots_w = PULSE_DOTS as i32 * (dot + gap) - gap;
     let f = th.font(Font::Normal);
     let tw = f.width(tr::BT_SEARCHING);
-    let x = title.right() - th.title_pad - dots_w - th.pad - tw;
+    // Touch: left of the home button, which is at the bar's right.
+    let right = if th.touch() && c.nav().back { title.right() - th.back_w } else { title.right() - th.title_pad };
+    let x = right - dots_w - th.pad - tw;
     c.text_in(f, IRect::new(x, title.y, tw, title.h), tr::BT_SEARCHING, th.title_fg, HAlign::Left);
     let lit = now_ms / PULSE_MS % PULSE_DOTS;
     // On the text's baseline, as an ellipsis would be.
@@ -494,7 +497,7 @@ impl Screen for BluetoothScreen {
             Some(Row::Paired(d)) if d.addr == bt.connected => {
                 vec![soft(SK_DISCONNECT, tr::BT_DISCONNECT), search, soft(SK_FORGET, tr::BT_FORGET), back]
             }
-            Some(Row::Paired(_)) => vec![soft(SK_CONNECT, tr::BT_CONNECT), search, soft(SK_FORGET, tr::BT_FORGET), back],
+            Some(Row::Paired(_)) => vec![soft(SK_CONNECT, tr::CONNECT), search, soft(SK_FORGET, tr::BT_FORGET), back],
             // One pairing at a time.
             Some(Row::Available(_)) if !bt.pairing_with.is_empty() => vec![blank(), search, blank(), back],
             Some(Row::Available(_)) => vec![soft(SK_PAIR, tr::BT_PAIR), search, blank(), back],
@@ -646,9 +649,9 @@ impl Screen for BluetoothScreen {
         if th.touch() {
             let (rest, buttons) = menus::bottom_buttons(th, body, 1);
             if bt.discovering {
-                menus::action_button(c, th, buttons[0], tr::BT_SEARCHING_BUTTON, menus::Role::Secondary, Hit::Nothing);
+                widgets::button_styled(c, th, buttons[0], tr::BT_SEARCHING_BUTTON, widgets::ButtonStyle::Secondary, Hit::Nothing);
             } else {
-                menus::action_button(c, th, buttons[0], tr::BT_SEARCH_DEVICES, menus::Role::Secondary, Hit::Soft(SK_SEARCH));
+                widgets::button_styled(c, th, buttons[0], tr::BT_SEARCH_DEVICES, widgets::ButtonStyle::Secondary, Hit::Soft(SK_SEARCH));
             }
             body = rest;
         }
@@ -763,9 +766,9 @@ impl Screen for DeviceScreen {
         // room between.
         let (rest, forget) = menus::bottom_buttons(th, body, 1);
         let (_, connect) = menus::bottom_buttons(th, IRect { h: rest.h - th.row_h / 2, ..rest }, 1);
-        let (id, text) = if connected { (SK_DISCONNECT, tr::BT_DISCONNECT) } else { (SK_CONNECT, tr::BT_CONNECT) };
-        menus::action_button(c, th, connect[0], text, menus::Role::Primary, Hit::Soft(id));
-        menus::action_button(c, th, forget[0], tr::BT_FORGET_DEVICE, menus::Role::Destructive, Hit::Soft(SK_FORGET));
+        let (id, text) = if connected { (SK_DISCONNECT, tr::BT_DISCONNECT) } else { (SK_CONNECT, tr::CONNECT) };
+        widgets::button_styled(c, th, connect[0], text, widgets::ButtonStyle::Primary, Hit::Soft(id));
+        widgets::button_styled(c, th, forget[0], tr::BT_FORGET_DEVICE, widgets::ButtonStyle::Destructive, Hit::Soft(SK_FORGET));
     }
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         // Forgotten (here or elsewhere): back to the list.

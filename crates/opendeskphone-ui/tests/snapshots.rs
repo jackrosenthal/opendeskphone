@@ -461,7 +461,9 @@ fn all_screens(model: Model) {
     r.shot("28-brightness");
     r.show("settings");
     r.tap(Key::Digit(5));
-    r.tap(Key::Digit(4));
+    // (Touch: factory reset is last, apart from the rest.)
+    r.tap(Key::Digit(if r.model.is_touch() { 5 } else { 4 }));
+    assert_eq!(r.ui.screen_name(), "confirm");
     r.shot("29-confirm");
     r.show("idle");
 
@@ -967,7 +969,9 @@ fn d80_touch() {
     r.show("settings");
     touch(&mut r, row(4));
     r.shot("t30-reset");
-    touch(&mut r, row(3));
+    // (Factory reset is last, apart from the rest.)
+    touch(&mut r, row(4));
+    assert_eq!(r.ui.screen_name(), "confirm");
     r.shot("t31-confirm");
     r.show("menu");
     touch(&mut r, row(7));

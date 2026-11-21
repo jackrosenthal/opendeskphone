@@ -239,19 +239,17 @@ impl Item {
         Item { icon: None, label: label.into(), value: String::new(), act: Box::new(act), switch: None, destructive: false }
     }
     /// A setting that is on or off.  On the touch skin the item has a
-    /// switch at its right ([`widgets::switch`]), after its value if it
-    /// has one, and a touch on the item does what the item does (which
+    /// switch at its right ([`widgets::switch`]) in place of its value,
+    /// and a touch on the item does what the item does (which
     /// should be to switch the setting).  The label names the setting,
     /// not the state.  On the other skins the item is as it was: give it
     /// a value that says the state there.
-    #[allow(dead_code)]
     pub fn switch(mut self, on: bool) -> Item {
         self.switch = Some(on);
         self
     }
     /// An item that erases or deletes something: on the color and touch
     /// skins its label is in the error color.
-    #[allow(dead_code)]
     pub fn destructive(mut self) -> Item {
         self.destructive = true;
         self
@@ -374,12 +372,14 @@ impl Screen for Menu {
                 c.text_in(f, num, &n.to_string(), if sel { fg } else { th.secondary }, HAlign::Center);
             }
             let mut rest = IRect { w: rest.w - th.pad, ..rest };
-            if let (Some(on), true) = (it.switch, th.touch()) {
+            // Touch: the switch says the state, in place of the value.
+            let switched = it.switch.filter(|_| th.touch());
+            if let Some(on) = switched {
                 let sw = widgets::switch(c, th, IRect { w: rest.w - th.pad, ..rest }, on);
                 rest.w = sw.x - th.pad - rest.x;
             }
             let label_fg = if it.destructive && !th.gray && !sel { th.error } else { fg };
-            if it.value.is_empty() {
+            if it.value.is_empty() || switched.is_some() {
                 c.text_in(f, rest, &it.label, label_fg, HAlign::Left);
             } else {
                 widgets::key_value(c, th, rest, &it.label, &it.value, label_fg, if sel { fg } else { th.secondary });
@@ -440,7 +440,6 @@ impl EditScreen {
 
     /// Touch: what the keyboard's action key says: what taking the text
     /// does on this screen, in a word ("Next", "Connect").
-    #[allow(dead_code)]
     pub fn action(mut self: Box<Self>, label: &'static str) -> Box<EditScreen> {
         self.kb.set_action(label);
         self
@@ -661,20 +660,17 @@ impl Confirm {
         Box::new(Confirm { title: String::new(), text: text.into(), action: tr::OK.into(), destructive: false, yes: Box::new(yes) })
     }
     /// Touch: the title of the card ("Factory reset").
-    #[allow(dead_code)]
     pub fn title(mut self: Box<Self>, title: impl Into<String>) -> Box<Confirm> {
         self.title = title.into();
         self
     }
     /// Touch: the label of the button that does it: a verb, or a verb and
     /// its object ("Erase and restart", "Clear call log").
-    #[allow(dead_code)]
     pub fn action(mut self: Box<Self>, label: impl Into<String>) -> Box<Confirm> {
         self.action = label.into();
         self
     }
     /// Touch: the action erases or deletes something: its button is red.
-    #[allow(dead_code)]
     pub fn destructive(mut self: Box<Self>) -> Box<Confirm> {
         self.destructive = true;
         self

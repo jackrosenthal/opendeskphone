@@ -21,10 +21,9 @@ fn snooze_label(secs: u32) -> String {
 }
 
 /// Touch: a button as large as these: `label` in the large font.
-#[allow(clippy::too_many_arguments)]
-fn large_button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, fill: crate::gfx::Rgb, edge: Option<crate::gfx::Rgb>, fg: crate::gfx::Rgb, id: u32) {
-    widgets::button(c, th, r, "", fill, edge, fg, Hit::Soft(id));
-    c.text_in(th.font(Font::Large), r, label, fg, HAlign::Center);
+fn large_button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, style: widgets::ButtonStyle, id: u32) {
+    widgets::button_styled(c, th, r, "", style, Hit::Soft(id));
+    c.text_in(th.font(Font::Large), r, label, style.colors(th).2, HAlign::Center);
 }
 
 impl Screen for AlarmScreen {
@@ -72,8 +71,8 @@ impl Screen for AlarmScreen {
             let buttons = buttons.inset_xy(margin, 0);
             let snooze = IRect::new(buttons.x, buttons.y, buttons.w, th.touch_min * 2 + margin);
             let dismiss = IRect::new(buttons.x, snooze.bottom() + margin, buttons.w, th.touch_min + margin);
-            large_button(c, th, snooze, &snooze_label(cx.st.alarms.snooze_secs), th.sel_bg, None, th.sel_fg, SK_SNOOZE);
-            large_button(c, th, dismiss, tr::DISMISS, th.sk_bg, Some(th.sk_edge), th.sk_fg, SK_DISMISS);
+            large_button(c, th, snooze, &snooze_label(cx.st.alarms.snooze_secs), widgets::ButtonStyle::Primary, SK_SNOOZE);
+            large_button(c, th, dismiss, tr::DISMISS, widgets::ButtonStyle::Secondary, SK_DISMISS);
             rest
         } else {
             body

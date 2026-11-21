@@ -157,8 +157,8 @@ impl Screen for Boot {
         let area = if th.touch() && cx.st.system.phase == Phase::NetworkWait {
             let (rest, buttons) = menus::bottom_buttons(th, area, 1);
             let (left, right) = menus::halves(th, buttons[0]);
-            menus::action_button(c, th, left, tr::NETWORK_SETTINGS, menus::Role::Secondary, Hit::Soft(1));
-            menus::action_button(c, th, right, tr::ABOUT_PHONE, menus::Role::Secondary, Hit::Soft(4));
+            widgets::button_styled(c, th, left, tr::NETWORK_SETTINGS, widgets::ButtonStyle::Secondary, Hit::Soft(1));
+            widgets::button_styled(c, th, right, tr::ABOUT_PHONE, widgets::ButtonStyle::Secondary, Hit::Soft(4));
             rest
         } else {
             area
@@ -256,9 +256,9 @@ impl Screen for Recovery {
         let area = if th.touch() {
             let (rest, buttons) = menus::bottom_buttons(th, area, 2);
             let (left, right) = menus::halves(th, buttons[0]);
-            menus::action_button(c, th, left, tr::ABOUT_PHONE, menus::Role::Secondary, Hit::Soft(1));
-            menus::action_button(c, th, right, tr::NETWORK_STATUS, menus::Role::Secondary, Hit::Soft(2));
-            menus::action_button(c, th, buttons[1], tr::RESTART_PHONE, menus::Role::Primary, Hit::Soft(4));
+            widgets::button_styled(c, th, left, tr::ABOUT_PHONE, widgets::ButtonStyle::Secondary, Hit::Soft(1));
+            widgets::button_styled(c, th, right, tr::NETWORK_STATUS, widgets::ButtonStyle::Secondary, Hit::Soft(2));
+            widgets::button_styled(c, th, buttons[1], tr::RESTART_PHONE, widgets::ButtonStyle::Primary, Hit::Soft(4));
             rest
         } else {
             area
@@ -398,6 +398,7 @@ fn manual_server() -> Box<dyn Screen> {
         }
         Nav::Pop
     })
+    .action(tr::CONNECT)
 }
 
 impl Provision {
@@ -699,8 +700,8 @@ impl Provision {
     fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
         let p = &cx.st.provisioning;
-        let button = |c: &mut Canvas, r: IRect, label: &str, role: menus::Role, id: u32| {
-            menus::action_button(c, th, r, label, role, Hit::Soft(id));
+        let button = |c: &mut Canvas, r: IRect, label: &str, role: widgets::ButtonStyle, id: u32| {
+            widgets::button_styled(c, th, r, label, role, Hit::Soft(id));
         };
         match &p.phase {
             ProvisionPhase::AwaitingServer => self.draw_servers(cx, c, area),
@@ -713,22 +714,22 @@ impl Provision {
                     (d, None) => d.to_string(),
                 };
                 let (rest, b) = menus::bottom_buttons(th, area, 3);
-                button(c, b[0], tr::TRY_AGAIN, menus::Role::Primary, SK_RETRY);
-                button(c, b[1], tr::PROV_OTHER_ADDRESS, menus::Role::Secondary, SK_MANUAL);
-                button(c, b[2], tr::MORE_CHOICES, menus::Role::Secondary, SK_MORE);
+                button(c, b[0], tr::TRY_AGAIN, widgets::ButtonStyle::Primary, SK_RETRY);
+                button(c, b[1], tr::PROV_OTHER_ADDRESS, widgets::ButtonStyle::Secondary, SK_MANUAL);
+                button(c, b[2], tr::MORE_CHOICES, widgets::ButtonStyle::Secondary, SK_MORE);
                 notice(c, th, rest, "warning", th.warn, tr::PROV_FAILED, reason, &detail, None);
             }
             ProvisionPhase::Idle | ProvisionPhase::Discovering => {
                 let (rest, b) = menus::bottom_buttons(th, area, 2);
-                button(c, b[0], tr::PROV_ENTER_MANUALLY, menus::Role::Secondary, SK_MANUAL);
+                button(c, b[0], tr::PROV_ENTER_MANUALLY, widgets::ButtonStyle::Secondary, SK_MANUAL);
                 let (skip, more) = menus::halves(th, b[1]);
-                button(c, skip, tr::PROV_NO_SERVER, menus::Role::Secondary, SK_SKIP);
-                button(c, more, tr::MORE_CHOICES, menus::Role::Secondary, SK_MORE);
+                button(c, skip, tr::PROV_NO_SERVER, widgets::ButtonStyle::Secondary, SK_SKIP);
+                button(c, more, tr::MORE_CHOICES, widgets::ButtonStyle::Secondary, SK_MORE);
                 notice(c, th, rest, "app-network", th.accent, "", &progress_text(p, &p.phase), "", None);
             }
             ProvisionPhase::Handshaking => {
                 let (rest, b) = menus::bottom_buttons(th, area, 1);
-                button(c, b[0], tr::CANCEL, menus::Role::Secondary, SK_CANCEL);
+                button(c, b[0], tr::CANCEL, widgets::ButtonStyle::Secondary, SK_CANCEL);
                 notice(c, th, rest, "app-network", th.accent, "", &progress_text(p, &p.phase), "", None);
             }
             other => notice(c, th, area, "app-network", th.accent, "", &progress_text(p, other), "", None),
@@ -746,8 +747,8 @@ impl Provision {
         c.hit(body, Hit::Custom(HIT_ELSEWHERE));
         let (body, b) = menus::bottom_buttons(th, body, 1);
         let (skip, more) = menus::halves(th, b[0]);
-        menus::action_button(c, th, skip, tr::PROV_NO_SERVER, menus::Role::Secondary, Hit::Soft(SK_SKIP));
-        menus::action_button(c, th, more, tr::MORE_CHOICES, menus::Role::Secondary, Hit::Soft(SK_MORE));
+        widgets::button_styled(c, th, skip, tr::PROV_NO_SERVER, widgets::ButtonStyle::Secondary, Hit::Soft(SK_SKIP));
+        widgets::button_styled(c, th, more, tr::MORE_CHOICES, widgets::ButtonStyle::Secondary, Hit::Soft(SK_MORE));
         let body = instruction(c, th, body, tr::PROV_SELECT_SERVER_HINT);
         // There is no cursor, but the server the count will choose is
         // shown chosen.
@@ -785,7 +786,7 @@ impl Provision {
             }
             None => {
                 let (rest, b) = menus::bottom_buttons(th, body, 1);
-                menus::action_button(c, th, b[0], tr::MORE_CHOICES, menus::Role::Secondary, Hit::Soft(SK_MORE));
+                widgets::button_styled(c, th, b[0], tr::MORE_CHOICES, widgets::ButtonStyle::Secondary, Hit::Soft(SK_MORE));
                 rest
             }
         };

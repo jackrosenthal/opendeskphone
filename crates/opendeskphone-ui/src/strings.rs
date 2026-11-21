@@ -12,6 +12,7 @@ pub const CANCEL: &str = "Cancel";
 /// is another field to go on to.
 pub const DONE: &str = "Done";
 pub const NEXT: &str = "Next";
+pub const CONNECT: &str = "Connect";
 pub const OK: &str = "OK";
 pub const SELECT: &str = "Select";
 pub const SAVE: &str = "Save";
@@ -298,7 +299,6 @@ pub const BT_NOT_CONNECTED: &str = "Not connected";
 pub const BT_PAIRING: &str = "Pairing\u{2026}";
 pub const BT_PAIR: &str = "Pair";
 pub const BT_SEARCH: &str = "Search";
-pub const BT_CONNECT: &str = "Connect";
 pub const BT_DISCONNECT: &str = "Disconnect";
 pub const BT_FORGET: &str = "Forget";
 pub const BT_PAIR_WITH: &str = "Pair with";

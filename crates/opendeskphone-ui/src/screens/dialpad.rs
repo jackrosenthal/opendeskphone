@@ -100,10 +100,11 @@ pub(crate) enum Look {
 pub(crate) fn control(c: &mut Canvas, th: &Theme, r: IRect, icon: &str, label: &str, look: Look, hit: Hit) {
     let dim = crate::gfx::mix(th.sk_bg, th.sk_fg, 3);
     let (fill, edge, fg): (Rgb, Option<Rgb>, Rgb) = match look {
-        Look::Plain => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
-        Look::On => (th.sk_fg, None, th.sk_bg),
-        Look::Go => (th.sk_go, None, th.sk_fg),
-        Look::Stop => (th.sk_stop, None, th.sk_fg),
+        // (The roles of every screen's buttons.)
+        Look::Plain => widgets::ButtonStyle::Secondary.colors(th),
+        Look::On => widgets::ButtonStyle::On.colors(th),
+        Look::Go => widgets::ButtonStyle::Call.colors(th),
+        Look::Stop => widgets::ButtonStyle::Destructive.colors(th),
         Look::Warn => (th.warn, None, idle::on_warn(th)),
         Look::Off => (th.sk_bg, Some(crate::gfx::mix(th.sk_bg, th.sk_edge, 3)), dim),
     };

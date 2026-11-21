@@ -499,11 +499,12 @@ fn addressing_and_vlan_show_their_settings_and_turn_them() {
     // VLAN discovery by LLDP: next, manual.
     r.tap(row(6));
     assert_eq!(setting(taken(&r.config)), vec![pair("network_vlan_discovery_mode", "MANUAL")]);
-    // The VLAN ID is a number, not a secret: the pad of numbers, not of
-    // a PIN.
+    // The VLAN ID is a whole number, not a secret: the pad of digits,
+    // with no point, and the digits are shown.
     r.tap(row(7));
     assert_eq!(r.screen(), "setting_edit");
-    assert!(r.ui.canvas().hit_rect(Cap::Char('.').hit()).is_some());
+    assert!(r.ui.canvas().hit_rect(Cap::Char('1').hit()).is_some());
+    assert!(r.ui.canvas().hit_rect(Cap::Char('.').hit()).is_none());
 }
 
 #[test]
