@@ -265,7 +265,7 @@ impl Contacts {
             Softkey::new(SK_SEARCH, "Search"),
             Softkey::new(SK_EXIT, "Exit"),
         ]);
-        ui::set_focus(list);
+        opendeskphone_app_sdk::nav::focus_list(list);
         self.screen = Screen::Groups(list);
     }
 
@@ -283,7 +283,13 @@ impl Contacts {
         self.view = view;
         let r = screen(&title);
         if self.view.is_empty() {
-            opendeskphone_app_sdk::nav::note(r, "There are no contacts.");
+            // (Touch: with what to do, in the upper part of the screen.)
+            let text = if has_keys() {
+                "There are no contacts."
+            } else {
+                "There are no contacts.  Your administrator can add them."
+            };
+            opendeskphone_app_sdk::nav::note(r, text);
             set_keys(&[Softkey::new(SK_EXIT, "Exit")]);
             self.screen = Screen::None;
             return;
@@ -297,7 +303,7 @@ impl Contacts {
         }
         keys.push(Softkey::new(SK_EXIT, "Exit"));
         set_keys(&keys);
-        ui::set_focus(list);
+        opendeskphone_app_sdk::nav::focus_list(list);
         self.screen = Screen::List(list);
     }
 
@@ -384,7 +390,7 @@ impl Contacts {
             keys.insert(0, Softkey::new(SK_DIAL, "Dial"));
         }
         set_keys(&keys);
-        ui::set_focus(list);
+        opendeskphone_app_sdk::nav::focus_list(list);
         self.detail = Some(c);
         self.screen = Screen::Details(list);
     }
@@ -477,7 +483,7 @@ impl App for Contacts {
                 if let Screen::Search { list } = self.screen
                     && !self.view.is_empty()
                 {
-                    ui::set_focus(list);
+                    opendeskphone_app_sdk::nav::focus_list(list);
                 }
             }
             Event::Softkey(SK_OPEN) => {

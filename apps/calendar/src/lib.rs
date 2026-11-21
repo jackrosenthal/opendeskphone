@@ -1,9 +1,16 @@
 //! Calendar: one month at a time, with today marked.  Left and Right (or
-//! Up and Down) change the month; on the touchscreen, a swipe across the
-//! month does, as the softkeys do.  The date is the phone's clock in local
-//! time; the phones have no clock chip, so until the time has been set
-//! there is no calendar to show.
+//! Up and Down) change the month, as the softkeys do.  The date is the
+//! phone's clock in local time; the phones have no clock chip, so until
+//! the time has been set there is no calendar to show.
+//!
+//! On the touchscreen the month's name is under the title, between the
+//! buttons that turn to the month before and the month after, and a swipe
+//! across the month turns it too.  Away from the current month, "Today"
+//! comes back to it.  Today is a disc; the days are plain numbers, which
+//! a finger does nothing to.
 
+use opendeskphone_app_sdk::canvas::{self, Op, Role, Text};
+use opendeskphone_app_sdk::controls::{self, Button, GAP, Look};
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::{Align, Font};
 
@@ -100,8 +107,43 @@ fn today() -> Option<(i32, u32, u32)> {
 struct Grid {
     title: Widget,
     cells: Vec<Widget>,
+    /// Where each cell is.
+    places: Vec<Rect>,
     /// The cell marked as today.
     marked: Option<Widget>,
+    /// Touch: the buttons to the month before and the month after, and
+    /// the disc on today, a canvas over the day's cell.
+    turn: Option<(Button, Button)>,
+    disc: Option<Widget>,
+    /// How many weeks the rows of days are laid out for, and, on the
+    /// touchscreen, where the rows begin, the height they share, and a
+    /// column's width.
+    weeks: u32,
+    days: Option<(u16, u16, u16)>,
+}
+
+/// Touch: the height of a row of days when `weeks` rows share `room`: at
+/// most half again as high as a column is wide.
+fn weeks_height(room: u16, weeks: u32, col_w: u16) -> u16 {
+    (room / weeks.max(1) as u16).min(col_w * 3 / 2)
+}
+
+impl Grid {
+    /// Touch: lays the rows of days out for a month of `weeks` weeks, so
+    /// that they use the height there is.
+    fn fit(&mut self, weeks: u32) {
+        let Some((top, room, col_w)) = self.days else { return };
+        if weeks == self.weeks {
+            return;
+        }
+        self.weeks = weeks;
+        let row_h = weeks_height(room, weeks, col_w);
+        for (i, (w, place)) in self.cells.iter().zip(&mut self.places).enumerate() {
+            let inset = row_h.saturating_sub(place.height) / 2;
+            place.y = (top + row_h * (i as u16 / 7) + inset) as i16;
+            ui::set_bounds(*w, *place);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -117,37 +159,45 @@ struct Calendar {
 impl Calendar {
     fn build() -> Grid {
         let m = ui::get_metrics();
-        ui::clear(ROOT);
+        // The month's name: the title, centered.  Touch: under the
+        // screen's title, between the buttons that turn the month.
+        let (title, turn, top) = if m.keys {
+            ui::clear(ROOT);
+            let title = ui::create(WidgetKind::Text, ROOT, Rect::new(0, 0, m.width, m.title_height));
+            ui::set_font(title, Font::Title);
+            ui::set_align(title, Align::Center);
+            (title, None, m.title_height)
+        } else {
+            let area = screen("Calendar");
+            let h = m.row_height;
+            let row = Rect::new(GAP as i16, area.y + (GAP / 2) as i16, m.width - 2 * GAP, h);
+            let prev = Button::with_icon(ROOT, Rect::new(row.x, row.y, h, h), Icon::Left, Look::Secondary);
+            let next = Button::with_icon(
+                ROOT,
+                Rect::new(row.x + (row.width - h) as i16, row.y, h, h),
+                Icon::Right,
+                Look::Secondary,
+            );
+            let title = ui::create(WidgetKind::Text, ROOT, Rect::new(row.x + h as i16, row.y, row.width - 2 * h, h));
+            ui::set_font(title, Font::Title);
+            ui::set_align(title, Align::Center);
+            (title, Some((prev, next)), area.y as u16 + h + GAP)
+        };
         ui::claim_keys(ROOT, &[Key::Left, Key::Right, Key::Up, Key::Down, Key::Cancel]);
-        // Touch: a swipe turns the month, and the title is centered
-        // between the back button and as much space at the right.
+        // Touch: a swipe turns the month.
         ui::claim_touch(ROOT, !m.keys);
-        let title = ui::create(
-            WidgetKind::Text,
-            ROOT,
-            Rect::new(
-                m.back_width as i16,
-                0,
-                m.width.saturating_sub(2 * m.back_width),
-                m.title_height,
-            ),
-        );
-        ui::set_font(title, Font::Title);
-        ui::set_align(title, Align::Center);
 
-        let top = m.title_height;
         let col_w = m.width / 7;
         let left = (m.width - col_w * 7) / 2;
         // The weekdays' row and the six rows of days share the height
-        // under the title.  Touch: the upright screen has more height
-        // than a month wants; the weekdays have a low row, and a row of
-        // days is at most a quarter higher than a day is wide.
+        // under the title.  Touch: the weekdays have a low row, and the
+        // weeks of the month shown share the rest (`Grid::fit`).
         let below = m.height.saturating_sub(top);
         let (head_h, row_h) = if m.keys {
             (below / 7, below / 7)
         } else {
             let head_h = m.line_height * 3 / 2;
-            (head_h, ((below - head_h) / 6).min(col_w * 5 / 4))
+            (head_h, weeks_height(below - head_h, 6, col_w))
         };
         // The mark on today is as wide as two digits need, not the
         // column.  Touch: a square in the middle of the day's place.
@@ -170,28 +220,67 @@ impl Calendar {
             ui::set_text(w, if col_w < 60 { &name[..2] } else { name });
         }
         let mut cells = Vec::with_capacity(42);
+        let mut places = Vec::with_capacity(42);
         for i in 0..42u16 {
             let x = (left + col_w * (i % 7) + inset_x) as i16;
             let y = (top + head_h + row_h * (i / 7) + inset_y) as i16;
-            let w = ui::create(WidgetKind::Text, ROOT, Rect::new(x, y, cell_w, cell_h));
+            let place = Rect::new(x, y, cell_w, cell_h);
+            let w = ui::create(WidgetKind::Text, ROOT, place);
             ui::set_align(w, Align::Center);
             cells.push(w);
+            places.push(place);
         }
-        let mut keys = vec![
-            Softkey::new(SK_PREV, "Prev"),
-            Softkey::new(SK_TODAY, "Today"),
-            Softkey::new(SK_NEXT, "Next"),
-        ];
-        // (Touch: the back button leaves.)
+        // Touch: today's disc, over the day's cell (`show` puts it there).
+        // The softkeys there are `show`'s.
+        let disc = (!m.keys).then(|| {
+            let disc = canvas::create(ROOT, Rect::new(0, 0, cell_w, cell_h));
+            ui::set_visible(disc, false);
+            disc
+        });
         if m.keys {
-            keys.push(Softkey::new(SK_EXIT, "Exit"));
+            set_keys(&[
+                Softkey::new(SK_PREV, "Prev"),
+                Softkey::new(SK_TODAY, "Today"),
+                Softkey::new(SK_NEXT, "Next"),
+                Softkey::new(SK_EXIT, "Exit"),
+            ]);
         }
-        set_keys(&keys);
         Grid {
             title,
             cells,
+            places,
             marked: None,
+            turn,
+            disc,
+            weeks: 6,
+            days: (!m.keys).then_some((top + head_h, below - head_h, col_w)),
         }
+    }
+
+    /// Touch: today's disc on the cell `cell` (its bounds), with the day
+    /// in it, or no disc.
+    fn draw_disc(disc: Widget, cell: Option<(Rect, u32)>) {
+        let Some((at, day)) = cell else {
+            return ui::set_visible(disc, false);
+        };
+        ui::set_bounds(disc, at);
+        let d = at.width.min(at.height) * 4 / 5;
+        let ops = [
+            controls::disc(
+                ((at.width - d) / 2) as i16,
+                ((at.height - d) / 2) as i16,
+                d,
+                canvas::theme_color(Role::Highlight),
+            ),
+            Op::Text(Text {
+                box_: Rect::new(0, 0, at.width, at.height),
+                font: Font::Normal,
+                color: canvas::theme_color(Role::HighlightText),
+                text: day.to_string(),
+            }),
+        ];
+        let _ = canvas::draw(disc, &ops);
+        ui::set_visible(disc, true);
     }
 
     /// Shows the month `self.year`/`self.month`, or that the date is not
@@ -199,11 +288,12 @@ impl Calendar {
     fn show(&mut self) {
         if self.today.is_none() {
             self.grid = None;
-            Message::show(
-                "Calendar",
-                "The date is not set.",
-                &keys(&[Softkey::new(SK_EXIT, "Exit")]),
-            );
+            let text = if has_keys() {
+                "The date is not set."
+            } else {
+                "The date is not set yet.  The calendar shows as soon as the phone has the time from the network."
+            };
+            Message::show("Calendar", text, &keys(&[Softkey::new(SK_EXIT, "Exit")]));
             return;
         }
         let grid = self.grid.get_or_insert_with(Self::build);
@@ -220,17 +310,30 @@ impl Calendar {
         if let Some(w) = grid.marked.take() {
             ui::set_highlight(w, false);
         }
+        grid.fit((first + days).div_ceil(7));
+        let mut disc_at = None;
         for (i, w) in grid.cells.iter().enumerate() {
             let day = (i as u32 + 1).wrapping_sub(first);
             if (1..=days).contains(&day) {
                 ui::set_text(*w, &day.to_string());
                 if today == Some(day) {
-                    ui::set_highlight(*w, true);
-                    grid.marked = Some(*w);
+                    if grid.disc.is_some() {
+                        disc_at = Some((grid.places[i], day));
+                    } else {
+                        ui::set_highlight(*w, true);
+                        grid.marked = Some(*w);
+                    }
                 }
             } else {
                 ui::set_text(*w, "");
             }
+        }
+        // Touch: the disc on today, and away from today's month the way
+        // back to it.
+        if let Some(disc) = grid.disc {
+            Self::draw_disc(disc, disc_at);
+            let away = today.is_none();
+            set_keys(&if away { vec![Softkey::new(SK_TODAY, "Today")] } else { Vec::new() });
         }
     }
 
@@ -296,12 +399,26 @@ impl App for Calendar {
             Event::Softkey(SK_NEXT) => self.turn(1),
             Event::Softkey(SK_TODAY) => self.show_today(),
             Event::Softkey(SK_EXIT) => runtime::background(),
-            // A swipe to the left brings the next month in from the
-            // right, as a page is turned.
-            Event::Touch((_, Touch::DragEnd((from, to)))) => {
-                let (dx, dy) = (i32::from(to.x) - i32::from(from.x), i32::from(to.y) - i32::from(from.y));
-                if dx.abs() >= SWIPE && dx.abs() > dy.abs() {
-                    self.turn(if dx < 0 { 1 } else { -1 });
+            Event::Touch((w, t)) => {
+                // The buttons beside the month's name.
+                let mut step = 0;
+                if let Some((prev, next)) = self.grid.as_mut().and_then(|g| g.turn.as_mut()) {
+                    if prev.touched(w, &t) {
+                        step = -1;
+                    } else if next.touched(w, &t) {
+                        step = 1;
+                    }
+                }
+                // A swipe to the left brings the next month in from the
+                // right, as a page is turned.
+                if let Touch::DragEnd((from, to)) = t {
+                    let (dx, dy) = (i32::from(to.x) - i32::from(from.x), i32::from(to.y) - i32::from(from.y));
+                    if dx.abs() >= SWIPE && dx.abs() > dy.abs() {
+                        step = if dx < 0 { 1 } else { -1 };
+                    }
+                }
+                if step != 0 {
+                    self.turn(step);
                 }
             }
             Event::Key(k) => match k {

@@ -6,14 +6,18 @@
 //! is on screen (and rejects it otherwise), and sends `*`, `#`, and `0` as
 //! DTMF for rewind, skip, and pause.
 //!
-//! On the touchscreen, which has no keys, touching a message plays it, on
-//! a screen of its own that stays when the message has played: rewind,
-//! pause, and skip are softkeys there while it plays, and so is what else
-//! is done with the message (play it again, delete it, call back, move
-//! it, mark it unread).  The phone's back button goes back to the list.
+//! The touchscreen, which has no keys, has screens of its own
+//! ([`touch`]): touching a message opens its row, with Play, Call back,
+//! and Delete under it, and the message plays on a screen of its own,
+//! which stays when the message has played.  Without an application
+//! account there is no list to show, and the app offers to call
+//! voicemail instead.
 
+use opendeskphone_app_sdk::controls::Look;
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::{VoicemailMessage, VoicemailSort, nav};
+
+mod touch;
 
 const SK_PLAY: u32 = 1;
 const SK_DELETE: u32 = 2;
@@ -31,6 +35,8 @@ const SK_REFRESH: u32 = 13;
 const SK_REWIND: u32 = 14;
 const SK_PAUSE: u32 = 15;
 const SK_SKIP: u32 = 16;
+/// Touch: calls voicemail, for a phone without an application account.
+const SK_VOICEMAIL: u32 = 17;
 
 /// The softkeys the touchscreen does without: the back button is the way
 /// back and out (and stops a message), and a touch opens a row.
@@ -92,6 +98,9 @@ enum Screen {
     /// Touch: the message that was played, with what is done with it.
     Message,
     Error,
+    /// Touch: the app has no application account, and so no messages to
+    /// show.
+    NoAccount,
 }
 
 /// What a request changes in the message selected or acted on.
@@ -124,6 +133,11 @@ struct Voicemail {
     current: Option<Msg>,
     call: Option<u32>,
     shown: bool,
+    /// Touch: the message whose row is open, the controls on the screen,
+    /// and whether a question about a message was asked from the list.
+    expanded: Option<String>,
+    touch: touch::Touched,
+    from_list: bool,
 }
 
 impl Default for Voicemail {
@@ -138,6 +152,9 @@ impl Default for Voicemail {
             current: None,
             call: None,
             shown: false,
+            expanded: None,
+            touch: touch::Touched::default(),
+            from_list: false,
         }
     }
 }
@@ -171,6 +188,10 @@ impl Voicemail {
     fn selected(&self) -> Option<Msg> {
         if self.screen != Screen::List || self.messages.is_empty() {
             return None;
+        }
+        // Touch: the message whose row is open.
+        if !has_keys() {
+            return self.expanded.as_ref().and_then(|id| self.messages.iter().find(|m| m.id == *id)).cloned();
         }
         self.messages.get(ui::selected(self.list)? as usize).cloned()
     }
@@ -206,6 +227,9 @@ impl Voicemail {
     }
 
     fn draw_list(&mut self) {
+        if !has_keys() {
+            return self.draw_list_touch();
+        }
         let r = screen(&folder_title(&self.folder));
         if self.messages.is_empty() {
             opendeskphone_app_sdk::nav::note(r, "No messages.");
@@ -256,7 +280,7 @@ impl Voicemail {
                 Softkey::new(SK_BACK, "Back"),
             ]),
         );
-        ui::set_focus(list);
+        nav::focus_list(list);
         self.list = list;
         self.screen = if moving {
             Screen::MoveTo
@@ -277,6 +301,9 @@ impl Voicemail {
         let Some(m) = self.current.clone() else {
             return self.draw_list();
         };
+        if !has_keys() {
+            return self.draw_message_touch(&m, playing);
+        }
         let text = format!(
             "{}\n{}\n{}:{:02}{}",
             m.who(),
@@ -285,30 +312,7 @@ impl Voicemail {
             m.duration % 60,
             if playing { "\n\nConnecting..." } else { "" }
         );
-        let mut softkeys = Vec::new();
-        if has_keys() {
-            softkeys.push(Softkey::new(SK_STOP, "Stop"));
-        } else {
-            if playing {
-                // What `*`, `0`, and `#` do on a phone that has them.
-                softkeys.extend([
-                    Softkey::new(SK_REWIND, "Rewind"),
-                    Softkey::new(SK_PAUSE, "Pause"),
-                    Softkey::new(SK_SKIP, "Skip"),
-                ]);
-            } else {
-                softkeys.push(Softkey::new(SK_PLAY, "Play"));
-            }
-            softkeys.extend([
-                Softkey::new(SK_DELETE, "Delete"),
-                Softkey::new(SK_CALL, "Call Back"),
-                Softkey::new(SK_MOVE, "Move"),
-            ]);
-            if !playing {
-                softkeys.push(Softkey::new(SK_MARK, if m.read { "Unread" } else { "Read" }));
-            }
-        }
-        Message::show(if playing { "Playing" } else { "Message" }, &text, &softkeys);
+        Message::show(if playing { "Playing" } else { "Message" }, &text, &[Softkey::new(SK_STOP, "Stop")]);
         if playing {
             ui::claim_keys(ROOT, &[Key::Cancel, Key::Star, Key::Pound, Key::Digit(0)]);
         }
@@ -371,7 +375,8 @@ impl Voicemail {
     /// message's screen, on the touchscreen, where the question was
     /// asked; otherwise to the list.
     fn back(&mut self) {
-        if !has_keys() && self.current.is_some() {
+        // (Touch: a question asked from the list goes back to the list.)
+        if !has_keys() && self.current.is_some() && !std::mem::take(&mut self.from_list) {
             self.draw_message(false);
         } else {
             self.current = None;
@@ -383,6 +388,7 @@ impl Voicemail {
         let Some(m) = self.current.take().or_else(|| self.selected()) else {
             return;
         };
+        self.from_list = false;
         self.hang_up();
         let ids = [m.id];
         self.loading();
@@ -468,7 +474,13 @@ impl App for Voicemail {
             Event::Foreground => {
                 self.shown = true;
                 self.current = None;
+                self.expanded = None;
                 self.folder = "INBOX".into();
+                // Touch: without an application account the PBX cannot
+                // be asked for the messages.
+                if !has_keys() && config::app_setting("account_id").is_none() {
+                    return self.show_no_account();
+                }
                 self.loading();
                 self.load_list();
                 self.load_folders();
@@ -489,6 +501,7 @@ impl App for Voicemail {
                 if self.shown && self.screen == Screen::Playing {
                     if calls::answer(call).is_ok() {
                         self.call = Some(call);
+                        self.playing_now();
                     }
                 } else {
                     let _ = calls::reject(call);
@@ -523,8 +536,17 @@ impl App for Voicemail {
                     ui::set_softkeys(ROOT, &self.list_keys());
                 }
             }
+            // Touch: a message's row is opened, or closed.
+            Event::Widget((w, WidgetEvent::Activated(i))) if !has_keys() && self.screen == Screen::List => {
+                self.row_touched(w, i)
+            }
+            Event::Touch((w, t)) => self.touched(w, &t),
+            Event::Softkey(SK_VOICEMAIL) => {
+                if calls::dial_voicemail(None).is_ok() {
+                    runtime::background();
+                }
+            }
             Event::Widget((_, WidgetEvent::Activated(i))) => match self.screen {
-                // (Touch: the message that was touched.)
                 Screen::List => {
                     if let Some(m) = self.messages.get(i as usize).cloned() {
                         self.play(m);
@@ -556,11 +578,14 @@ impl App for Voicemail {
             Event::Softkey(SK_DELETE) => {
                 if let Some(m) = self.subject() {
                     self.hang_up();
-                    Message::show(
-                        "Delete",
-                        &format!("Delete the message from {}?", m.who()),
-                        &[Softkey::new(SK_YES, "Yes"), Softkey::new(SK_NO, "No")],
-                    );
+                    let question = format!("Delete the message from {}?", m.who());
+                    if has_keys() {
+                        Message::show("Delete", &question, &[Softkey::new(SK_YES, "Yes"), Softkey::new(SK_NO, "No")]);
+                    } else {
+                        self.from_list = self.screen == Screen::List;
+                        self.touch = touch::Touched::default();
+                        self.touch.confirm = Some(nav::Confirm::show("Delete", &question, "Delete", Look::Destructive));
+                    }
                     self.current = Some(m);
                     self.screen = Screen::ConfirmDelete;
                 }

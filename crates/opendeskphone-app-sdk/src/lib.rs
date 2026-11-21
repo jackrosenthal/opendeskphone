@@ -40,6 +40,7 @@ pub mod bindings {
     });
 }
 
+pub mod controls;
 pub mod manifest;
 pub mod nav;
 pub mod xml;
@@ -169,7 +170,9 @@ pub fn has_keys() -> bool {
 /// is between them, and has the bar's text color unless it is given one.
 /// An app that lays out its own title line keeps to the same: nothing of
 /// its own under the two buttons, and no background on what it puts in
-/// the bar.
+/// the bar.  The title has the focus there, so that a list made after it
+/// shows no highlighted row until a row is touched: see
+/// [`nav::focus_list`].
 pub fn screen(title: &str) -> Rect {
     ui::clear(ROOT);
     ui::claim_keys(ROOT, &[Key::Cancel]);
@@ -186,6 +189,9 @@ pub fn screen(title: &str) -> Rect {
     );
     ui::set_font(t, Font::Title);
     ui::set_text(t, title);
+    if !m.keys {
+        ui::set_focus(t);
+    }
     Rect::new(
         0,
         m.title_height as i16,

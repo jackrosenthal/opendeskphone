@@ -489,6 +489,18 @@ fn player() -> Option<(String, String)> {
     Some((user.id, name))
 }
 
+/// The largest board offered on the touchscreen: a cell of a 10x10 board
+/// is about 80 pixels across the D80's window, as wide as a fingertip; one
+/// of 14x14 is 57, which a finger misses.
+const TOUCH_SIDE: usize = 10;
+
+/// The sizes of board offered: on the touchscreen, those whose cells a
+/// finger can tell apart.
+fn sizes() -> impl Iterator<Item = usize> {
+    let touch = !has_keys();
+    SIZES.into_iter().filter(move |side| !touch || *side <= TOUCH_SIDE)
+}
+
 fn size_name(side: usize) -> String {
     format!("{side}x{side}")
 }
@@ -641,7 +653,7 @@ impl LightUp {
         let list = ui::create(WidgetKind::TextList, ROOT, area);
         let mut items = Vec::new();
         let mut selected = 0;
-        for side in SIZES {
+        for side in sizes() {
             for d in Difficulty::ALL {
                 if (side, d) == self.wanted {
                     selected = items.len() as u32;
@@ -702,10 +714,15 @@ impl LightUp {
     fn show_generating(&mut self) {
         self.leave_screen();
         self.screen = Screen::Generating;
-        ui::clear(ROOT);
-        ui::claim_keys(ROOT, &[Key::Cancel]);
         let name = format!("{} {}", size_name(self.wanted.0), self.wanted.1.name());
-        centered(content_rect(), &[&name, "Generating\u{2026}"]);
+        if has_keys() {
+            ui::clear(ROOT);
+            ui::claim_keys(ROOT, &[Key::Cancel]);
+            centered(content_rect(), &[&name, "Generating\u{2026}"]);
+        } else {
+            // Touch: the kind is the title.
+            opendeskphone_app_sdk::nav::note(screen(&name), "Generating\u{2026}");
+        }
         set_keys(&[Softkey::new(SK_NEW, "New"), Softkey::new(SK_EXIT, "Exit")]);
         if let Some(making) = &mut self.making {
             making.timer = timers::set(PAUSE_MS, false).ok();
@@ -763,9 +780,14 @@ impl LightUp {
     fn show_failed(&mut self) {
         self.leave_screen();
         self.screen = Screen::Failed;
-        ui::clear(ROOT);
-        ui::claim_keys(ROOT, &[Key::Cancel]);
-        centered(content_rect(), &["No puzzle was found.", "Try again."]);
+        if has_keys() {
+            ui::clear(ROOT);
+            ui::claim_keys(ROOT, &[Key::Cancel]);
+            centered(content_rect(), &["No puzzle was found.", "Try again."]);
+        } else {
+            let name = format!("{} {}", size_name(self.wanted.0), self.wanted.1.name());
+            opendeskphone_app_sdk::nav::note(screen(&name), "No puzzle was found.  Try again, or choose another.");
+        }
         set_keys(&[
             Softkey::new(SK_RETRY, "Retry"),
             Softkey::new(SK_NEW, "New"),
@@ -855,12 +877,13 @@ impl LightUp {
     }
 
     /// The playing screen of a phone without keys, in its upright window:
-    /// a line with the time (beside the back button, which the phone
-    /// draws), under it the board, as wide as the window allows, and
+    /// the title (the puzzle's size and difficulty) with the time at the
+    /// right of it, under it the board, as wide as the window allows, and
     /// under that what a touch does; "Solved!" and the time take that
     /// line's place.  The cells are touched ([`LightUp::touched`]): there
     /// is no cursor, and no picture of keys.
     fn show_play_touch(&mut self) {
+        screen(&format!("{} {}", size_name(self.side), self.difficulty.name()));
         let Some(game) = &self.game else { return };
         let m = ui::get_metrics();
         let cells = self.side.max(1) as u16;
@@ -884,14 +907,10 @@ impl LightUp {
         ui::claim_touch(cursor, true);
 
         let shown = clock(self.elapsed);
-        let time = Rect::new(
-            m.back_width as i16,
-            0,
-            m.width.saturating_sub(2 * m.back_width),
-            m.title_height,
-        );
-        let clock = text(time, Font::Bold, Align::Center, &shown);
+        // (Clear of the title bar's home button, at the right.)
         let gap = m.line_height / 2;
+        let time = Rect::new(m.back_width as i16, 0, m.width.saturating_sub(2 * m.back_width), m.title_height);
+        let clock = text(time, Font::Bold, Align::Right, &shown);
         let y = board_y + (side + gap) as i16;
         let line = |n: u16| {
             Rect::new(
@@ -921,14 +940,14 @@ impl LightUp {
             status: text(line(0), Font::Bold, Align::Center, ""),
             time: text(line(1), Font::Normal, Align::Center, ""),
         });
-        // More than four: the phone shows three and "More".  Undo and
-        // "Auto" (what the key 8 does) are on the first page.
+        // Four, so that there is no "More" page: Undo, "Auto" (what the
+        // key 8 does), New, and Help.  The tables of the best times are
+        // a softkey of "New" and of the solved puzzle.
         set_keys(&[
             Softkey::new(SK_UNDO, "Undo"),
             Softkey::new(SK_AUTO, "Auto"),
             Softkey::new(SK_NEW, "New"),
             Softkey::new(SK_HELP, "Help"),
-            Softkey::new(SK_SCORES, "Scores"),
         ]);
         self.update();
         self.run_clock(true);

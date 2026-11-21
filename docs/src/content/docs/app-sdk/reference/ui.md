@@ -73,6 +73,8 @@ Two habits of a screen made for keys don't suit the touchscreen:
 
 [`nav::softkeys`](helpers.md#navsoftkeys) leaves such softkeys out on the touchscreen.
 
+The widgets have no buttons.  The SDK's [controls](helpers.md#controls) are buttons and switches drawn on canvases that take touches: for a screen's main action, one button across the bottom of the window; for a setting that is on or off, a switch; for one of a few choices, a row of buttons, one of them on.  A list there has no highlighted row until the user touches one: give a list the focus with [`nav::focus_list`](helpers.md#navfocus_list), unless its highlighted row is the value that is chosen.
+
 ## Softkeys
 
 [`set_softkeys`](#set_softkeys) sets softkeys on a widget or the window.  The softkey bar shows the softkeys of the focused widget, or else of the nearest ancestor that has any, or else of the window.

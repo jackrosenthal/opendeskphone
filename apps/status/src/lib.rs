@@ -109,10 +109,19 @@ impl Status {
     fn show_list(&mut self) {
         let r = screen("Status");
         let list = ui::create(WidgetKind::TextList, ROOT, r);
+        // The status that is set: "*" at the right; touch: a check mark
+        // at the left, and no highlighted row.
         let items: Vec<ListItem> = self
             .options
             .iter()
-            .map(|o| ListItem::with_detail(o.label(), if o.active { "*" } else { "" }))
+            .map(|o| match has_keys() {
+                true => ListItem::with_detail(o.label(), if o.active { "*" } else { "" }),
+                false => ListItem {
+                    text: o.label(),
+                    detail: String::new(),
+                    icon: o.active.then_some(Image::Icon(Icon::Ok)),
+                },
+            })
             .collect();
         ui::set_items(list, &items);
         if let Some(i) = self.options.iter().position(|o| o.active) {
@@ -123,7 +132,7 @@ impl Status {
             Softkey::new(SK_MESSAGE, "Message"),
             Softkey::new(SK_EXIT, "Exit"),
         ]);
-        ui::set_focus(list);
+        opendeskphone_app_sdk::nav::focus_list(list);
         self.screen = Screen::List { list };
     }
 

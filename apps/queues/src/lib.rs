@@ -1,12 +1,15 @@
 //! Queues: the user's call queues with their login state; log in and out,
 //! pause and resume, and view a queue's numbers for today.
 //!
-//! On the touchscreen, which has no keys, touching a queue shows its
-//! numbers, and the softkeys that log in and out and pause and resume are
-//! there, for that queue.  The phone's back button goes back to the list.
+//! On the touchscreen, which has no keys, touching a queue opens its
+//! screen: where the user stands in it, in a sentence, and today's
+//! figures, a line each, with the buttons that log in and out, pause and
+//! resume, and refresh across the bottom.  The phone's back button goes
+//! back to the list.
 
 use opendeskphone_app_sdk::prelude::*;
-use opendeskphone_app_sdk::{InputMode, QueueMembership, QueueStatus, nav};
+use opendeskphone_app_sdk::controls::{self, Button, GAP, Look};
+use opendeskphone_app_sdk::{Align, InputMode, QueueMembership, QueueStatus, nav};
 
 const SK_LOGIN: u32 = 1;
 const SK_LOGOUT: u32 = 2;
@@ -55,6 +58,17 @@ impl Queue {
     fn member(&self) -> bool {
         matches!(self.status, QueueMembership::LoggedIn | QueueMembership::Permanent)
     }
+    /// Touch: where the user stands in the queue, in a sentence.
+    fn sentence(&self) -> &str {
+        use QueueMembership::*;
+        match (self.status, self.paused) {
+            (LoggedIn | Permanent, true) => "You are paused in this queue.",
+            (LoggedIn, false) => "You are logged in to this queue.",
+            (Permanent, false) => "You are always in this queue.",
+            (Manager, _) => "You manage this queue.",
+            (LoggedOut, _) => "You are logged out of this queue.",
+        }
+    }
 }
 
 #[derive(Default)]
@@ -79,6 +93,9 @@ struct Queues {
     stats_req: Option<u32>,
     timer: Option<u32>,
     shown: bool,
+    /// Touch: the buttons of a queue's screen, each with the softkey whose
+    /// work it does.
+    buttons: Vec<(Button, u32)>,
 }
 
 impl Queues {
@@ -125,22 +142,26 @@ impl Queues {
         keys
     }
 
-    /// The softkeys of a queue's numbers, loaded or not.
+    /// The softkeys of a queue's numbers, loaded or not.  (Touch: the
+    /// queue's screen has buttons instead.)
     fn detail_keys(&self, loaded: bool) -> Vec<Softkey> {
-        let mut keys = if has_keys() { Vec::new() } else { self.state_keys() };
+        let mut keys = Vec::new();
         if loaded {
             keys.push(Softkey::new(SK_REFRESH, "Refresh"));
         }
-        if has_keys() {
-            keys.push(Softkey::new(SK_BACK, "Back"));
-        }
+        keys.push(Softkey::new(SK_BACK, "Back"));
         keys
     }
 
     fn draw_list(&mut self) {
         let r = screen("Queues");
         if self.queues.is_empty() {
-            opendeskphone_app_sdk::nav::note(r, "You are not a member of any queue.");
+            let text = if has_keys() {
+                "You are not a member of any queue."
+            } else {
+                "You are not a member of any queue.  Your administrator can add you to one."
+            };
+            opendeskphone_app_sdk::nav::note(r, text);
             ui::set_softkeys(ROOT, &keys(&[Softkey::new(SK_EXIT, "Exit")]));
             self.screen = Screen::Empty;
             return;
@@ -155,7 +176,7 @@ impl Queues {
         ui::set_items(list, &items);
         ui::set_selected(list, self.selected as u32);
         ui::set_softkeys(ROOT, &self.softkeys());
-        ui::set_focus(list);
+        nav::focus_list(list);
         self.screen = Screen::List;
     }
 
@@ -174,15 +195,87 @@ impl Queues {
         let Some(q) = self.current().cloned() else {
             return;
         };
-        Message::show(&q.name, "Loading...", &self.detail_keys(false));
+        if has_keys() {
+            Message::show(&q.name, "Loading...", &self.detail_keys(false));
+        } else {
+            self.draw_details_touch(None);
+        }
         self.screen = Screen::Details;
         self.stats_req = Some(pbx::queue_status(&q.id));
+    }
+
+    /// Touch: a queue's screen.  Under the title, where the user stands
+    /// in the queue, and today's figures, a line each; across the bottom,
+    /// the buttons that change where the user stands, and "Refresh".
+    fn draw_details_touch(&mut self, s: Option<&QueueStatus>) {
+        let Some(q) = self.current().cloned() else {
+            return;
+        };
+        self.buttons.clear();
+        let m = ui::get_metrics();
+        let area = screen(&q.name);
+        let (_, bottom) = controls::split_bottom(area);
+        let line = m.line_height * 3 / 2;
+        let (x, width) = (GAP as i16, m.width - 2 * GAP);
+        let mut y = area.y + GAP as i16;
+        let text = |at: Rect, align: Align, words: &str| {
+            let w = ui::create(WidgetKind::Text, ROOT, at);
+            ui::set_align(w, align);
+            ui::set_text(w, words);
+        };
+        text(Rect::new(x, y, width, line), Align::Left, q.sentence());
+        y += (line + GAP) as i16;
+        match s {
+            None => text(Rect::new(x, y, width, line), Align::Left, "Loading\u{2026}"),
+            Some(s) => {
+                let figures = [
+                    ("Callers waiting", s.callers_waiting.to_string()),
+                    ("Members logged in", format!("{} of {}", s.members_logged_in, s.members)),
+                    ("Members on calls", s.members_on_call.to_string()),
+                    ("Calls today", s.calls.to_string()),
+                    ("Completed", s.completed_calls.to_string()),
+                    ("Abandoned", s.abandoned_calls.to_string()),
+                ];
+                for (label, value) in figures {
+                    text(Rect::new(x, y, width, line), Align::Left, label);
+                    text(Rect::new(x, y, width, line), Align::Right, &value);
+                    y += line as i16;
+                }
+            }
+        }
+        let mut acts = Vec::new();
+        if s.is_some() {
+            acts.push(("Refresh", Look::Secondary, SK_REFRESH));
+        }
+        match (q.status, q.paused) {
+            (QueueMembership::LoggedOut, _) => acts.push(("Log in", Look::Primary, SK_LOGIN)),
+            (QueueMembership::LoggedIn | QueueMembership::Permanent, true) => {
+                acts.push(("Resume", Look::Primary, SK_RESUME))
+            }
+            (QueueMembership::LoggedIn | QueueMembership::Permanent, false) => {
+                acts.push(("Pause", Look::Secondary, SK_PAUSE))
+            }
+            _ => {}
+        }
+        if q.status == QueueMembership::LoggedIn {
+            acts.push(("Log out", Look::Secondary, SK_LOGOUT));
+        }
+        let places = controls::columns(bottom, acts.len() as u16);
+        for (place, (label, look, id)) in places.into_iter().zip(acts) {
+            self.buttons.push((Button::new(ROOT, place, label, look), id));
+        }
+        ui::set_softkeys(ROOT, &[]);
     }
 
     fn draw_details(&mut self, s: &QueueStatus) {
         let Some(q) = self.current().cloned() else {
             return;
         };
+        if !has_keys() {
+            self.draw_details_touch(Some(s));
+            self.screen = Screen::Details;
+            return;
+        }
         let text = format!(
             "Members: {} ({} logged in)\nOn calls: {}\nWaiting: {}\nCalls today: {}\nCompleted: {}\nAbandoned: {}",
             s.members,
@@ -299,11 +392,11 @@ impl App for Queues {
                 }
             }
             Event::Pbx((id, outcome)) => self.on_pbx(id, outcome),
-            Event::Widget((_, WidgetEvent::Highlighted(i))) => {
+            Event::Widget((_, WidgetEvent::Highlighted(i))) if matches!(self.screen, Screen::List) => {
                 self.selected = i as usize;
                 ui::set_softkeys(ROOT, &self.softkeys());
             }
-            Event::Widget((_, WidgetEvent::Activated(i))) => {
+            Event::Widget((_, WidgetEvent::Activated(i))) if matches!(self.screen, Screen::List) => {
                 self.selected = i as usize;
                 self.show_details();
             }
@@ -322,6 +415,19 @@ impl App for Queues {
                 if let Screen::Reason(form) = &self.screen {
                     let reason = form.value(0);
                     self.action(Action::Pause(reason));
+                }
+            }
+            // Touch: a button of a queue's screen does what its softkey
+            // does.
+            Event::Touch((w, t)) => {
+                let mut acted = None;
+                for (b, id) in &mut self.buttons {
+                    if b.touched(w, &t) {
+                        acted = Some(*id);
+                    }
+                }
+                if let Some(id) = acted {
+                    self.handle(Event::Softkey(id));
                 }
             }
             Event::Softkey(SK_DETAILS | SK_REFRESH) => self.show_details(),

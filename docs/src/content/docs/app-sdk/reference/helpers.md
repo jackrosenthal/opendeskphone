@@ -20,7 +20,9 @@ Helpers call the interfaces on the other pages, and give the app the capabilitie
 pub fn screen(title: &str) -> Rect
 ```
 
-Clears the window with `ui::clear(ROOT)`, which also removes the window's softkeys, key claims, and touch claim; claims `cancel` for the window; creates a `Text` in `Font::Title`, `title_height` tall, across the top; and returns the rectangle below the title.  On the touchscreen, the title is in the phone's [title bar](ui.md#touch), between the back button and the home button (each `back_width` wide).
+Clears the window with `ui::clear(ROOT)`, which also removes the window's softkeys, key claims, and touch claim; claims `cancel` for the window; creates a `Text` in `Font::Title`, `title_height` tall, across the top; and returns the rectangle below the title.  On the touchscreen, the title is in the phone's [title bar](ui.md#touch), between the back button and the home button (each `back_width` wide), and the title has the focus, so that a list made after it has no highlighted row until a row is touched (see [`nav::focus_list`](#navfocus_list)).
+
+Make every screen's title with `screen`: the titles of all apps then look alike, and look like the phone's own.
 
 `cancel` then arrives as `Event::Key(Key::Cancel)` instead of taking the app off the screen.  The app should call `runtime::background` or go back one screen.  On the touchscreen, the back button is `cancel`.
 
@@ -63,6 +65,14 @@ ui::set_softkeys(ROOT, &nav::softkeys(
 ));
 ```
 
+### `nav::focus_list`
+
+```rust
+pub fn focus_list(list: Widget)
+```
+
+Gives a list the focus on a phone with keys, where the arrows move the list's highlight.  On the touchscreen, does nothing: a list there has no highlighted row until the user touches one (a highlight at rest would look like a choice the user made).  Use `ui::set_focus` instead for a list whose highlighted row is the value that is chosen, such as the current setting.
+
 ### `Message`
 
 ```rust
@@ -83,6 +93,23 @@ pub fn note(area: Rect, text: &str) -> Widget
 
 Creates a wrapped `Text` that fills `area` (the rectangle that `screen` returned), inset as the text of a `Message`: for a screen that shows a sentence in place of a list.  The insets of `note`, `Message`, and `Form` are larger on the touchscreen.
 
+A text is in the middle of its widget's height, so on a phone with keys the sentence is in the middle of `area`.  On the touchscreen the sentence is centered, and its middle is a quarter of the way down `area`: in the upper part of the tall screen, which is read first.  Say in the sentence what is missing and what to do about it: "There are no alarms.  Touch New alarm to set one."
+
+### `nav::Confirm`
+
+```rust
+pub struct Confirm { /* ... */ }
+
+impl Confirm {
+    pub fn show(title: &str, question: &str, action: &str, look: Look) -> Confirm;
+    pub fn touched(&mut self, w: Widget, t: &Touch) -> Option<bool>;
+}
+```
+
+Touch: a question before an action, on a screen of its own: `screen(title)`, the question as a [`note`](#navnote), and across the bottom two [buttons](#controls), "Cancel" at the left and the action at the right.  Name the action by what it does ("Delete", "Log out"), and give it `Look::Destructive` if it deletes something.  The back button cancels too.  Hand every `Event::Touch` to `touched`: it returns `Some(true)` when the action was touched, and `Some(false)` when "Cancel" was.
+
+On a phone with keys, ask with a `Message` and softkeys instead.
+
 ### `Form`
 
 ```rust
@@ -100,6 +127,75 @@ A screen with a title and a labeled input for each entry of `fields`: label, inp
 - `show` sets `keys` as the window's softkeys and focuses the first input.
 - `value(index)` returns an input's text, or `""` for an `index` out of range.
 - `focus_next(current)` focuses the input after `current`, and returns `false` if `current` is the last input or not in the form.  On `WidgetEvent::Submitted`, call `focus_next`, and submit the form on `false`.
+
+## Controls
+
+The `controls` module has the controls of the touchscreen that the widgets don't have: buttons and switches.  Each is a canvas (capability `canvas`) that takes touches, drawn in the skin's colors in the shape of the phone's own buttons.  They are for a phone without keys, where what an app does is touched on its screen; a phone with keys has softkeys for the same things.
+
+```rust
+pub enum Look { Primary, Secondary, Destructive, Call }
+
+pub struct Button { pub widget: Widget, /* ... */ }
+
+impl Button {
+    pub fn new(parent: Widget, bounds: Rect, label: &str, look: Look) -> Button;
+    pub fn with_icon(parent: Widget, bounds: Rect, icon: Icon, look: Look) -> Button;
+    pub fn with_font(self, font: Font) -> Button;
+    pub fn set_on(&mut self, on: bool);
+    pub fn set_enabled(&mut self, enabled: bool);
+    pub fn set_visible(&self, visible: bool);
+    pub fn place(&mut self, bounds: Rect);
+    pub fn touched(&mut self, w: Widget, t: &Touch) -> bool;
+}
+
+pub struct Switch { pub widget: Widget, /* ... */ }
+
+impl Switch {
+    pub fn new(parent: Widget, bounds: Rect, on: bool) -> Switch;
+    pub fn in_row(parent: Widget, bounds: Rect, on: bool) -> Switch;
+    pub fn is_on(&self) -> bool;
+    pub fn set(&mut self, on: bool);
+    pub fn touched(&mut self, w: Widget, t: &Touch) -> bool;
+}
+
+pub const GAP: u16;
+pub fn height() -> u16;
+pub fn split_bottom(area: Rect) -> (Rect, Rect);
+pub fn columns(row: Rect, n: u16) -> Vec<Rect>;
+pub fn disc(x: i16, y: i16, d: u16, color: Color) -> canvas::Op;
+```
+
+A button's `Look` says what the button is for:
+
+| Look | For | Drawn |
+| --- | --- | --- |
+| `Primary` | The screen's main action ("Save", "Set time"). | Filled in the selection colors. |
+| `Secondary` | Any other action. | Outlined, as the softkey buttons are. |
+| `Destructive` | An action that deletes or erases ("Delete alarm"). | Filled red. |
+| `Call` | An action that places a call ("Call back"). | Filled green. |
+
+Hand every `Event::Touch` to the controls' `touched`: a control looks pressed while a finger is on it, from `Touch::Down`, and `touched` returns `true` when the finger is lifted where it came down (`Touch::Tap`) on that control.  A finger that slides off touches nothing.  A `Switch` turns itself over when touched, and `is_on` then says how it is.
+
+```rust
+let (_, bottom) = controls::split_bottom(area);
+self.save = Some(Button::new(ROOT, bottom, "Save", Look::Primary));
+
+// In handle:
+Event::Touch((w, t)) => {
+    if self.save.as_mut().is_some_and(|b| b.touched(w, &t)) {
+        self.save();
+    }
+}
+```
+
+- `with_icon` shows one of the phone's icons in place of a label, in the text's color: for a `Secondary` button.  `with_font` puts the label in another font (a number pad's digits in `Font::Large`); otherwise the label is in the font of the phone's buttons, or a smaller one if it does not fit.
+- `set_on` draws a button as chosen, in the selection colors: for one of a set of choices, such as a day of the week or one of AM and PM.  A button that is not enabled (`set_enabled(false)`) is drawn dim and is never touched.
+- `place` moves a button, as `ui::set_bounds` moves a widget.
+- A `Switch` is drawn at the right of its bounds, which are what a finger may touch.  `in_row` makes one for the end of a row of a list: the switch has the hairline under it that the list draws under its rows.
+- `height` is a button's height: a list's row, enough for a finger.  `split_bottom` returns `area` without its bottom, and the place of a full-width button across the bottom, `GAP` in from the edges.  `columns` divides a row into places for buttons side by side.
+- `disc` is a filled circle, for a drawing of the app's own.
+
+The screen's main action is one button across the bottom of the window (`split_bottom`); keep an action that deletes apart from it.
 
 ## Logging and storage
 
