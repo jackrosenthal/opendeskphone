@@ -1429,6 +1429,12 @@ impl Ui {
                     Some(s) => {
                         self.activity();
                         self.with_cx(|nav, cx| {
+                            // The state may have changed with its message
+                            // still behind this command (the phone has
+                            // just come up): the screens that go with the
+                            // state first, or they would take the place
+                            // of this one when the message comes.
+                            nav.sync(cx);
                             nav.apply(cx, Nav::Home);
                             if let Some(s) = s {
                                 nav.push(cx, s);
@@ -1756,7 +1762,12 @@ impl Ui {
                     let _ = tx.send(Msg::Wake);
                 })));
                 self.activity();
-                self.with_cx(|nav, cx| nav.open_app(cx, view));
+                // (After the screens that go with the state, as for
+                // `ShowScreen`.)
+                self.with_cx(|nav, cx| {
+                    nav.sync(cx);
+                    nav.open_app(cx, view)
+                });
             }
             Msg::IdleView(view) => {
                 view.set_theme(self.th);

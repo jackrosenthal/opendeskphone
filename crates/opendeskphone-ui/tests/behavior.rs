@@ -1413,3 +1413,32 @@ fn leaving_the_ringing_alarm_is_possible() {
     ring_alarm(&mut r, Some(2));
     assert_eq!(r.screen(), "alarm");
 }
+
+/// A screen asked for as the phone comes up is not lost to the idle
+/// screen: the command may be taken before the UI has heard of the state
+/// it was sent in.
+#[test]
+fn a_screen_shown_as_the_state_changes_stays() {
+    for model in [Model::D60, Model::D80] {
+        let mut hal = Hal::sim(model);
+        let store = Store::new(model);
+        let mut ui = Ui::from_hal(&mut hal, store.clone(), UiConfig { backlight_timeout_secs: 0, ..Default::default() });
+        ui.pump();
+        assert_ne!(ui.screen_name(), "idle");
+        // The phone is running, and the menu is asked for, before the UI
+        // has its next turn.
+        store.update::<System, _>(|s| s.phase = Phase::Running);
+        let shown = store.send(Command::ShowScreen { name: "menu".into() });
+        ui.pump();
+        assert_eq!(shown.wait(), Ok(Reply::Done));
+        assert_eq!(ui.screen_name(), "menu", "{model:?}");
+        // The same for an app's view.
+        store.update::<System, _>(|s| s.phase = Phase::NetworkWait);
+        ui.pump();
+        store.update::<System, _>(|s| s.phase = Phase::Running);
+        let (view, _events) = opendeskphone_ui::appview::AppView::new("demo", model);
+        ui.handle().open_app(view);
+        ui.pump();
+        assert_eq!(ui.screen_name(), "app:demo", "{model:?}");
+    }
+}
