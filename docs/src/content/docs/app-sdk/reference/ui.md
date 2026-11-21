@@ -47,12 +47,20 @@ The D80 has a touchscreen and no keys ([`Skin::Touch`](types.md#metrics-and-skin
 | A drag on a `TextList` | Scrolls the list, if the rows don't all fit. |
 | A drag on a `Scroll`, or on anything in one | Scrolls the `Scroll`. |
 | A tap on an `Input` | Focuses the input, and the phone's on-screen keyboard types into the input. |
-| A tap on a softkey button | As the key below the display on other models: [`Event::Softkey`](app-events.md#softkey), "More", or "Delete". |
+| A tap on the keyboard's action key | Focuses the window's next `Input` (`WidgetEvent::Focused`), where the key says "Next".  From the last `Input`, where it says "Done", submits the input (`WidgetEvent::Submitted`) and puts the keyboard away. |
+| A tap on a softkey button | [`Event::Softkey`](app-events.md#softkey), or, for "More", a menu of the softkeys that have no button. |
 | A tap on the back button | The key `cancel`: `Event::Key(Key::Cancel)` if claimed, and otherwise the app leaves the screen. |
+| A tap on the home button | The app leaves the screen for the home screen, as with the first line key on other models. |
 
 A list row is `row_height` tall, which is tall enough for a finger.  A list doesn't scroll to keep the selection visible while the user scrolls by hand; `set_selected` scrolls the selected row into view.  A `Scroll` brings a newly focused descendant into view once.
 
-The phone draws the back button over the top-left corner of the window, `back_width` wide and `title_height` tall, also in a [full-screen](#set_full_screen) window.  Keep that corner free: [`screen`](helpers.md#screen) starts the title to the right of the button.  The button is an arrow in the foreground color, on the window's own background.  In a full-screen window, where the app draws what it likes, the arrow is on a round button of its own, so that it shows on any picture.
+The top `title_height` pixels of the window are the title bar, the same on every screen of the phone.  The phone paints the bar in the title's colors, under the app's widgets, and draws two buttons over its ends, each `back_width` wide: the back button at the left and the home button at the right.  Put the title between them, as [`screen`](helpers.md#screen) does: a `Text` from `back_width` to `width - back_width`, left-aligned, in `Font::Title`.  A widget of the window's own that lies wholly within the bar is drawn in the title's text color unless it sets a color.  Give nothing in the bar a background, and put nothing under the two buttons.
+
+A [full-screen](#set_full_screen) window, where the app draws what it likes, has no title bar and no home button.  Its back button is an arrow on a round button of its own over the top-left corner, `back_width` wide and `title_height` tall, so that it shows on any picture.  Keep that corner free.
+
+While a finger is on a softkey button, a button of the title bar, a key of the keyboard, or a row of a `TextList`, the phone shows it as pressed.  A widget that takes touches shows the finger itself, from `Touch::Down`.
+
+A form submits from its last input: on `WidgetEvent::Submitted`, do what the form is for (as [`Form::focus_next`](helpers.md#form) returning `false` tells), so that the user needs no softkey after the keyboard.
 
 To handle touches itself, a widget takes touches with [`claim_touch`](#claim_touch), and the touches arrive as [`Event::Touch`](app-events.md#touch).  A touch goes to the topmost widget under the finger that takes touches or is a `TextList`, an `Input`, or a `Scroll`.  Widgets of other kinds that don't take touches let a touch through to what is under them.  The window is under every widget, and gets a touch only if the window takes touches and no widget does.
 
@@ -73,9 +81,9 @@ The widgets have no buttons.  The SDK's [controls](helpers.md#controls) are butt
 
 Up to four softkeys fill the four positions in order.  With more than four, the bar shows three at a time and, in the fourth position, a "More" key that pages through the softkeys, wrapping around.
 
-On the touchscreen, the softkeys are buttons in the same four positions, in a row below the window, and work the same way, including "More" and "Delete".  A position without a softkey has no button.
+On the touchscreen, the softkeys are buttons in a row below the window, side by side: the buttons share the width of the row, and one softkey alone is as wide as the window.  With more than four softkeys, the row has the first three and "More", which opens a menu of the others over the window; nothing pages.
 
-While an `Input` has the focus and the third position is empty, the phone shows "Delete" there.  "Delete" deletes the character before the cursor and sends `WidgetEvent::Changed`.
+While an `Input` has the focus and the third position is empty, a phone with keys shows "Delete" there.  "Delete" deletes the character before the cursor and sends `WidgetEvent::Changed`.  The touchscreen has no "Delete": its keyboard has a backspace key.
 
 ## Idle window
 

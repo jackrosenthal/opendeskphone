@@ -53,6 +53,11 @@ pub(crate) fn call_log() -> Box<dyn Screen> {
     Box::new(CallLogScreen { filter: None, st: ListState::default(), seen: false })
 }
 
+/// The call log, opened on its missed calls.
+pub(crate) fn call_log_missed() -> Box<dyn Screen> {
+    Box::new(CallLogScreen { filter: Some(CallLogKind::Missed), st: ListState::default(), seen: false })
+}
+
 /// The filters, in the order Left and Right step through them.
 const LOG_FILTERS: [Option<CallLogKind>; 4] =
     [None, Some(CallLogKind::Missed), Some(CallLogKind::Received), Some(CallLogKind::Placed)];

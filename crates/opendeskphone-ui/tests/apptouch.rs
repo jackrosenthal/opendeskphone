@@ -178,7 +178,7 @@ fn a_drag_scrolls_a_list_and_a_tap_then_finds_the_row_under_the_finger() {
 }
 
 #[test]
-fn the_softkeys_are_buttons_and_more_than_four_page() {
+fn the_softkeys_are_buttons_and_more_opens_a_menu() {
     let mut r = Rig::new();
     r.list(2);
     r.view.set_softkeys(None, (1..=6).map(|i| Softkey::new(i, format!("Key {i}"))).collect());
@@ -192,19 +192,43 @@ fn the_softkeys_are_buttons_and_more_than_four_page() {
     }
     r.tap_hit(Hit::Key(Key::Soft(2)));
     assert_eq!(r.events(), [AppEvent::Softkey { id: 2 }]);
-    // The fourth is "More": the next three, and around again.
+    // The fourth is "More": a menu of the three that have no button, over
+    // the view, each large enough to touch.  Nothing pages.
+    let item = |i: u32| Hit::Custom(0x100 + i);
+    assert_eq!(r.ui.canvas().hit_rect(item(0)), None);
     r.tap_hit(Hit::Key(Key::Soft(4)));
     assert_eq!(r.events(), []);
-    r.tap_hit(Hit::Key(Key::Soft(1)));
-    r.tap_hit(Hit::Key(Key::Soft(3)));
-    assert_eq!(r.events(), [AppEvent::Softkey { id: 4 }, AppEvent::Softkey { id: 6 }]);
-    r.tap_hit(Hit::Key(Key::Soft(4)));
+    for i in 0..3 {
+        let b = r.region(item(i));
+        assert!(b.w >= th.touch_min && b.h >= th.touch_min, "item {i}: {b:?}");
+        assert!(b.bottom() <= i32::from(r.m.height), "item {i} is over the view");
+    }
+    assert_eq!(r.ui.canvas().hit_rect(item(3)), None);
+    save_picture(&r, "app-more.png");
+    // An item does what its softkey does, and the menu is gone.
+    r.tap_hit(item(1));
+    assert_eq!(r.events(), [AppEvent::Softkey { id: 5 }]);
+    assert_eq!(r.ui.canvas().hit_rect(item(0)), None);
+    // The buttons are the first three, as before.
     r.tap_hit(Hit::Key(Key::Soft(1)));
     assert_eq!(r.events(), [AppEvent::Softkey { id: 1 }]);
-    // A position without a softkey has no button.
+    // A touch beside the menu puts it away, and is not one on the view;
+    // so does "More" again.
+    r.tap_hit(Hit::Key(Key::Soft(4)));
+    assert!(r.ui.canvas().hit_rect(item(0)).is_some());
+    r.tap(100, 300);
+    assert_eq!(r.events(), []);
+    assert_eq!(r.ui.canvas().hit_rect(item(0)), None);
+    r.tap_hit(Hit::Key(Key::Soft(4)));
+    r.tap_hit(Hit::Key(Key::Soft(4)));
+    assert_eq!(r.ui.canvas().hit_rect(item(0)), None);
+    // The buttons are side by side with no place left empty: one alone is
+    // as wide as the screen, and a position without a softkey has none.
     r.view.set_softkeys(None, vec![Softkey::new(9, "Only")]);
     r.ui.pump();
     assert_eq!(r.ui.canvas().hit_rect(Hit::Key(Key::Soft(2))), None);
+    let only = r.region(Hit::Key(Key::Soft(1)));
+    assert_eq!((only.x, only.right()), (th.soft_x0, th.width - th.soft_x0));
     r.tap_hit(Hit::Key(Key::Soft(1)));
     assert_eq!(r.events(), [AppEvent::Softkey { id: 9 }]);
 }
@@ -378,12 +402,11 @@ fn a_focused_input_has_the_on_screen_keyboard() {
     r.drag((q.x + 10, q.y + 10), (q.x + 300, q.y + 10));
     assert_eq!(r.events(), []);
 
-    // The done key submits the input.  The app moves the focus to the
-    // PIN: the number pad, with digits only.
+    // The action key goes on to the next input, the PIN (nothing is
+    // submitted yet): the number pad, with digits only.
     r.tap_hit(Cap::Done.hit());
-    assert_eq!(r.events(), [AppEvent::InputSubmitted { widget: name, value: "Ada".into() }]);
-    r.view.focus(Some(pin));
-    r.ui.pump();
+    assert_eq!(r.events(), [AppEvent::Focused { widget: pin }]);
+    assert_eq!(r.view.focused(), Some(pin));
     assert!(r.ui.canvas().hit_rect(Cap::Char('a').hit()).is_none());
     assert!(r.ui.canvas().hit_rect(Cap::Char('*').hit()).is_none());
     for ch in "1234".chars() {
@@ -415,6 +438,9 @@ fn the_keyboard_is_put_away_and_brought_back() {
     assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_none());
     assert_eq!(r.view.focused(), Some(name));
     assert!(r.ui.canvas().hit_rect(Hit::Key(Key::Soft(2))).is_some());
+    // (The softkeys are the app's two: the input adds no "Delete", which
+    // the keyboard's backspace key is.)
+    assert!(r.ui.canvas().hit_rect(Hit::Key(Key::Soft(3))).is_none());
     // Then it is the way back again.
     assert_eq!(r.region(Hit::Key(Key::Cancel)), back);
     // A touch on the input brings the keyboard back.
@@ -444,10 +470,12 @@ fn an_input_under_the_keyboard_is_brought_above_it() {
     let th = Theme::for_model(Model::D80);
     let m = r.m;
     let (_name, pin) = form(&r);
-    // An input at the foot of the view.
+    // An input at the foot of the view, and one in its middle.
+    let mid = r.view.create(WidgetKind::Input, None, Rect::new(16, 760, m.width - 32, m.row_height));
     let low = r.view.create(WidgetKind::Input, None, Rect::new(16, 1040, m.width - 32, m.row_height));
     r.view.set_text(low, "low");
     r.ui.pump();
+    let bar_pixel = r.ui.canvas().pixel(400, 8);
     let top = 1280 - Keyboard::height(th);
     // Touched: it has the focus, and the view is drawn farther up, so
     // that the input is above the keyboard.
@@ -461,6 +489,12 @@ fn an_input_under_the_keyboard_is_brought_above_it() {
     assert!(view_y + 1040 + i32::from(m.row_height) <= top, "{shown:?}");
     // Nothing shows between the view and the keyboard.
     assert!(shown.bottom() >= top);
+    // The title bar stays where it is, over the view: its ground, its
+    // buttons, and nothing of the view to touch.
+    assert_eq!(r.ui.canvas().pixel(400, 8), bar_pixel);
+    assert_eq!(r.ui.canvas().hit_at(400, 48), Some(Hit::Nothing));
+    assert_eq!(r.ui.canvas().hit_at(48, 48), Some(Hit::Custom(1)));
+    assert_eq!(r.ui.canvas().hit_at(752, 48), Some(Hit::Home));
     save_picture(&r, "app-keyboard-low.png");
     // What is typed goes in, and a touch goes to what is drawn there:
     // the input where it is now keeps the keyboard, and another input
@@ -471,8 +505,11 @@ fn an_input_under_the_keyboard_is_brought_above_it() {
     r.tap(400, view_y + 1040 + 40);
     assert_eq!(r.events(), []);
     assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_some());
-    r.tap(400, view_y + 224 + 80);
-    assert_eq!(r.events(), [AppEvent::Focused { widget: pin }]);
+    r.tap(400, view_y + 760 + 40);
+    assert_eq!(r.events(), [AppEvent::Focused { widget: mid }]);
+    r.view.focus(Some(pin));
+    r.ui.pump();
+    r.events();
     // That one needs no room made: the view is in its place again.
     assert_eq!(r.region(Hit::Custom(0)).bottom(), 1160);
     // Put away, the view is in its place too.
@@ -709,4 +746,138 @@ fn a_picture_of_an_app_view() {
     // The back button's arrow is drawn: its corner is not one flat color.
     let corner: Vec<u32> = (0..96 * 96).map(|i| r.ui.canvas().pixel(i % 96, i / 96)).collect();
     assert!(corner.iter().any(|p| *p != corner[0]));
+}
+
+/// The theme the UI draws in: the touch skin in the palette of the default
+/// wallpaper.
+fn shown_theme() -> &'static Theme {
+    Theme::for_model(Model::D80).in_wallpaper(opendeskphone_ui::wallpaper::find_or_default(""))
+}
+
+/// Whether any pixel of `r` differs between the two pictures.
+fn differ(a: &[u32], b: &[u32], r: IRect) -> bool {
+    (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| a[(y * 800 + x) as usize] != b[(y * 800 + x) as usize]))
+}
+
+#[test]
+fn the_top_of_a_view_is_the_title_bar_every_screen_has() {
+    let mut r = Rig::new();
+    let th = shown_theme();
+    let m = r.m;
+    // A title as the SDK's `screen` lays one out: between the two
+    // buttons, with no colors of its own.
+    let title = r.view.create(WidgetKind::Text, None, Rect::new(m.back_width as i16, 0, m.width - 2 * m.back_width, m.title_height));
+    r.view.set_font(title, opendeskphone_ui::appview::Font::Title);
+    r.view.set_text(title, "Voicemail");
+    r.list(3);
+    r.ui.pump();
+    save_picture(&r, "app-title.png");
+    // The bar's ground is the phone's, from side to side, and the title
+    // is in the title's color on it.
+    let c = r.ui.canvas();
+    for x in [2, 400, 797] {
+        assert_eq!(c.pixel(x, 3), th.title_bg, "x {x}");
+    }
+    assert!((0..96).any(|y| (96..400).any(|x| c.pixel(x, y) == th.title_fg)));
+    assert_eq!(c.pixel(400, 96 + 3 * 96 + 8), th.bg);
+    // Back at the left, home at the right, as on a screen of the phone's.
+    assert_eq!(r.region(Hit::Key(Key::Cancel)), IRect::new(0, 0, 96, 96));
+    assert_eq!(r.region(Hit::Home), IRect::new(704, 0, 96, 96));
+    // Home leaves the app for the home screen.
+    r.events();
+    r.tap(752, 48);
+    assert_eq!(r.ui.screen_name(), "idle");
+    assert_eq!(r.events(), [AppEvent::Background]);
+
+    // A full-screen view is the app's from corner to corner: the back
+    // button alone, on a ground of its own.
+    let mut r = Rig::new();
+    r.view.set_full_screen(true);
+    r.view.set_background(opendeskphone_ui::appview::Color::Rgb(200, 30, 30));
+    r.ui.pump();
+    assert_eq!(r.region(Hit::Key(Key::Cancel)), IRect::new(0, 0, 96, 96));
+    assert_eq!(r.ui.canvas().hit_rect(Hit::Home), None);
+    assert_eq!(r.ui.canvas().pixel(400, 3), 0xC81E1E);
+}
+
+#[test]
+fn the_row_of_a_list_under_a_finger_looks_pressed() {
+    let mut r = Rig::new();
+    let list = r.list(5);
+    r.ui.pump();
+    let (top, row_h) = (i32::from(r.m.title_height), i32::from(r.m.row_height));
+    let row = |i: i32| IRect::new(0, top + i * row_h, 800, row_h);
+    let rest = r.ui.canvas().pixels().to_vec();
+    r.sim.touch(opendeskphone_state::TouchPhase::Down, 400, (top + row_h + 40) as u16);
+    r.ui.pump();
+    let down = r.ui.canvas().pixels().to_vec();
+    // The row under the finger, and no other; the list hears nothing of
+    // a finger until it has tapped.
+    assert!(differ(&rest, &down, row(1)));
+    assert!(!differ(&rest, &down, row(0)) && !differ(&rest, &down, row(2)));
+    assert_eq!(r.events(), []);
+    r.sim.touch(opendeskphone_state::TouchPhase::Up, 400, (top + row_h + 40) as u16);
+    r.ui.pump();
+    assert_eq!(
+        r.events(),
+        [
+            AppEvent::Focused { widget: list },
+            AppEvent::ListSelected { widget: list, row: 1 },
+            AppEvent::ListActivated { widget: list, row: 1 },
+        ]
+    );
+    // Below the last row there is nothing to press.
+    let rest = r.ui.canvas().pixels().to_vec();
+    r.sim.touch(opendeskphone_state::TouchPhase::Down, 400, (top + 7 * row_h) as u16);
+    r.ui.pump();
+    assert!(r.ui.canvas().pixels() == &rest[..]);
+    r.sim.touch(opendeskphone_state::TouchPhase::Cancel, 0, 0);
+    r.ui.pump();
+}
+
+#[test]
+fn the_backspace_key_repeats_while_a_finger_stays_on_it() {
+    const T0: u64 = 5_000_000;
+    const UNIX: u64 = 1_794_607_087;
+    let mut r = Rig::new();
+    let (name, _pin) = form(&r);
+    r.view.focus(Some(name));
+    r.view.type_text("abcdefgh");
+    r.ui.pump();
+    let b = r.region(Cap::Backspace.hit());
+    let (x, y) = ((b.x + b.w / 2) as u16, (b.y + b.h / 2) as u16);
+    // Down: nothing yet (a tap deletes when the finger is lifted).
+    r.sim.touch(opendeskphone_state::TouchPhase::Down, x, y);
+    r.ui.pump();
+    assert_eq!(r.view.text(name).as_deref(), Some("abcdefgh"));
+    // Held as long as a long press: one is deleted, and then one more
+    // every 80 ms, for as long as the finger stays.
+    r.ui.set_fixed_time(Some((T0 + 600, UNIX)));
+    r.ui.pump();
+    assert_eq!(r.view.text(name).as_deref(), Some("abcdefg"));
+    r.ui.set_fixed_time(Some((T0 + 640, UNIX)));
+    r.ui.pump();
+    assert_eq!(r.view.text(name).as_deref(), Some("abcdefg"));
+    for i in 1..=3 {
+        r.ui.set_fixed_time(Some((T0 + 600 + 80 * i, UNIX)));
+        r.ui.pump();
+    }
+    assert_eq!(r.view.text(name).as_deref(), Some("abcd"));
+    // Lifted: no more, then or later.
+    r.sim.touch(opendeskphone_state::TouchPhase::Up, x, y);
+    r.ui.pump();
+    r.ui.set_fixed_time(Some((T0 + 5000, UNIX)));
+    r.ui.pump();
+    assert_eq!(r.view.text(name).as_deref(), Some("abcd"));
+    // A key that types does not repeat: held, it types once.
+    let q = r.region(Cap::Char('q').hit());
+    r.sim.touch(opendeskphone_state::TouchPhase::Down, (q.x + 10) as u16, (q.y + 10) as u16);
+    r.ui.pump();
+    for i in 0..5 {
+        r.ui.set_fixed_time(Some((T0 + 5600 + 80 * i, UNIX)));
+        r.ui.pump();
+    }
+    r.sim.touch(opendeskphone_state::TouchPhase::Up, (q.x + 10) as u16, (q.y + 10) as u16);
+    r.ui.pump();
+    assert_eq!(r.view.text(name).as_deref(), Some("abcdq"));
 }

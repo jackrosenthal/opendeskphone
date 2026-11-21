@@ -170,6 +170,26 @@ pub struct Canvas {
     /// Where the picture can be touched ([`Canvas::hit`]), in the order
     /// registered.
     hits: Vec<(IRect, crate::touch::Hit)>,
+    /// Which of them show nothing under a finger ([`Canvas::hit_quiet`]):
+    /// their places in `hits`.
+    quiet: Vec<usize>,
+    /// The shapes with round corners drawn since the regions were last
+    /// forgotten, each with its radius: a region with the rectangle of
+    /// one is of that shape ([`Canvas::show_press`]).
+    rounds: Vec<(IRect, i32)>,
+    /// Where a finger is down on the picture ([`Canvas::set_press`]).
+    press: Option<(i32, i32)>,
+    /// What the screen being drawn is told of its place among the
+    /// screens ([`Canvas::set_nav`]).
+    nav: NavCx,
+}
+
+/// What a screen is told, as it draws, of its place among the screens:
+/// for the title bar ([`crate::widgets::title_bar`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NavCx {
+    /// There is a screen to go back to: the screen is not the first.
+    pub back: bool,
 }
 
 fn quantize(c: Rgb) -> Rgb {
@@ -214,6 +234,10 @@ impl Canvas {
             presented: false,
             clip: IRect::new(0, 0, width as i32, height as i32),
             hits: Vec::new(),
+            quiet: Vec::new(),
+            rounds: Vec::new(),
+            press: None,
+            nav: NavCx::default(),
         }
     }
 
@@ -301,6 +325,7 @@ impl Canvas {
         if rad == 0 {
             return self.fill(r, c);
         }
+        self.rounds.push((r, rad));
         self.fill(IRect::new(r.x, r.y + rad, r.w, r.h - 2 * rad), c);
         for i in 0..rad {
             // Row i from the top/bottom edge: inset by the circle.
@@ -326,6 +351,9 @@ impl Canvas {
             return;
         }
         let rad = rad.min(r.w / 2).min(r.h / 2).max(0);
+        if rad > 0 {
+            self.rounds.push((r, rad));
+        }
         let c = self.color(c);
         // The straight middle needs no blending.
         self.fill(IRect::new(r.x + rad, r.y, r.w - 2 * rad, r.h), c);
@@ -735,6 +763,125 @@ impl Canvas {
     /// Forgets every region: the picture is about to be drawn again.
     pub fn clear_hits(&mut self) {
         self.hits.clear();
+        self.quiet.clear();
+        self.rounds.clear();
+    }
+
+    /// [`Canvas::hit`], for a region that shows nothing while a finger is
+    /// down on it ([`Canvas::show_press`]): one that is not a control (a
+    /// surface that is drawn on or dragged), or whose screen shows the
+    /// finger in its own way ([`Canvas::pressed_in`]).
+    pub fn hit_quiet(&mut self, r: IRect, hit: crate::touch::Hit) {
+        let n = self.hits.len();
+        self.hit(r, hit);
+        if self.hits.len() > n {
+            self.quiet.push(n);
+        }
+    }
+
+    /// Says where a finger is down on the picture (`None`: nowhere), for
+    /// the drawing that follows.  The UI does this.
+    pub fn set_press(&mut self, at: Option<(i32, i32)>) {
+        self.press = at;
+    }
+
+    /// Where a finger is down on the picture, if one is and has not begun
+    /// to drag.
+    pub fn pressed(&self) -> Option<(i32, i32)> {
+        self.press
+    }
+
+    /// Whether a finger is down within `r`: for a screen that draws what
+    /// is under the finger differently itself.  (Most need not: the UI
+    /// shows the region under the finger as pressed,
+    /// [`Canvas::show_press`].)
+    pub fn pressed_in(&self, r: IRect) -> bool {
+        self.press.is_some_and(|(x, y)| x >= r.x && x < r.right() && y >= r.y && y < r.bottom())
+    }
+
+    /// Says what the screen about to be drawn is told of its place among
+    /// the screens.  The UI does this.
+    pub fn set_nav(&mut self, nav: NavCx) {
+        self.nav = nav;
+    }
+
+    /// What the screen being drawn is told of its place among the
+    /// screens.
+    pub fn nav(&self) -> NavCx {
+        self.nav
+    }
+
+    /// Shows the region under the finger ([`Canvas::set_press`]) as
+    /// pressed, when the picture is drawn: its pixels are mixed a quarter
+    /// of the way to white, or to black where the region is light.  The
+    /// region is the topmost at the finger; nothing is shown unless its
+    /// [`crate::touch::Hit`] is `expect` (what the finger came down on:
+    /// the picture may have changed under it), nor for a region that
+    /// does nothing or only dismisses, one registered with
+    /// [`Canvas::hit_quiet`], or one of more than a quarter of the screen
+    /// (a surface, not a control).
+    ///
+    /// The pressed look has the shape of the control where the control
+    /// is a shape with round corners drawn with the region's rectangle
+    /// (as [`crate::widgets::button`] draws one); else the region's
+    /// rectangle.
+    ///
+    /// `to_white` is the way to mix, for a picture drawn more than once
+    /// that must be mixed the same way each time; `None` chooses by the
+    /// region's pixels.  Returns the way taken, or `None` when nothing
+    /// was shown.
+    pub fn show_press(&mut self, expect: crate::touch::Hit, to_white: Option<bool>) -> Option<bool> {
+        use crate::touch::Hit;
+        let (x, y) = self.press?;
+        let within = |r: &IRect| x >= r.x && x < r.right() && y >= r.y && y < r.bottom();
+        let (i, (r, hit)) = self.hits.iter().copied().enumerate().rev().find(|(_, (r, _))| within(r))?;
+        if hit != expect
+            || matches!(hit, Hit::Nothing | Hit::Dismiss)
+            || self.quiet.contains(&i)
+            || r.w * r.h > self.w * self.h / 4
+        {
+            return None;
+        }
+        // The shape: the last one with round corners drawn where the
+        // region is (the region is the part of it within the clip).
+        let (shape, rad) = self
+            .rounds
+            .iter()
+            .rev()
+            .find(|(s, _)| s.intersect(&r) == r && s.w * s.h <= r.w * r.h * 2)
+            .copied()
+            .unwrap_or((r, 0));
+        let lum = |p: Rgb| ((p >> 16) & 255) * 77 + ((p >> 8) & 255) * 150 + (p & 255) * 29;
+        let to_white = to_white.unwrap_or_else(|| {
+            let mut sum: u64 = 0;
+            for yy in r.y..r.bottom() {
+                let row = (yy * self.w) as usize;
+                sum += self.pix[row + r.x as usize..row + r.right() as usize].iter().map(|p| u64::from(lum(*p))).sum::<u64>();
+            }
+            sum / (r.w as u64 * r.h as u64) < 140 * 256
+        });
+        let target = if to_white { 0xFF_FFFF } else { 0x00_0000 };
+        for yy in r.y..r.bottom() {
+            // The inset of this row of the shape, by its corner's circle.
+            let from_edge = (yy - shape.y).min(shape.bottom() - 1 - yy);
+            let inset = if from_edge < rad {
+                let dy = rad - from_edge;
+                let mut dx = 0;
+                while (dx + 1) * (dx + 1) + dy * dy <= rad * rad + rad / 2 {
+                    dx += 1;
+                }
+                rad - dx
+            } else {
+                0
+            };
+            let (x0, x1) = ((shape.x + inset).max(r.x), (shape.right() - inset).min(r.right()));
+            let row = (yy * self.w) as usize;
+            for xx in x0..x1 {
+                let px = &mut self.pix[row + xx as usize];
+                *px = mix(*px, target, 2);
+            }
+        }
+        Some(to_white)
     }
 }
 

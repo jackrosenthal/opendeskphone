@@ -39,6 +39,8 @@ pub enum IdleSoftkey {
     /// The call forwarding menu.
     Forward,
     Redial,
+    /// Voicemail: what the Messages key does.
+    Voicemail,
     /// The theme selector; not shown on a gray model, which has no
     /// themes.
     Theme,
@@ -101,6 +103,12 @@ pub struct UiConfig {
     /// The provisioning server fixed the theme: the phone's selector
     /// shows the choices and changes nothing.
     pub theme_locked: bool,
+    /// The voicemail app has its application account, with which it
+    /// reaches the server.  Without it the Messages key calls the
+    /// account's voicemail number, though the app is installed.
+    pub voicemail_app_account: bool,
+    /// The phone has a parking extension: a call can be parked.
+    pub park: bool,
 }
 
 impl Default for UiConfig {
@@ -127,7 +135,33 @@ impl Default for UiConfig {
             theme: String::new(),
             wallpaper_picture: None,
             theme_locked: false,
+            voicemail_app_account: false,
+            park: false,
         }
+    }
+}
+
+impl UiConfig {
+    /// The configuration of `model` with nothing set: [`UiConfig::default`],
+    /// and on the touch skin, whose home screen has buttons where the
+    /// others have softkeys and keys, the home buttons of
+    /// [`IdleSoftkey::touch_defaults`].
+    pub fn for_model(model: Model) -> UiConfig {
+        let mut cfg = UiConfig::default();
+        if crate::skin::is_touch(model) {
+            cfg.idle_softkeys = IdleSoftkey::touch_defaults();
+        }
+        cfg
+    }
+}
+
+impl IdleSoftkey {
+    /// The home buttons of the touch skin when none are configured: what
+    /// a desk phone is used for daily, with voicemail and redial in place
+    /// of the keys the phone does not have.
+    pub fn touch_defaults() -> Vec<IdleSoftkey> {
+        use IdleSoftkey::*;
+        vec![CallLog, Contacts, Voicemail, Redial, Dnd, Forward, Apps, Menu]
     }
 }
 
@@ -410,6 +444,11 @@ struct Stack {
     cover_until: Option<u64>,
 }
 
+/// Touch: how often the keyboard's backspace key deletes while a finger
+/// stays on it, in milliseconds, after the long press that begins it
+/// ([`crate::touch::LONG_PRESS_MS`]).
+const REPEAT_MS: u64 = 80;
+
 /// The four softkey positions of a native screen: action id (0: none) and
 /// label.  More than four actions page three at a time behind "More".
 fn soft_slots(keys: &[Soft], page: u8) -> [(u32, String); 4] {
@@ -430,31 +469,12 @@ fn soft_slots(keys: &[Soft], page: u8) -> [(u32, String); 4] {
     out
 }
 
-/// The softkey buttons of a native screen on the touch skin: action id
-/// and label, by position ([`Theme::soft_button`]).  Up to four actions
-/// keep their positions (a screen puts "Back" at the right), blanks and
-/// all.  More are shown without their blanks, all of them when they fit
-/// in two rows; beyond that, seven at a time and "More", which pages.
-fn touch_soft_slots(keys: &[Soft], page: u8) -> Vec<Soft> {
-    if keys.len() <= 4 {
-        return keys.to_vec();
-    }
-    let keys: Vec<Soft> = keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).cloned().collect();
-    if keys.len() <= 8 {
-        return keys;
-    }
-    let page = page as usize % keys.len().div_ceil(7);
-    let mut out: Vec<Soft> = keys.into_iter().skip(page * 7).take(7).collect();
-    // "More" is the last button of the second row.
-    out.resize(7, (0, String::new()));
-    out.push((u32::MAX, tr::MORE.to_string()));
-    out
-}
-
-/// How many pages [`touch_soft_slots`] makes of these softkeys.
-fn touch_soft_pages(keys: &[Soft]) -> usize {
-    let n = keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).count();
-    if n <= 8 { 1 } else { n.div_ceil(7) }
+/// The softkey buttons of a native screen on the touch skin: the actions
+/// that have a label, in order, without the places the phones with keys
+/// leave empty (a screen puts "Back" at the fourth key), and all of them:
+/// they take as many rows as they need, and there is no "More".
+fn touch_soft_slots(keys: &[Soft]) -> Vec<Soft> {
+    keys.iter().filter(|(id, label)| *id != 0 && !label.is_empty()).cloned().collect()
 }
 
 impl Stack {
@@ -705,13 +725,7 @@ impl Stack {
                 }
             }
             Key::Redial if !live => cx.post(Command::Redial),
-            Key::Messages => {
-                if st.apps.installed.iter().any(|a| a.name == "voicemail") {
-                    cx.post(Command::LaunchApp { name: "voicemail".into() });
-                } else {
-                    cx.post(Command::DialVoicemail { account: None });
-                }
-            }
+            Key::Messages => idle::open_voicemail(cx),
             Key::Line(n) => {
                 let Some(k) = st.keys.line_keys.iter().find(|k| k.index + 1 == n) else {
                     // No key table yet: line 1 goes home.
@@ -832,6 +846,13 @@ pub struct Ui {
     /// The finger went down on a dark screen: it lights the screen, and
     /// does nothing else until it is lifted.
     touch_wakes: bool,
+    /// Where the finger is down, while what it came down on is shown as
+    /// pressed: from when it comes down until it is lifted or begins to
+    /// drag.
+    press: Option<(i32, i32)>,
+    /// The finger is held on the keyboard's backspace key, which repeats:
+    /// when it next deletes (monotonic milliseconds).
+    repeat: Option<u64>,
     popup: Option<Popup>,
     notice_deadlines: Vec<(u64, u64)>,
     blinker: Blinker,
@@ -942,6 +963,8 @@ impl Ui {
             finger: Recognizer::new(),
             touched: None,
             touch_wakes: false,
+            press: None,
+            repeat: None,
             popup: None,
             notice_deadlines: Vec::new(),
             blinker: Blinker::new(),
@@ -1175,7 +1198,11 @@ impl Ui {
             let delta = if key == Key::VolumeUp { 1 } else { -1 };
             self.store.post(Command::AdjustVolume { target: VolumeTarget::Current, delta });
             // (Touch: long enough to reach for the popup's own buttons.)
-            self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch() { 4000 } else { 2000 } });
+            // (Touch: not over the call screen, which shows the level
+            // between its own two buttons.)
+            if !(self.th.touch() && self.nav.top_ref().tag() == Tag::Call) {
+                self.popup = Some(Popup { until_ms: self.now().0 + if self.th.touch() { 4000 } else { 2000 } });
+            }
             self.needs_draw = true;
             return;
         }
@@ -1239,6 +1266,19 @@ impl Ui {
             self.touch_wakes = dark;
             self.touched = self.main.hit_at(x, y);
         }
+        // What the finger is on looks pressed until the finger is lifted
+        // (or drags: `gesture`).
+        let press = (phase != TouchPhase::Up && phase != TouchPhase::Cancel)
+            .then_some(if phase == TouchPhase::Down { Some((x, y)) } else { self.press })
+            .flatten()
+            .filter(|_| !self.touch_wakes && self.nav.kind != BaseKind::Update);
+        if press != self.press {
+            self.press = press;
+            self.needs_draw = true;
+        }
+        if press.is_none() {
+            self.repeat = None;
+        }
         let gesture = self.finger.touch(phase, x, y, self.now().0);
         // The top screen hears of a finger that came down on a region of
         // its own, before the gesture the touch becomes.
@@ -1260,9 +1300,21 @@ impl Ui {
             return;
         }
         let hit = self.touched;
+        if matches!(gesture, Gesture::Drag { .. }) && self.press.take().is_some() {
+            // A finger that drags presses nothing.
+            self.repeat = None;
+            self.needs_draw = true;
+        }
         match gesture {
             Gesture::Tap { x, y } => self.tapped(hit, x, y, false, source),
-            Gesture::LongPress { x, y } => self.tapped(hit, x, y, true, source),
+            Gesture::LongPress { x, y } => {
+                self.tapped(hit, x, y, true, source);
+                // The keyboard's backspace key goes on deleting while the
+                // finger stays on it.
+                if hit == Some(crate::osk::Cap::Backspace.hit()) && self.press.is_some() {
+                    self.repeat = Some(self.now().0 + REPEAT_MS);
+                }
+            }
             // A drag is the top screen's, unless the finger came down on
             // something that is not the screen's (a softkey, a dialog).
             Gesture::Drag { x, y, dx, dy } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
@@ -1303,14 +1355,10 @@ impl Ui {
                 self.key(key, true, source);
                 self.key(key, false, source);
             }
+            Some(Hit::Home) => self.with_cx(|nav, cx| nav.apply(cx, Nav::Home)),
             Some(Hit::Soft(id)) => self.with_cx(|nav, cx| {
-                if id == u32::MAX {
-                    let pages = touch_soft_pages(&nav.top_ref().softkeys(cx));
-                    nav.soft_page = ((nav.soft_page as usize + 1) % pages) as u8;
-                } else if id != 0 {
-                    let r = nav.top().softkey(cx, id);
-                    nav.apply(cx, r);
-                }
+                let r = nav.top().softkey(cx, id);
+                nav.apply(cx, r);
             }),
             Some(hit @ (Hit::Row { .. } | Hit::Custom(_))) => {
                 let select = self.with_cx(|nav, cx| {
@@ -1416,6 +1464,14 @@ impl Ui {
                     Err(e) => Err(CommandError::Failed(e.to_string())),
                 }
             }
+            // The volume keys' popup, for a phone that has no volume
+            // keys (the touch skin's idle screen has a button for it).
+            Command::ShowScreen { name } if name == "volume" => {
+                self.activity();
+                self.popup = Some(Popup { until_ms: self.now().0 + 4000 });
+                self.needs_draw = true;
+                Ok(Reply::Done)
+            }
             Command::ShowScreen { name } => {
                 let screen: Option<Option<Box<dyn Screen>>> = match name.as_str() {
                     "idle" | "home" => Some(None),
@@ -1509,6 +1565,12 @@ impl Ui {
         };
         let c = &mut self.main;
         let bounds = c.bounds();
+        // What the screen is told as it draws: whether there is a screen
+        // to go back to, and where a finger is down.
+        c.set_nav(crate::gfx::NavCx { back: !self.nav.stack.is_empty() });
+        c.set_press(self.press);
+        let pressed = self.touched.filter(|_| self.press.is_some());
+        let mut press_to_white = None;
         let top = self.nav.stack.last_mut().unwrap_or(&mut self.nav.base);
         // The configured wallpaper and palette, unless the screen is shown
         // with a wallpaper of its own (the boot screen, and the theme
@@ -1563,18 +1625,24 @@ impl Ui {
                     Pass::Shown => c.clear(th.bg),
                 }
                 if top.softkey_bar(&cx) && th.touch() {
-                    // Buttons: an app's four softkeys are the four keys
-                    // (and its window keeps its size, whatever they are);
-                    // a native screen's are its actions, in as many rows
-                    // as they take, and in none when it has none.
+                    // Buttons: an app's softkeys are the four keys, those
+                    // that have a label (and its window keeps its size,
+                    // whatever they are); a native screen's are its
+                    // actions, in as many rows as they take, and in none
+                    // when it has none.
                     let (keys, rows): (Vec<(Hit, String)>, i32) = match top.raw_softkeys(&cx) {
                         Some(labels) => (
-                            labels.into_iter().enumerate().map(|(i, l)| (Hit::Key(Key::Soft(i as u8 + 1)), l)).collect(),
+                            labels
+                                .into_iter()
+                                .enumerate()
+                                .filter(|(_, l)| !l.is_empty())
+                                .map(|(i, l)| (Hit::Key(Key::Soft(i as u8 + 1)), l))
+                                .collect(),
                             1,
                         ),
                         None => {
-                            let keys = touch_soft_slots(&top.softkeys(&cx), self.nav.soft_page);
-                            let rows = if keys.iter().all(|(_, l)| l.is_empty()) { 0 } else { th.soft_rows(keys.len()) };
+                            let keys = touch_soft_slots(&top.softkeys(&cx));
+                            let rows = th.soft_rows(keys.len());
                             (keys.into_iter().map(|(id, l)| (Hit::Soft(id), l)).collect(), rows)
                         }
                     };
@@ -1667,6 +1735,11 @@ impl Ui {
                 }
                 c.text_in(th.font(crate::appview::Font::Bold), text, &n.title, th.fg, HAlign::Left);
                 c.text_wrapped(f, rest, &n.text, th.fg, HAlign::Left, th.line_h);
+            }
+            // What the finger is on is shown as pressed (the same way in
+            // every drawing of the picture).
+            if let Some(hit) = pressed {
+                press_to_white = c.show_press(hit, press_to_white);
             }
             match pass {
                 Pass::OverBlack => self.over.over_black(c),
@@ -1891,6 +1964,15 @@ impl Ui {
         if let Some(g) = self.finger.tick(now_ms) {
             self.gesture(g, InputSource::Physical);
         }
+        // And one that stays on the keyboard's backspace key: again.
+        if self.repeat.is_some_and(|t| now_ms >= t) {
+            self.repeat = Some(now_ms + REPEAT_MS);
+            if self.finger.touching() && self.main.hit_at(self.press.map_or(-1, |p| p.0), self.press.map_or(-1, |p| p.1)) == self.touched {
+                self.tapped(self.touched, 0, 0, false, InputSource::Physical);
+            } else {
+                self.repeat = None;
+            }
+        }
         self.check_light();
     }
 
@@ -1914,6 +1996,7 @@ impl Ui {
         }
         if self.fixed_time.is_none() {
             add(self.finger.deadline());
+            add(self.repeat);
             add(self.screen_deadline);
             if self.nav.kind == BaseKind::Finishing {
                 add(self.nav.cover_until);

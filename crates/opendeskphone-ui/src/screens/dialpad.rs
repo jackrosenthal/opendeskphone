@@ -87,6 +87,8 @@ pub(crate) enum Look {
     Go,
     /// End, reject: red.
     Stop,
+    /// On, and to be noticed (the microphone is muted): the warning color.
+    Warn,
     /// Nothing to do now: dimmed, and not a region.
     Off,
 }
@@ -102,6 +104,7 @@ pub(crate) fn control(c: &mut Canvas, th: &Theme, r: IRect, icon: &str, label: &
         Look::On => (th.sk_fg, None, th.sk_bg),
         Look::Go => (th.sk_go, None, th.sk_fg),
         Look::Stop => (th.sk_stop, None, th.sk_fg),
+        Look::Warn => (th.warn, None, idle::on_warn(th)),
         Look::Off => (th.sk_bg, Some(crate::gfx::mix(th.sk_bg, th.sk_edge, 3)), dim),
     };
     let rad = th.px(6);

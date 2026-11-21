@@ -161,32 +161,55 @@ pub fn list_as(
     visible
 }
 
-/// A title bar across `r`.  On the touch skin it begins with the back
-/// button ([`back_button`]), which does what the X key does on a phone
-/// that has it.
+/// A title bar across `r`: the title, left-aligned.
+///
+/// On the touch skin the bar is the same on every screen
+/// ([`title_buttons`]): the back button at its left, the title after it,
+/// and the home button at its right.
 pub fn title_bar(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
     c.fill(r, th.title_bg);
-    let r = if th.touch() {
-        let (back, rest) = r.split_left(th.back_w);
-        back_button(c, th, back, th.title_fg);
-        // The title begins where the other skins' does, after the button.
-        IRect { x: rest.x - th.title_pad, w: rest.w + th.title_pad, ..rest }
-    } else {
-        r
-    };
+    let r = if th.touch() { title_buttons(c, th, r, th.title_fg) } else { r };
     let f = th.font(Font::Title);
     // Stock: left-aligned on every skin (x 15 on color, 3 on gray).
     c.text_in(f, IRect { x: r.x + th.title_pad, w: r.w - 2 * th.title_pad, ..r }, title, th.title_fg, HAlign::Left);
+}
+
+/// The touch skin's buttons of a title bar across `r`, in the color `fg`,
+/// for a screen that draws its own title: the back button
+/// ([`back_button`]) at the left and the home button ([`home_button`]) at
+/// the right, each [`Theme::back_w`] wide.  The first screen (the home
+/// screen, or what is in its place) has neither: there is nowhere to go.
+/// Returns where the title goes, inset by [`Theme::title_pad`] as
+/// [`title_bar`] insets it: a title begins right after the back button.
+pub fn title_buttons(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) -> IRect {
+    if !c.nav().back {
+        return r;
+    }
+    let (back, rest) = r.split_left(th.back_w);
+    let (rest, home) = rest.split_right(th.back_w);
+    back_button(c, th, back, fg);
+    home_button(c, th, home, fg);
+    IRect { x: rest.x - th.title_pad, w: rest.w + 2 * th.title_pad, ..rest }
 }
 
 /// The touch skin's back button, in `r`: an arrow, and a region that is
 /// [`Key::Cancel`] (which leaves a screen, as the X key does).  For a
 /// screen that draws its own title.
 pub fn back_button(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) {
-    if let Some(icon) = th.icon("left") {
+    if let Some(icon) = th.icon("back").or_else(|| th.icon("left")) {
         c.icon_in(icon, r, fg);
     }
     c.hit(r, Hit::Key(Key::Cancel));
+}
+
+/// The touch skin's home button, in `r`: a house, and a region that is
+/// [`Hit::Home`] (back to the home screen, past every screen between; a
+/// call that is up stays on the screen).
+pub fn home_button(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) {
+    if let Some(icon) = th.icon("home") {
+        c.icon_in(icon, r, fg);
+    }
+    c.hit(r, Hit::Home);
 }
 
 /// A button of the touch skin in `r`: a rounded shape in `fill` (with an
@@ -214,22 +237,94 @@ pub fn button(c: &mut Canvas, th: &Theme, r: IRect, label: &str, fill: Rgb, edge
     c.hit(r, hit);
 }
 
-/// The softkeys of the touch skin: buttons in rows of four above the
-/// bottom of the screen ([`Theme::soft_button`]), one for each entry that
-/// has a label, at the entry's position; each button's region is the
-/// entry's [`Hit`].  The colors are the softkeys' of the other skins
-/// ([`soft_style`]).  The background behind the buttons is the caller's.
+/// What a button of the touch skin is for, which is how it looks.  The
+/// same everywhere: a screen has at most one [`ButtonStyle::Primary`] (or
+/// [`ButtonStyle::Call`]) button, green is for calls alone, and red for
+/// what ends or destroys something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonStyle {
+    /// One of several things to do: an outline.
+    Secondary,
+    /// The main thing to do on the screen: filled.
+    Primary,
+    /// Starts or answers a call: green.
+    Call,
+    /// Ends a call, declines, erases, or deletes: red.
+    Destructive,
+    /// A mode that is on (mute, the speaker, Do Not Disturb): filled in
+    /// the text's color, with the label in the background's.
+    On,
+}
+
+impl ButtonStyle {
+    /// The fill, the outline (if it has one), and the label's color.
+    pub fn colors(self, th: &Theme) -> (Rgb, Option<Rgb>, Rgb) {
+        match self {
+            ButtonStyle::Secondary => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
+            ButtonStyle::Primary => (th.sel_bg, None, th.sel_fg),
+            ButtonStyle::Call => (th.sk_go, None, th.sk_fg),
+            ButtonStyle::Destructive => (th.sk_stop, None, th.sk_fg),
+            ButtonStyle::On => (th.fg, None, th.bg),
+        }
+    }
+}
+
+/// [`button`] in the colors of `style`.
+pub fn button_styled(c: &mut Canvas, th: &Theme, r: IRect, label: &str, style: ButtonStyle, hit: Hit) {
+    let (fill, edge, fg) = style.colors(th);
+    button(c, th, r, label, fill, edge, fg, hit);
+}
+
+/// The width and height of a [`switch`]: 80 by 48 pixels on the touch
+/// skin.
+pub fn switch_size(th: &Theme) -> (i32, i32) {
+    (th.px(40), th.px(24))
+}
+
+/// A switch, for a setting that is on or off (Do Not Disturb, forwarding,
+/// an alarm): a track with round ends and a knob at its right when `on`,
+/// at its left when not.  It is drawn at the right end of `r`, in the
+/// middle of its height, and the rectangle it takes is returned.  It
+/// registers no region: the row (or whatever `r` is) is what is touched,
+/// and the caller says what a touch does.  The label beside it names the
+/// setting, never the state.
+pub fn switch(c: &mut Canvas, th: &Theme, r: IRect, on: bool) -> IRect {
+    let (w, h) = switch_size(th);
+    let track = IRect::new(r.right() - w, r.y + (r.h - h) / 2, w, h);
+    let inset = th.px(3);
+    let knob = h - 2 * inset;
+    if th.gray {
+        // (No phone with a gray screen shows one: a frame and a block.)
+        c.frame(track, th.fg);
+        let x = if on { track.right() - inset - knob } else { track.x + inset };
+        c.fill(IRect::new(x, track.y + inset, knob, knob), th.fg);
+        return track;
+    }
+    if on {
+        // On is a fill in the text's color, as a button that is on.
+        c.fill_round_aa(track, h / 2, th.fg);
+        c.fill_round_aa(IRect::new(track.right() - inset - knob, track.y + inset, knob, knob), knob / 2, th.bg);
+    } else {
+        c.fill_round_aa(track, h / 2, th.sk_edge);
+        c.fill_round_aa(track.inset(th.scale), h / 2 - th.scale, th.sk_bg);
+        c.fill_round_aa(IRect::new(track.x + inset, track.y + inset, knob, knob), knob / 2, th.secondary);
+    }
+    track
+}
+
+/// The softkeys of the touch skin: buttons above the bottom of the screen
+/// ([`Theme::soft_button`]), one for each entry, side by side with no
+/// place left empty; each button's region is the entry's [`Hit`].  The
+/// colors are the softkeys' of the other skins ([`soft_style`]).  The
+/// background behind the buttons is the caller's.
 pub fn soft_buttons(c: &mut Canvas, th: &Theme, keys: &[(Hit, String)]) {
     for (i, (hit, label)) in keys.iter().enumerate() {
-        if label.is_empty() {
-            continue;
-        }
-        let (fill, edge) = match soft_style(label) {
-            SoftStyle::Normal => (th.sk_bg, Some(th.sk_edge)),
-            SoftStyle::Go => (th.sk_go, None),
-            SoftStyle::Stop => (th.sk_stop, None),
+        let style = match soft_style(label) {
+            SoftStyle::Normal => ButtonStyle::Secondary,
+            SoftStyle::Go => ButtonStyle::Call,
+            SoftStyle::Stop => ButtonStyle::Destructive,
         };
-        button(c, th, th.soft_button(i, keys.len()), label, fill, edge, th.sk_fg, *hit);
+        button_styled(c, th, th.soft_button(i, keys.len()), label, style, *hit);
     }
 }
 
@@ -407,7 +502,7 @@ pub fn edit_key(
             let action = match mode {
                 InputMode::Text | InputMode::Password => tap.tap(key, now_ms),
                 InputMode::Dial => key.dial_char().map(Tap::Insert),
-                InputMode::Numeric | InputMode::Pin => match key {
+                InputMode::Numeric | InputMode::Pin | InputMode::Digits => match key {
                     Key::Digit(d) => Some(Tap::Insert((b'0' + d) as char)),
                     Key::Star if mode == InputMode::Numeric => Some(Tap::Insert('.')),
                     _ => None,

@@ -140,8 +140,9 @@ fn a_setting_is_edited_with_the_number_pad_from_the_menu() {
     // The IP address.
     r.tap(row(1));
     assert_eq!(r.screen(), "setting_edit");
-    // No softkeys, no cursor keys: the field, its buttons, and the pad,
-    // all large; the pad is at the bottom of the screen.
+    // No softkeys, no cursor keys, and no buttons by the field: the field
+    // and the pad, all large; the pad is at the bottom of the screen.
+    assert!(r.ui.canvas().hits().iter().all(|(_, h)| !matches!(h, Hit::Soft(_))));
     all_large(&r);
     assert!(r.ui.canvas().hits().iter().all(|(_, h)| !matches!(h, Hit::Key(k) if *k != Key::Cancel)));
     let done = r.region(Cap::Done.hit());
@@ -153,17 +154,14 @@ fn a_setting_is_edited_with_the_number_pad_from_the_menu() {
     }
     r.type_keys("10.0.0.5");
     assert!(taken(&r.config).is_empty());
-    // OK, beside the field.
-    r.tap(Hit::Soft(1));
+    // The pad's action key takes the text.
+    r.tap(Cap::Done.hit());
     assert_eq!(taken(&r.config), vec![Command::SetSettings { settings: vec![("network_static_ip_address".into(), "10.0.0.5".into())] }]);
     assert_eq!(r.screen(), "network");
 
-    // Cancel, and the back button, leave the setting as it was.
+    // The back button leaves the setting as it was.
     r.tap(row(1));
     r.type_keys("9");
-    r.tap(Hit::Soft(4));
-    assert_eq!(r.screen(), "network");
-    r.tap(row(1));
     r.tap(Hit::Key(Key::Cancel));
     assert_eq!(r.screen(), "network");
     assert!(taken(&r.config).is_empty());

@@ -72,15 +72,19 @@ const FONTS: [[(&str, f32, bool); 9]; 4] = [
         ("Roboto-Regular.ttf", 17.0, false),
         ("Roboto-Regular.ttf", 22.0, false),
     ],
-    // The touch skin (D80, about 216 pixels to the inch): about twice the
-    // color skin's sizes.  The clock is as large as a glyph table holds
-    // (`GlyphRec` and `FontData` keep a font's ascent in eight bits).
+    // The touch skin (D80, about 216 pixels to the inch), read at arm's
+    // length: four sizes of text and no more.  Rows and buttons are 30
+    // pixels (Normal, and Bold for a button's label), titles 40, what is
+    // read first on a screen (a number being dialed, a level) 64, and
+    // nothing is smaller than 24 (Small: a second line, a hint).  The
+    // clock is as large as a glyph table holds (`GlyphRec` and `FontData`
+    // keep a font's ascent in eight bits).
     [
-        ("Roboto-Regular.ttf", 28.0, false),
+        ("Roboto-Regular.ttf", 30.0, false),
         ("Roboto-Medium.ttf", 30.0, false),
         ("Roboto-Regular.ttf", 24.0, false),
-        ("Roboto-Bold.ttf", 32.0, false),
-        ("Roboto-Regular.ttf", 60.0, false),
+        ("Roboto-Bold.ttf", 40.0, false),
+        ("Roboto-Regular.ttf", 64.0, false),
         ("Roboto-Thin.ttf", 130.0, true),
         ("Roboto-Light.ttf", 44.0, false),
         ("Roboto-Regular.ttf", 34.0, false),

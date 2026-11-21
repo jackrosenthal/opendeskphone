@@ -59,7 +59,7 @@ impl Rig {
             utc_offset_secs: -7 * 3600,
             ringtone: "Flutey Phone".into(),
             ringtones: vec!["Flutey Phone".into(), "Acheron".into(), "Andromeda".into()],
-            ..Default::default()
+            ..UiConfig::for_model(model)
         };
         let mut ui = Ui::from_hal(&mut hal, store.clone(), cfg);
         ui.set_fixed_time(Some((MONO, UNIX)));
@@ -747,6 +747,29 @@ fn d80_touch_calls() {
     r.ui.handle().remove_idle_view("status");
     r.ui.pump();
 
+    // What the idle screen says in words: the phone does not ring, and
+    // what was missed.
+    let features = r.store.get::<Features>();
+    let log = r.store.get::<CallLog>();
+    r.store.update::<Features, _>(|f| {
+        f.dnd = true;
+        f.forward.always = "1099".into();
+    });
+    r.store.update::<CallLog, _>(|l| l.missed_unseen = 2);
+    r.shot("60b-touch-idle-notes");
+    r.store.update::<Features, _>(|f| *f = (*features).clone());
+    r.store.update::<CallLog, _>(|l| *l = (*log).clone());
+    // A phone with no account.
+    let (accounts, keys, mwi) = (r.store.get::<Accounts>(), r.store.get::<Keys>(), r.store.get::<Mwi>());
+    r.store.update::<Accounts, _>(|a| *a = Accounts::default());
+    r.store.update::<Keys, _>(|k| k.line_keys.clear());
+    r.store.update::<Mwi, _>(|m| *m = Mwi::default());
+    r.shot("60c-touch-idle-no-account");
+    r.store.update::<Accounts, _>(|a| *a = (*accounts).clone());
+    r.store.update::<Keys, _>(|k| *k = (*keys).clone());
+    r.store.update::<Mwi, _>(|m| *m = (*mwi).clone());
+    r.ui.pump();
+
     // The dialer: opened from the idle screen, the number touched in.
     tap(&mut r, Hit::Custom(1));
     assert_eq!(r.ui.screen_name(), "dialer");
@@ -765,6 +788,8 @@ fn d80_touch_calls() {
         k.line_keys[0].lamp = LampState::blinking(LampColor::Green, Blink::Fast);
     });
     r.shot("63-touch-call-incoming");
+    tap(&mut r, Hit::Custom(0x0400_0000 | c1.0));
+    r.shot("63b-touch-call-silenced");
     r.store.update::<Calls, _>(|c| {
         let call = c.get_mut(c1).unwrap();
         call.state = CallState::Active;
@@ -799,6 +824,12 @@ fn d80_touch_calls() {
     r.call(Direction::Outgoing, CallState::Active, "", "15555550123");
     r.call(Direction::Outgoing, CallState::Ringback { early_media: false }, "Bob Builder", "1003");
     r.shot("67-touch-call-three");
+    // A call that rings during a call: its buttons are on its card.
+    r.end_calls();
+    let c1 = r.call(Direction::Outgoing, CallState::Active, "Alice Example", "1002");
+    r.call(Direction::Incoming, CallState::Ringing, "Bob Builder", "1003");
+    r.store.update::<Calls, _>(|c| c.focused = Some(c1));
+    r.shot("68-touch-call-waiting");
     r.end_calls();
     assert_eq!(r.ui.screen_name(), "idle");
 }
@@ -845,8 +876,6 @@ fn d80_touch() {
     r.shot("t02-osk-shift");
     touch(&mut r, Cap::Symbols.hit());
     r.shot("t03-osk-symbols");
-    touch(&mut r, Cap::More.hit());
-    r.shot("t04-osk-more");
     touch(&mut r, Hit::Key(Key::Cancel));
     r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Provisioned);
 

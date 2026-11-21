@@ -20,7 +20,7 @@ Helpers call the interfaces on the other pages, and give the app the capabilitie
 pub fn screen(title: &str) -> Rect
 ```
 
-Clears the window with `ui::clear(ROOT)`, which also removes the window's softkeys, key claims, and touch claim; claims `cancel` for the window; creates a `Text` in `Font::Title`, `title_height` tall, across the top; and returns the rectangle below the title.  On the touchscreen, the title starts to the right of the [back button](ui.md#touch) (`back_width`), and the title has the focus, so that a list made after it has no highlighted row until a row is touched (see [`nav::focus_list`](#navfocus_list)).
+Clears the window with `ui::clear(ROOT)`, which also removes the window's softkeys, key claims, and touch claim; claims `cancel` for the window; creates a `Text` in `Font::Title`, `title_height` tall, across the top; and returns the rectangle below the title.  On the touchscreen, the title is in the phone's [title bar](ui.md#touch), between the back button and the home button (each `back_width` wide), and the title has the focus, so that a list made after it has no highlighted row until a row is touched (see [`nav::focus_list`](#navfocus_list)).
 
 Make every screen's title with `screen`: the titles of all apps then look alike, and look like the phone's own.
 

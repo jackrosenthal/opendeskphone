@@ -160,11 +160,19 @@ pub fn has_keys() -> bool {
 
 /// Clears the window, draws a title line, and returns the rectangle left
 /// below it.  The window claims `cancel`, so the app sees it as
-/// [`Event::Key`] and decides between "back" and leaving.  (On the
-/// touchscreen `cancel` is the back button, which the phone draws at the
-/// left of the title line; the title begins after it.  There the title
-/// has the focus, so that a list made after it shows no highlighted row
-/// until a row is touched: see [`nav::focus_list`].)
+/// [`Event::Key`] and decides between "back" and leaving.
+///
+/// On the touchscreen the title line is the title bar every screen of the
+/// phone has.  The phone paints the bar across the top `title_height`
+/// pixels of the window, under the app's widgets, and draws its two
+/// buttons over the ends, each `back_width` wide: back at the left, which
+/// is `cancel`, and home at the right, which leaves the app.  The title
+/// is between them, and has the bar's text color unless it is given one.
+/// An app that lays out its own title line keeps to the same: nothing of
+/// its own under the two buttons, and no background on what it puts in
+/// the bar.  The title has the focus there, so that a list made after it
+/// shows no highlighted row until a row is touched: see
+/// [`nav::focus_list`].
 pub fn screen(title: &str) -> Rect {
     ui::clear(ROOT);
     ui::claim_keys(ROOT, &[Key::Cancel]);
@@ -175,7 +183,7 @@ pub fn screen(title: &str) -> Rect {
         Rect::new(
             m.back_width as i16,
             0,
-            m.width.saturating_sub(m.back_width),
+            m.width.saturating_sub(2 * m.back_width),
             m.title_height,
         ),
     );
