@@ -21,6 +21,8 @@ cargo xtask deploy 192.0.2.20
 
 The argument is the phone's address or host name, with the login `root` unless written as `LOGIN@HOST`.  `--no-build` pushes the binary of the previous build.
 
+The command builds the binary as the images of the phones with keys have it, without the D80's touch skin.  See [Phone families](building.md#phone-families).
+
 The command copies the binary to `/tmp/opendeskphone`.  While that file exists, the init role runs `/tmp/opendeskphone` as the main role instead of the installed binary.  `/tmp` is in RAM, so a reboot restores the installed binary.  To restore the installed binary without a reboot:
 
 ```sh
