@@ -67,6 +67,16 @@ fn measures(model: Model) -> Measures {
             field_h: 116,
             tick_ms: 100,
         },
+        Model::D80 => Measures {
+            pipe_w: 88,
+            flange_h: 20,
+            bird_w: 64,
+            bird_h: 48,
+            bird_x: 160,
+            gap: 192,
+            field_h: 1248,
+            tick_ms: 50,
+        },
         Model::D70 => Measures {
             pipe_w: 24,
             flange_h: 5,
@@ -638,6 +648,9 @@ impl AppWindow for WatchedWindow {
     fn claim_keys(&mut self, w: Option<u32>, keys: &[Key]) {
         self.inner.claim_keys(w, keys)
     }
+    fn claim_touch(&mut self, w: Option<u32>, on: bool) {
+        self.inner.claim_touch(w, on)
+    }
     fn poll_event(&mut self) -> Option<WindowEvent> {
         self.inner.poll_event()
     }
@@ -955,6 +968,175 @@ fn drawn_in_gray(model: Model) {
     assert!(share(0xFF_FFFF) > 50, "a white field");
     assert!(share(0x00_0000) > 4, "black pipes");
     assert!(share(0xAA_AAAA) + share(0x55_5555) < 12, "few grays");
+}
+
+// ------------------------------------------------------ the touchscreen
+
+/// The touchscreen's start screen: no key is named, and the leaderboard
+/// has a button.
+const TOUCH_START: [&str; 4] = ["Desk Sparrow", "Touch to flap.", "", "Leaderboard"];
+
+/// The button under the plate: the last plate drawn, whose outer
+/// rectangle is the last fill but one.
+fn button(ops: &[DrawOp]) -> Rect {
+    let fills: Vec<Rect> = ops
+        .iter()
+        .filter_map(|op| match op {
+            DrawOp::Fill((r, _)) => Some(*r),
+            _ => None,
+        })
+        .collect();
+    fills[fills.len() - 2]
+}
+
+#[test]
+fn it_is_played_by_touch_where_there_are_no_keys() {
+    let mut r = Rig::with_root(staged(), FakeConfig::default(), Model::D80);
+    let m = measures(Model::D80);
+    r.launch(APP);
+    assert_eq!(r.ui.texts(APP), TOUCH_START);
+    // The whole upright display, and the window takes the touches.
+    assert!(r.ui.full_screen(APP));
+    assert!(r.ui.takes_touches(APP, 0));
+    let (bounds, ops) = r.ui.drawings(APP).remove(0);
+    assert_eq!((bounds.x, bounds.y, bounds.width, bounds.height), (0, 0, 800, 1280));
+    assert_eq!(r.mgr.pump(), None, "no timer on the start screen");
+    // The button is large enough to touch, under the plate, and clear of
+    // the corner where the phone has its back button.
+    let b = button(&ops);
+    assert!(b.width >= 88 && b.height >= 88, "{b:?}");
+    assert!(b.x > 96 && b.y > 96 && b.x as u16 + b.width <= 800 && b.y as u16 + b.height <= 1248, "{b:?}");
+    let on_button = (i32::from(b.x) + 10, i32::from(b.y) + 10);
+
+    // The button shows the leaderboard, and takes it away again.
+    r.ui.tap(APP, on_button.0, on_button.1);
+    r.settle();
+    assert_eq!(r.ui.texts(APP), ["Leaderboard", "No scores yet.", "Back"]);
+    assert_eq!(r.mgr.pump(), None, "nothing ticks");
+    let back = button(&drawing(&r));
+    assert!(back.y > b.y, "under the bigger plate");
+    r.ui.tap(APP, i32::from(back.x) + 10, i32::from(back.y) + 10);
+    r.settle();
+    assert_eq!(r.ui.texts(APP), TOUCH_START);
+
+    // A touch anywhere else starts a game with a flap; the sparrow is as
+    // large as a finger, in the middle of the high field.
+    r.ui.tap(APP, 700, 1200);
+    r.settle();
+    assert!(r.ui.texts(APP).is_empty());
+    let ops = drawing(&r);
+    assert_eq!(bird_x(&ops), m.bird_x);
+    let y0 = bird_y(&ops);
+    assert_eq!(y0, (m.field_h - m.bird_h) / 2);
+    assert!(r.mgr.pump().expect("the game's timer") <= Duration::from_millis(m.tick_ms));
+    // It rises, and falls; a touch where the button was is a flap now,
+    // and so is a finger that slips as it touches, once.
+    let mut rises = |r: &mut Rig| {
+        for _ in 0..12 {
+            next_tick(r);
+        }
+        let before = bird_y(&drawing(r));
+        next_tick(r);
+        assert!(bird_y(&drawing(r)) > before, "falling");
+        next_tick(r);
+        bird_y(&drawing(r))
+    };
+    let falling = rises(&mut r);
+    r.ui.tap(APP, on_button.0, on_button.1);
+    r.settle();
+    next_tick(&mut r);
+    assert!(bird_y(&drawing(&r)) < falling, "a flap");
+    assert!(r.ui.texts(APP).is_empty(), "no leaderboard in a game");
+    let falling = rises(&mut r);
+    r.ui.drag(APP, (400, 600), (430, 640));
+    r.settle();
+    next_tick(&mut r);
+    assert!(bird_y(&drawing(&r)) < falling, "a flap");
+
+    // Left alone, it falls to the floor: the game is over, and the
+    // button is back.
+    while !game_over(&r) {
+        next_tick(&mut r);
+    }
+    assert_eq!(r.ui.texts(APP), ["Game over", "Score 0   Best 0", "Touch to play again.", "Leaderboard"]);
+    assert_eq!(button(&drawing(&r)), b);
+    // A touch after a moment is the next game.
+    std::thread::sleep(Duration::from_millis(750));
+    r.ui.tap(APP, 400, 300);
+    r.settle();
+    assert!(r.ui.texts(APP).is_empty());
+    assert!(r.mgr.pump().is_some(), "the game's timer runs");
+}
+
+#[test]
+fn drawn_on_the_touchscreen() {
+    let model = Model::D80;
+    let m = measures(model);
+    let mut p = Phone::new(model);
+    p.mgr.launch(APP).unwrap();
+    p.settle();
+    assert_eq!(p.ui.screen_name(), "app:desksparrow");
+    p.shot("1-start");
+    assert!(p.cut().is_empty(), "{:?}", p.cut());
+    let start = p.pixels();
+    // The whole display: the bottom rows are the floor, side to side.
+    let floor = start[1279 * 800];
+    assert!(start[1278 * 800..].iter().all(|c| *c == floor));
+    // The phone's back button is in its corner, over the game.
+    let back = p.ui.canvas().hit_rect(opendeskphone_ui::Hit::Key(Key::Cancel)).expect("a back button");
+    assert_eq!((back.x, back.y, back.w, back.h), (0, 0, 96, 96));
+
+    // The button under the plate: the leaderboard, and back.
+    let b = button(&p.ops());
+    let mut touch = |p: &mut Phone, x: i16, y: i16| {
+        p.sim.touch_tap(x as u16, y as u16);
+        p.settle();
+    };
+    touch(&mut p, b.x + 20, b.y + 20);
+    p.shot("4-leaderboard");
+    assert_ne!(p.pixels(), start);
+    assert!(p.cut().is_empty(), "{:?}", p.cut());
+    let back_button = button(&p.ops());
+    touch(&mut p, back_button.x + 20, back_button.y + 20);
+    assert_eq!(p.pixels(), start);
+
+    // A finger on the display starts the game and flies the sparrow
+    // through two openings.
+    touch(&mut p, 400, 1000);
+    assert!(p.mgr.pump().is_some(), "the game's timer runs");
+    let mut player = Player::new(m);
+    let (mut shot, mut score, mut ahead_before) = (false, 0, None);
+    while score < 2 {
+        assert!(p.next_tick() <= 1);
+        let ops = p.ops();
+        if player.flaps(&ops) {
+            touch(&mut p, 400, 1000);
+        }
+        let ahead = openings(&ops, m).iter().map(|o| o.0).find(|x| x + m.pipe_w as i16 > m.bird_x);
+        if let (Some(before), Some(now)) = (ahead_before, ahead)
+            && now > before
+        {
+            score += 1;
+        }
+        ahead_before = ahead;
+        if !shot && score == 1 && ahead.is_some_and(|x| x <= m.bird_x + m.bird_w / 2) {
+            p.shot("2-flying");
+            shot = true;
+        }
+    }
+    assert!(shot);
+    while p.mgr.pump().is_some() {
+        p.next_tick();
+    }
+    p.settle();
+    p.shot("3-game-over");
+    assert!(p.cut().is_empty(), "{:?}", p.cut());
+    assert!(p.count(0xBC_864E) > 400, "a brown sparrow, twice the size");
+
+    // The back button leaves the game: the app has stopped.
+    touch(&mut p, 48, 48);
+    assert_ne!(p.ui.screen_name(), "app:desksparrow");
+    assert!(!p.mgr.is_running(APP));
 }
 
 // ------------------------------------------------------ the leaderboard
