@@ -101,7 +101,7 @@ impl Capability {
     /// The capability an import of a component stands for: `Ok(None)` for
     /// the interfaces every app has, an error for something that is not
     /// an interface of the phone.  `import` is the import's name, e.g.,
-    /// `opendeskphone:app/ui@3.0.0`.
+    /// `opendeskphone:app/ui@3.1.0`.
     pub fn of_import(import: &str) -> Result<Option<Capability>, ManifestError> {
         let unknown = || ManifestError::UnknownImport(import.to_string());
         let interface = import.strip_prefix("opendeskphone:app/").ok_or_else(unknown)?;
@@ -803,11 +803,11 @@ mod tests {
     #[test]
     fn imports_name_capabilities() {
         assert_eq!(
-            Capability::of_import("opendeskphone:app/ui@3.0.0"),
+            Capability::of_import("opendeskphone:app/ui@3.1.0"),
             Ok(Some(Capability::Ui))
         );
-        assert_eq!(Capability::of_import("opendeskphone:app/runtime@3.0.0"), Ok(None));
+        assert_eq!(Capability::of_import("opendeskphone:app/runtime@3.1.0"), Ok(None));
         assert!(Capability::of_import("wasi:io/streams@0.2.0").is_err());
-        assert!(Capability::of_import("opendeskphone:app/root@3.0.0").is_err());
+        assert!(Capability::of_import("opendeskphone:app/root@3.1.0").is_err());
     }
 }

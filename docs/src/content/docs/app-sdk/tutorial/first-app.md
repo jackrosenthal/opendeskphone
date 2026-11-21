@@ -30,7 +30,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-opendeskphone-app-sdk = "=3.0.0"
+opendeskphone-app-sdk = "=3.1.0"
 
 [profile.release]
 opt-level = "s"
@@ -41,7 +41,7 @@ strip = true
 ```
 
 - `crate-type = ["cdylib"]` makes `cargo` build a WebAssembly module.
-- `opendeskphone-app-sdk = "=3.0.0"` is the SDK for firmware 3.0.0; the `=` makes Cargo use exactly that version.  The SDK version always matches the firmware version exactly.
+- `opendeskphone-app-sdk = "=3.1.0"` is the SDK for firmware 3.1.0; the `=` makes Cargo use exactly that version.  The SDK version always matches the firmware version exactly.
 
 ## App code
 
