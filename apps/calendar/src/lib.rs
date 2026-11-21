@@ -1,10 +1,14 @@
 //! Calendar: one month at a time, with today marked.  Left and Right (or
-//! Up and Down) change the month.  The date is the phone's clock in local
+//! Up and Down) change the month; on the touchscreen, a swipe across the
+//! month does, as the softkeys do.  The date is the phone's clock in local
 //! time; the phones have no clock chip, so until the time has been set
 //! there is no calendar to show.
 
 use opendeskphone_app_sdk::prelude::*;
 use opendeskphone_app_sdk::{Align, Font};
+
+/// Touch: how far a finger moves sideways, in pixels, to turn the month.
+const SWIPE: i32 = 80;
 
 const SK_PREV: u32 = 1;
 const SK_TODAY: u32 = 2;
@@ -104,10 +108,18 @@ impl Calendar {
         let m = ui::get_metrics();
         ui::clear(ROOT);
         ui::claim_keys(ROOT, &[Key::Left, Key::Right, Key::Up, Key::Down, Key::Cancel]);
+        // Touch: a swipe turns the month, and the title is centered
+        // between the back button and as much space at the right.
+        ui::claim_touch(ROOT, !m.keys);
         let title = ui::create(
             WidgetKind::Text,
             ROOT,
-            Rect::new(0, 0, m.width, m.title_height),
+            Rect::new(
+                m.back_width as i16,
+                0,
+                m.width.saturating_sub(2 * m.back_width),
+                m.title_height,
+            ),
         );
         ui::set_font(title, Font::Title);
         ui::set_align(title, Align::Center);
@@ -138,15 +150,16 @@ impl Calendar {
             ui::set_align(w, Align::Center);
             cells.push(w);
         }
-        ui::set_softkeys(
-            ROOT,
-            &[
-                Softkey::new(SK_PREV, "Prev"),
-                Softkey::new(SK_TODAY, "Today"),
-                Softkey::new(SK_NEXT, "Next"),
-                Softkey::new(SK_EXIT, "Exit"),
-            ],
-        );
+        let mut keys = vec![
+            Softkey::new(SK_PREV, "Prev"),
+            Softkey::new(SK_TODAY, "Today"),
+            Softkey::new(SK_NEXT, "Next"),
+        ];
+        // (Touch: the back button leaves.)
+        if m.keys {
+            keys.push(Softkey::new(SK_EXIT, "Exit"));
+        }
+        ui::set_softkeys(ROOT, &keys);
         Grid {
             title,
             cells,
@@ -256,6 +269,14 @@ impl App for Calendar {
             Event::Softkey(SK_NEXT) => self.turn(1),
             Event::Softkey(SK_TODAY) => self.show_today(),
             Event::Softkey(SK_EXIT) => runtime::background(),
+            // A swipe to the left brings the next month in from the
+            // right, as a page is turned.
+            Event::Touch((_, Touch::DragEnd((from, to)))) => {
+                let (dx, dy) = (i32::from(to.x) - i32::from(from.x), i32::from(to.y) - i32::from(from.y));
+                if dx.abs() >= SWIPE && dx.abs() > dy.abs() {
+                    self.turn(if dx < 0 { 1 } else { -1 });
+                }
+            }
             Event::Key(k) => match k {
                 Key::Left | Key::Up => self.turn(-1),
                 Key::Right | Key::Down => self.turn(1),
