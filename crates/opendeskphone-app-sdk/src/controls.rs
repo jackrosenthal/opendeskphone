@@ -49,17 +49,10 @@ pub fn height() -> u16 {
     ui::get_metrics().row_height
 }
 
-/// `area` without the bottom, and the place of a row of buttons across
-/// the bottom, [`GAP`] in from the sides and the bottom.
+/// `area` without the bottom, and the place of a button across the
+/// bottom, [`GAP`] in from the sides and the bottom.
 pub fn split_bottom(area: Rect) -> (Rect, Rect) {
-    split_bottom_n(area, 1)
-}
-
-/// [`split_bottom`] for `rows` rows of buttons, [`GAP`] apart: the place
-/// of them all.
-pub fn split_bottom_n(area: Rect, rows: u16) -> (Rect, Rect) {
-    let h = height();
-    let used = (rows * h + rows.saturating_sub(1) * GAP + GAP).min(area.height);
+    let used = (height() + GAP).min(area.height);
     let rest = Rect::new(area.x, area.y, area.width, area.height - used);
     let place = Rect::new(
         area.x + GAP as i16,
@@ -82,13 +75,6 @@ pub fn columns(row: Rect, n: u16) -> Vec<Rect> {
             Rect::new(x, row.y, width, row.height)
         })
         .collect()
-}
-
-/// The `i`-th of the rows of buttons in `place` (of
-/// [`split_bottom_n`]), from the top.
-pub fn row(place: Rect, i: u16) -> Rect {
-    let h = height();
-    Rect::new(place.x, place.y + (i * (h + GAP)) as i16, place.width, h)
 }
 
 // ------------------------------------------------------------- buttons
@@ -150,17 +136,6 @@ impl Button {
         self
     }
 
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    pub fn set_label(&mut self, label: &str) {
-        if self.label != label {
-            self.label = label.to_string();
-            self.draw();
-        }
-    }
-
     /// Draws the button as chosen (`true`), in the selection colors, or
     /// not: for a button that is one of a set of choices, such as a day
     /// of the week or one of AM and PM.
@@ -169,10 +144,6 @@ impl Button {
             self.on = on;
             self.draw();
         }
-    }
-
-    pub fn is_on(&self) -> bool {
-        self.on
     }
 
     /// A button that is not enabled is drawn dim and is not touched.

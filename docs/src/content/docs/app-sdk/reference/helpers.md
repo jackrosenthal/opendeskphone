@@ -141,10 +141,7 @@ impl Button {
     pub fn new(parent: Widget, bounds: Rect, label: &str, look: Look) -> Button;
     pub fn with_icon(parent: Widget, bounds: Rect, icon: Icon, look: Look) -> Button;
     pub fn with_font(self, font: Font) -> Button;
-    pub fn label(&self) -> &str;
-    pub fn set_label(&mut self, label: &str);
     pub fn set_on(&mut self, on: bool);
-    pub fn is_on(&self) -> bool;
     pub fn set_enabled(&mut self, enabled: bool);
     pub fn set_visible(&self, visible: bool);
     pub fn place(&mut self, bounds: Rect);
@@ -164,9 +161,7 @@ impl Switch {
 pub const GAP: u16;
 pub fn height() -> u16;
 pub fn split_bottom(area: Rect) -> (Rect, Rect);
-pub fn split_bottom_n(area: Rect, rows: u16) -> (Rect, Rect);
 pub fn columns(row: Rect, n: u16) -> Vec<Rect>;
-pub fn row(place: Rect, i: u16) -> Rect;
 pub fn disc(x: i16, y: i16, d: u16, color: Color) -> canvas::Op;
 ```
 
@@ -197,7 +192,7 @@ Event::Touch((w, t)) => {
 - `set_on` draws a button as chosen, in the selection colors: for one of a set of choices, such as a day of the week or one of AM and PM.  A button that is not enabled (`set_enabled(false)`) is drawn dim and is never touched.
 - `place` moves a button, as `ui::set_bounds` moves a widget.
 - A `Switch` is drawn at the right of its bounds, which are what a finger may touch.  `in_row` makes one for the end of a row of a list: the switch has the hairline under it that the list draws under its rows.
-- `height` is a button's height: a list's row, enough for a finger.  `split_bottom` returns `area` without its bottom, and the place of a full-width button across the bottom, `GAP` in from the edges; `split_bottom_n` has room for several rows of buttons, and `row` is one of them.  `columns` divides a row into places for buttons side by side.
+- `height` is a button's height: a list's row, enough for a finger.  `split_bottom` returns `area` without its bottom, and the place of a full-width button across the bottom, `GAP` in from the edges.  `columns` divides a row into places for buttons side by side.
 - `disc` is a filled circle, for a drawing of the app's own.
 
 The screen's main action is one button across the bottom of the window (`split_bottom`); keep an action that deletes apart from it.
