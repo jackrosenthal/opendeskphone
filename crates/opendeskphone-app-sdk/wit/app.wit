@@ -669,14 +669,16 @@ interface ui {
   /// With `true`, what a finger does on this widget comes as
   /// `event.touch` instead of the built-in behavior, with places counted
   /// from the widget's top-left corner (widget 0: the window's).  A
-  /// touch goes to the widget the finger came down on, or else to the
-  /// nearest widget around that one, that takes touches; the softkeys
-  /// and the back button are not the app's.  A touch no widget takes has
-  /// the built-in behavior: touching a list's row highlights and
-  /// activates it (`highlighted`, if it was not, then `activated`), a
-  /// drag scrolls a list or a scroll widget, and touching an input
-  /// focuses it.  Only a phone with a touchscreen (the `touch` skin) has
-  /// touches; elsewhere this does nothing.
+  /// touch goes to the topmost of the widgets under the finger that take
+  /// touches or have a behavior of their own (a list, an input, a scroll
+  /// widget); the other widgets let it through, and under them all is
+  /// the window, which gets it if it takes touches.  The built-in
+  /// behavior: touching a list's row highlights and activates it
+  /// (`highlighted`, if it was not, then `activated`), a drag scrolls a
+  /// list or a scroll widget, and touching an input focuses it.  The
+  /// softkeys and the back button are not the app's to take.  Only a
+  /// phone with a touchscreen (the `touch` skin) has touches; elsewhere
+  /// this does nothing.
   claim-touch: func(w: widget, on: bool);
 
   /// Gives the app's window the whole display (`true`), or the usual
