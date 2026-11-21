@@ -268,18 +268,21 @@ let
     '';
 
     # The Android OTA package that writes the two: what the stock recovery
-    # installs.  It is not signed.
+    # installs.  It is signed with the key in the tool's `keys` directory,
+    # which is in the repository and so is not a secret.
     package = runCommand "${wireVersion}_D80_firmware.zip" { nativeBuildInputs = [ opendeskphone-image ]; } ''
       opendeskphone-image d80 package \
         --boot ${bootImage} \
         --rootfs ${rootfs} \
         --update-binary ${d80Firmware.updateBinary} \
         --version ${wireVersion} \
+        --key ${../crates/opendeskphone-image/keys/d80-ota.key.pem} \
+        --cert ${../crates/opendeskphone-image/keys/d80-ota.x509.pem} \
         --out $out
     '';
 
     # The package in the vendor's envelope.  A stock image has the vendor's
-    # signature after the package, which this has not.
+    # signature of the image after the package, which this has not.
     eff = runCommand "${wireVersion}_D80_firmware.eff" { nativeBuildInputs = [ opendeskphone-image ]; } ''
       opendeskphone-image eff pack ${package} $out --model D80 --version ${wireVersion}
     '';

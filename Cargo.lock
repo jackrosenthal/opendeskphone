@@ -2745,6 +2745,7 @@ dependencies = [
  "jffs2-image",
  "md-5 0.10.6",
  "miniz_oxide 0.8.9",
+ "rsa",
  "sha1",
  "test-inputs",
 ]

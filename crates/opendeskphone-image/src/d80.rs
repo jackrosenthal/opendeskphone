@@ -8,8 +8,8 @@
 //! - [`BootImage`]: the Android boot image (header version 0) with the
 //!   kernel and a ramdisk.
 //! - [`package`]: the OTA package, which writes the boot image to
-//!   `mmcblk0p1` and the root file system image to `mmcblk0p5`.  It is not
-//!   signed.
+//!   `mmcblk0p1` and the root file system image to `mmcblk0p5`, signed
+//!   ([`sign`]) with the key in `keys/`, which is not a secret.
 //! - [`zl38040_firmware`]: the firmware of the ZL38040 voice processor,
 //!   which is nowhere but inside the stock kernel, in the form the
 //!   mainline driver loads.
@@ -27,6 +27,8 @@
 //! | `mmcblk0p8` | 8 MiB | `/misc` | left alone |
 //! | `mmcblk0p4` | the rest | `/data` | left alone |
 
+use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
 
 /// Size of `mmcblk0p1`, which holds the boot image: 16384 sectors.
@@ -309,8 +311,8 @@ pub fn updater_script() -> String {
 /// The OTA package: the boot image, the root file system image, the script
 /// that writes them, and the stock `update-binary` that runs the script
 /// (the stock recovery runs whatever a package brings under that name).
-/// The package is not signed.
-pub fn package(boot: &[u8], rootfs: &[u8], update_binary: &[u8], version: &str) -> Result<Vec<u8>, String> {
+/// The package is signed with `key`, and carries `cert`; see [`sign`].
+pub fn package(boot: &[u8], rootfs: &[u8], update_binary: &[u8], version: &str, key: &str, cert: &str) -> Result<Vec<u8>, String> {
     BootImage::parse(boot)?;
     if boot.len() > BOOT_PARTITION {
         return Err(format!("the boot image is {} bytes; its partition holds {BOOT_PARTITION}", boot.len()));
@@ -326,13 +328,160 @@ pub fn package(boot: &[u8], rootfs: &[u8], update_binary: &[u8], version: &str) 
     }
     let metadata = format!("post-build=OpenDeskPhone/{DEVICE}/{version}\npre-device={DEVICE}\n");
     let script = updater_script();
-    zip(&[
+    let unsigned = zip(&[
         ZipEntry { name: "META-INF/com/android/metadata", data: metadata.as_bytes(), executable: false },
         ZipEntry { name: "META-INF/com/google/android/update-binary", data: update_binary, executable: true },
         ZipEntry { name: "META-INF/com/google/android/updater-script", data: script.as_bytes(), executable: false },
         ZipEntry { name: "rootfs.img", data: rootfs, executable: false },
         ZipEntry { name: "boot.img", data: boot, executable: false },
-    ])
+    ])?;
+    sign(&unsigned, key, cert)
+}
+
+/// What Android's `signapk` starts the comment of a signed package with.
+const SIGNED_BY: &[u8] = b"signed by SignApk\0";
+
+/// One DER element: its tag, and the parts of its content.
+fn der(tag: u8, parts: &[&[u8]]) -> Vec<u8> {
+    let len: usize = parts.iter().map(|p| p.len()).sum();
+    let mut out = vec![tag];
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let bytes = len.to_be_bytes();
+        let bytes = &bytes[bytes.iter().take_while(|b| **b == 0).count()..];
+        out.push(0x80 | bytes.len() as u8);
+        out.extend_from_slice(bytes);
+    }
+    for p in parts {
+        out.extend_from_slice(p);
+    }
+    out
+}
+
+/// The DER element at the start of `data`, which must have the tag `tag`:
+/// the whole element, its content, and what follows it.
+fn der_element(data: &[u8], tag: u8) -> Option<(&[u8], &[u8], &[u8])> {
+    let (&found, &first) = (data.first()?, data.get(1)?);
+    let (header, len) = if first < 0x80 {
+        (2, usize::from(first))
+    } else {
+        let n = usize::from(first & 0x7f);
+        let bytes = data.get(2..2 + n).filter(|_| n <= 4)?;
+        (2 + n, bytes.iter().fold(0, |len, b| len << 8 | usize::from(*b)))
+    };
+    let end = header.checked_add(len).filter(|end| *end <= data.len())?;
+    (found == tag).then(|| (&data[..end], &data[header..end], &data[end..]))
+}
+
+/// What a signature names of an X.509 certificate.
+struct Certificate<'a> {
+    der: &'a [u8],
+    /// The serial number and the issuer's name, each as a DER element.
+    serial: &'a [u8],
+    issuer: &'a [u8],
+    /// The SubjectPublicKeyInfo.
+    key: &'a [u8],
+}
+
+impl<'a> Certificate<'a> {
+    fn parse(der: &'a [u8]) -> Option<Self> {
+        const SEQUENCE: u8 = 0x30;
+        let (_, certificate, _) = der_element(der, SEQUENCE)?;
+        let (_, mut rest, _) = der_element(certificate, SEQUENCE)?;
+        // The version, which a version 1 certificate leaves out.
+        if let Some((_, _, after)) = der_element(rest, 0xa0) {
+            rest = after;
+        }
+        let (serial, _, rest) = der_element(rest, 0x02)?;
+        let (_, _, rest) = der_element(rest, SEQUENCE)?; // the signature's algorithm
+        let (issuer, _, rest) = der_element(rest, SEQUENCE)?;
+        let (_, _, rest) = der_element(rest, SEQUENCE)?; // the validity
+        let (_, _, rest) = der_element(rest, SEQUENCE)?; // the subject
+        let (key, _, _) = der_element(rest, SEQUENCE)?;
+        Some(Certificate { der, serial, issuer, key })
+    }
+}
+
+/// Sign an OTA package the way `signapk -w` signs the whole file, which is
+/// the signature a recovery checks.  `zip` is an archive without a comment;
+/// `key` is an RSA private key (PKCS #8, PEM), and `cert` its X.509
+/// certificate (PEM).
+///
+/// The signature goes in the archive's comment: the text `signed by
+/// SignApk`, a zero, a PKCS #7 `SignedData` with the certificate, and six
+/// bytes: the distance from the end of the file back to the start of the
+/// `SignedData`, `ff ff`, and the comment's length.  What is signed is the
+/// file up to the comment's length field.  The signature is PKCS #1 v1.5
+/// over SHA-1, as the stock package's is, with no signed attributes, so
+/// that it is the last bytes of the `SignedData`: an old recovery (the
+/// stock one is Android 4.4's) does not parse the `SignedData`, and takes
+/// the bytes before the last six for the signature.
+///
+/// The same input makes the same package: the signature has nothing random
+/// in it.  The `META-INF/MANIFEST.MF`, `CERT.SF`, and `CERT.RSA` of a
+/// signed jar, which `signapk` also adds and a recovery does not read, are
+/// not added.
+pub fn sign(zip: &[u8], key: &str, cert: &str) -> Result<Vec<u8>, String> {
+    const SEQUENCE: u8 = 0x30;
+    const SET: u8 = 0x31;
+    const NULL: [u8; 2] = [0x05, 0x00];
+    // The object identifiers, as DER elements.
+    const SIGNED_DATA: &[u8] = b"\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x07\x02";
+    const DATA: &[u8] = b"\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x07\x01";
+    const SHA1: &[u8] = b"\x06\x05\x2b\x0e\x03\x02\x1a";
+    const RSA: &[u8] = b"\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01";
+    const VERSION: &[u8] = b"\x02\x01\x01";
+
+    let signed = zip.len().checked_sub(2).filter(|at| zip.len() >= 22 && zip[at - 20..at - 16] == *b"PK\x05\x06" && zip[*at..] == [0, 0]);
+    let Some(signed) = signed.map(|at| &zip[..at]) else {
+        return Err("the archive to sign does not end with a directory that has no comment".into());
+    };
+
+    let key = RsaPrivateKey::from_pkcs8_pem(key).map_err(|e| format!("the signing key: {e}"))?;
+    let (label, cert) = rsa::pkcs8::Document::from_pem(cert).map_err(|e| format!("the signing certificate: {e}"))?;
+    let cert = Certificate::parse(cert.as_bytes()).filter(|_| label == "CERTIFICATE").ok_or("the signing certificate is not an X.509 certificate")?;
+
+    let digest = Sha1::digest(signed);
+    let signature = key.sign(Pkcs1v15Sign::new::<Sha1>(), &digest).map_err(|e| format!("signing: {e}"))?;
+    let public = RsaPublicKey::from_public_key_der(cert.key).map_err(|e| format!("the signing certificate's key: {e}"))?;
+    if public.verify(Pkcs1v15Sign::new::<Sha1>(), &digest, &signature).is_err() {
+        return Err("the signing certificate is not the signing key's".into());
+    }
+
+    let sha1 = der(SEQUENCE, &[SHA1, &NULL]);
+    let signer = der(
+        SEQUENCE,
+        &[
+            VERSION,
+            &der(SEQUENCE, &[cert.issuer, cert.serial]),
+            &sha1,
+            &der(SEQUENCE, &[RSA, &NULL]),
+            &der(0x04, &[&signature]),
+        ],
+    );
+    let signed_data = der(
+        SEQUENCE,
+        &[VERSION, &der(SET, &[&sha1]), &der(SEQUENCE, &[DATA]), &der(0xa0, &[cert.der]), &der(SET, &[&signer])],
+    );
+    let pkcs7 = der(SEQUENCE, &[SIGNED_DATA, &der(0xa0, &[&signed_data])]);
+
+    // A recovery looks for the directory's end from the end of the file,
+    // and refuses a comment that has the look of another one.
+    if pkcs7.windows(4).any(|w| w == b"PK\x05\x06") {
+        return Err("the signature has the mark of a zip directory's end in it".into());
+    }
+    let (Ok(from_end), Ok(comment)) = (u16::try_from(pkcs7.len() + 6), u16::try_from(SIGNED_BY.len() + pkcs7.len() + 6)) else {
+        return Err("the signature is too large for a zip comment".into());
+    };
+    let mut out = signed.to_vec();
+    out.extend_from_slice(&comment.to_le_bytes());
+    out.extend_from_slice(SIGNED_BY);
+    out.extend_from_slice(&pkcs7);
+    out.extend_from_slice(&from_end.to_le_bytes());
+    out.extend_from_slice(&[0xff, 0xff]);
+    out.extend_from_slice(&comment.to_le_bytes());
+    Ok(out)
 }
 
 /// The largest kernel a stock zImage is taken to unpack to.
@@ -515,7 +664,7 @@ mod tests {
     fn a_package_has_what_recovery_runs() {
         let boot = BootImage::new(kernel(5000), empty_ramdisk(), "").build().unwrap();
         let rootfs = b"hsqs-and-the-rest".to_vec();
-        let z = package(&boot, &rootfs, b"\x7fELF...", "3_1_0").unwrap();
+        let z = package(&boot, &rootfs, b"\x7fELF...", "3_1_0", KEY, CERT).unwrap();
         let text = String::from_utf8_lossy(&z);
         for name in [
             "META-INF/com/google/android/update-binary",
@@ -528,9 +677,52 @@ mod tests {
         assert!(text.contains("package_extract_file(\"boot.img\", \"/dev/block/mmcblk0p1\");"));
         assert!(text.contains("package_extract_file(\"rootfs.img\", \"/dev/block/mmcblk0p5\");"));
         assert!(text.contains("pre-device=model80"));
-        assert!(package(&boot, b"not squashfs", b"\x7fELF", "3_1_0").is_err());
-        assert!(package(b"not a boot image", &rootfs, b"\x7fELF", "3_1_0").is_err());
-        assert!(package(&boot, &rootfs, b"#!/bin/sh", "3_1_0").is_err());
+        assert!(package(&boot, b"not squashfs", b"\x7fELF", "3_1_0", KEY, CERT).is_err());
+        assert!(package(b"not a boot image", &rootfs, b"\x7fELF", "3_1_0", KEY, CERT).is_err());
+        assert!(package(&boot, &rootfs, b"#!/bin/sh", "3_1_0", KEY, CERT).is_err());
+    }
+
+    const KEY: &str = include_str!("../keys/d80-ota.key.pem");
+    const CERT: &str = include_str!("../keys/d80-ota.x509.pem");
+
+    /// A recovery's check of a package (Android's `verifier.cpp`), with
+    /// the key in the tree.
+    #[test]
+    fn a_signed_package_is_what_a_recovery_checks() {
+        let unsigned = zip(&[ZipEntry { name: "a", data: b"123456789", executable: false }]).unwrap();
+        let z = sign(&unsigned, KEY, CERT).unwrap();
+        assert_eq!(z, sign(&unsigned, KEY, CERT).unwrap());
+
+        // The footer, and the end of the directory where it says.
+        let footer = &z[z.len() - 6..];
+        assert_eq!(footer[2..4], [0xff, 0xff]);
+        let from_end = usize::from(u16::from_le_bytes([footer[0], footer[1]]));
+        let comment = usize::from(u16::from_le_bytes([footer[4], footer[5]]));
+        let end = z.len() - comment - 22;
+        assert_eq!(&z[end..end + 4], b"PK\x05\x06");
+        assert_eq!(z[end + 20..end + 22], footer[4..]);
+        assert!(!z[end + 4..].windows(4).any(|w| w == b"PK\x05\x06"));
+        assert!(z[end + 22..].starts_with(SIGNED_BY));
+        // What is signed is the archive as it was, less the comment's length.
+        let signed = &z[..z.len() - comment - 2];
+        assert_eq!(signed, &unsigned[..unsigned.len() - 2]);
+
+        // The signature is the last bytes before the footer, and the
+        // PKCS #7 holds the certificate.
+        let pkcs7 = &z[z.len() - from_end..z.len() - 6];
+        assert_eq!(z[end + 22 + SIGNED_BY.len()..z.len() - 6], *pkcs7);
+        assert_eq!(der_element(pkcs7, 0x30).unwrap().0, pkcs7);
+        let (_, cert) = rsa::pkcs8::Document::from_pem(CERT).unwrap();
+        assert!(pkcs7.windows(cert.as_bytes().len()).any(|w| w == cert.as_bytes()));
+        let public = RsaPublicKey::from_public_key_der(Certificate::parse(cert.as_bytes()).unwrap().key).unwrap();
+        let signature = &pkcs7[pkcs7.len() - 256..];
+        public.verify(Pkcs1v15Sign::new::<Sha1>(), &Sha1::digest(signed), signature).unwrap();
+
+        // Not an archive, an archive with a comment, and a certificate
+        // that is not the key's.
+        assert!(sign(b"PK", KEY, CERT).is_err());
+        assert!(sign(&z, KEY, CERT).is_err());
+        assert!(sign(&unsigned, KEY, KEY).is_err());
     }
 
     /// The firmware of a made-up stock kernel: two data records and the

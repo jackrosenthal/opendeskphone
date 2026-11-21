@@ -71,7 +71,7 @@ nix build .#eff-d80
 
 | Output | Result |
 | --- | --- |
-| `ota-d80` | `<version>_D80_firmware.zip`: the OTA package.  It is not signed. |
+| `ota-d80` | `<version>_D80_firmware.zip`: the OTA package, signed with the key in the repository. |
 | `eff-d80` | `<version>_D80_firmware.eff`: the same package in the vendor's EFF envelope. |
 
 :::caution[Not yet run on a phone]
@@ -90,11 +90,13 @@ The package writes two partitions and leaves the rest of the eMMC as stock made 
 
 The package contains `boot.img`, `rootfs.img`, the script that writes them (`META-INF/com/google/android/updater-script`), and the program that runs the script (`update-binary`).  The program is the stock package's own, because the stock recovery runs whatever program a package brings.
 
+The package is signed the way Android's `signapk -w` signs a whole file: the signature (RSA with SHA-1, as in the stock package) and the certificate are in the zip file's comment.  The key and its certificate are `d80-ota.key.pem` and `d80-ota.x509.pem` in `crates/opendeskphone-image/keys`.  The private key is in the repository, so the signature does not show who built a package: anyone can make it.  It is there for a recovery that installs only signed packages and has this certificate among its keys.
+
 The image build takes four more files from the stock D80 image, which Nix downloads from the vendor (`nix/d80-firmware.nix`): the firmware of the voice processor, the firmware and the settings file of the Wi-Fi module, and the patch file of the Bluetooth module.
 
 Three things about installing the package are not settled:
 
-- **The signature.**  A stock package is signed with the vendor's key, and the stock firmware's updater also checks a signature at the end of an EFF image.  The package and the EFF image built here have neither.  The stock updater passes a bare zip file to the recovery without the EFF check.  Whether the stock recovery installs a package without the vendor's signature is not known.
+- **The signature.**  A stock package is signed with the vendor's key, and the stock firmware's updater also checks a signature at the end of an EFF image.  The package built here is signed with the key in the repository instead, and the EFF image has no signature at its end.  The stock updater passes a bare zip file to the recovery without the EFF check.  Whether the stock recovery installs a package that is not signed with the vendor's key is not known.
 - **The way back.**  The package overwrites the stock `/system` partition.  The stock recovery in `mmcblk0p2` can install a stock package again, but `dphone` cannot start the recovery yet.
 - **Updates from the running phone.**  `dphone update install` refuses on a D80.  A D80 has no firmware banks, so its installer would be the recovery.
 

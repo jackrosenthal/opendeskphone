@@ -33,7 +33,8 @@
 //! ```text
 //! opendeskphone-image d80 boot-image --kernel zImage-dtb --out boot.img
 //! opendeskphone-image d80 package --boot boot.img --rootfs rootfs.squashfs \
-//!     --update-binary update-binary --version 3_1_0 --out 3_1_0_D80_firmware.zip
+//!     --update-binary update-binary --version 3_1_0 \\
+//!     --key keys/d80-ota.key.pem --cert keys/d80-ota.x509.pem --out 3_1_0_D80_firmware.zip
 //! opendeskphone-image eff pack 3_1_0_D80_firmware.zip 3_1_0_D80_firmware.eff --model D80 --version 3_1_0
 //! ```
 
@@ -103,7 +104,7 @@ enum D80Cmd {
     },
     /// Print the header of an Android boot image and check its id
     BootImageInfo { image: PathBuf },
-    /// Boot image + SquashFS root file system -> unsigned Android OTA package (zip)
+    /// Boot image + SquashFS root file system -> signed Android OTA package (zip)
     Package {
         /// Image made by `d80 boot-image`
         #[arg(long)]
@@ -117,6 +118,12 @@ enum D80Cmd {
         /// Version text, e.g., 3_1_0
         #[arg(long)]
         version: String,
+        /// RSA private key to sign the package with (PKCS #8, PEM)
+        #[arg(long)]
+        key: PathBuf,
+        /// The key's X.509 certificate (PEM)
+        #[arg(long)]
+        cert: PathBuf,
         #[arg(long)]
         out: PathBuf,
     },
@@ -647,12 +654,13 @@ fn d80_cmd(cmd: D80Cmd) -> Res<()> {
                 println!("  not as this tool builds one: {p}");
             }
         }
-        D80Cmd::Package { boot, rootfs, update_binary, version, out } => {
+        D80Cmd::Package { boot, rootfs, update_binary, version, key, cert, out } => {
             let (boot, rootfs) = (read(&boot)?, read(&rootfs)?);
-            let data = d80::package(&boot, &rootfs, &read(&update_binary)?, &version)?;
+            let text = |path: &Path| std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()));
+            let data = d80::package(&boot, &rootfs, &read(&update_binary)?, &version, &text(&key)?, &text(&cert)?)?;
             write(&out, &data)?;
             println!(
-                "{}: D80 {version} ({} bytes, not signed): boot image {} bytes, root file system {} bytes",
+                "{}: D80 {version} ({} bytes, signed): boot image {} bytes, root file system {} bytes",
                 out.display(),
                 data.len(),
                 boot.len(),

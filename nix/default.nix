@@ -25,7 +25,8 @@
 #   rootfs-d80             the SquashFS image of it, for mmcblk0p5
 #   eff-<model>            flashable image, one per model
 #   ota-d80                the D80's image as the Android OTA package (a
-#                          zip, not signed) that its EFF carries
+#                          zip, signed with the key in the repository) that
+#                          its EFF carries
 #   all                    the seven EFFs of the D40 thru D70 in one
 #                          directory
 {
