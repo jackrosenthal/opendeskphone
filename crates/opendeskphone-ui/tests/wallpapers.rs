@@ -1137,58 +1137,66 @@ fn a_wallpaper_picture_on_the_d80() {
     assert_eq!((at_d80(&fitted, 100, 0), at_d80(&fitted, 700, D80_H - 1)), (0x401010, 0x101040));
 }
 
-/// On the D80 the waves move on the idle screen, as they do on the color
-/// skin, and a frame made from the one before is the screen drawn whole.
-/// The other motions change what grows with the screen's area, and cost
-/// too much there (`Wallpaper::frame_ms_sized`): those wallpapers are
-/// still on the D80.
+/// The most a channel of a pixel changes from one frame of a wallpaper's
+/// motion to the next on the D80.  More than on the color skin
+/// ([`SMOOTH`]): the motion goes as far as the composition is large, but
+/// the sharp edge of a circle (fizz, orbit) is as many pixels wide as it
+/// is there, so it passes over a pixel in fewer frames.
+const SMOOTH_D80: u32 = 10;
+
+/// On the D80 every wallpaper that moves on the color skin moves on the
+/// idle screen, ten to twenty frames a second, and as it does there:
+/// nothing goes farther than a pixel between two frames (the flow, whose
+/// colors would go farther, has twice as many), a frame is the picture of
+/// a time and nothing else, it comes back after a cycle, and drawing only
+/// what moved since the frame before gives the picture drawn whole.  On
+/// the idle screen a frame made from the one before is the screen drawn
+/// whole.
 #[test]
-fn on_the_d80_the_waves_move() {
+fn on_the_d80_the_wallpapers_move() {
     let _alone = MOTION.lock().unwrap_or_else(|p| p.into_inner());
     for id in MOVING {
         let w = wallpaper::find(id).unwrap();
-        let waves = ["tides", "dunes"].contains(&id);
-        assert_eq!(w.frame_ms_sized(D80_W, D80_H).is_some(), waves, "{id}");
+        let every = u64::from(w.frame_ms_sized(D80_W, D80_H).unwrap());
+        assert_eq!(every, u64::from(w.frame_ms().unwrap()) / if id == "regatta" { 2 } else { 1 }, "{id}");
+        assert!((50..=100).contains(&every), "{id}: a frame every {every} ms");
+        assert_eq!(wallpaper::CYCLE_MS % (2 * every), 0, "{id}");
         assert_eq!(w.frame_ms_sized(WIDTH, HEIGHT), w.frame_ms(), "{id}");
-        let mut r = Rig::with_model(Model::D80, UiConfig { theme: id.into(), ..UiConfig::default() });
-        r.ui.set_motion_time(Some(3_000));
-        r.frame();
-        assert_eq!(r.ui.motion_deadline().is_some(), waves, "{id}");
+        let farthest = w.farthest_step_sized(D80_W, D80_H).unwrap();
+        assert!((1..=16).contains(&farthest), "{id}: {farthest} sixteenths of a pixel in a frame");
+        let start = 7_000;
+        let first = w.render_at_sized(D80_W, D80_H, start);
+        assert_eq!(first, w.render_at_sized(D80_W, D80_H, start + wallpaper::CYCLE_MS), "{id}: after a cycle");
+        assert!(w.with_frame_and_changes_sized(D80_W, D80_H, start, |f, _| f == first.as_slice()), "{id}");
+        let mut last = first;
+        for n in 1..=3 {
+            let t = start + n * every;
+            let whole = w.render_at_sized(D80_W, D80_H, t);
+            assert!(w.with_frame_and_changes_sized(D80_W, D80_H, t, |f, _| f == whole.as_slice()), "{id}: frame {n} drawn from the one before");
+            let (count, most) = difference(&last, &whole);
+            assert!(count > 0 && most <= SMOOTH_D80, "{id}: frame {n} differs from the one before by {most} in a channel, in {count} pixels");
+            last = whole;
+        }
+        // On the idle screen.
+        let rig = |t: u64| {
+            let mut r = Rig::with_model(Model::D80, UiConfig { theme: id.into(), ..UiConfig::default() });
+            r.ui.set_motion_time(Some(t));
+            r.frame();
+            r
+        };
+        let mut t = 2_000;
+        let mut r = rig(t);
+        assert!(r.ui.motion_deadline().is_some(), "{id}");
+        let first = r.frame();
+        for n in 1..=4 {
+            t += every;
+            let made = r.ui.motion_frames();
+            r.ui.motion_step(t);
+            assert_eq!(r.ui.motion_frames() - made, 1, "{id}: frame {n}");
+        }
+        let (stepped, whole) = (r.frame(), rig(t).frame());
+        let (_, most) = difference(&stepped, &whole);
+        assert!(most <= 1, "{id}: differs by {most} from the screen drawn whole");
+        assert_ne!(stepped, first, "{id}");
     }
-    let tides = wallpaper::find("tides").unwrap();
-    let every = u64::from(tides.frame_ms().unwrap());
-    // Nothing goes farther than a pixel between two frames.
-    let farthest = tides.farthest_step_sized(D80_W, D80_H).unwrap();
-    assert!((1..=16).contains(&farthest), "{farthest} sixteenths of a pixel in a frame");
-    // Frame after frame, each drawn from the one before, is the picture
-    // drawn whole; and it comes back after a cycle.
-    let start = 7_000;
-    let first = tides.render_at_sized(D80_W, D80_H, start);
-    assert_eq!(first, tides.render_at_sized(D80_W, D80_H, start + wallpaper::CYCLE_MS));
-    assert!(tides.with_frame_and_changes_sized(D80_W, D80_H, start, |f, _| f == first.as_slice()));
-    for n in 1..=6 {
-        let t = start + n * every;
-        let whole = tides.render_at_sized(D80_W, D80_H, t);
-        assert!(tides.with_frame_and_changes_sized(D80_W, D80_H, t, |f, _| f == whole.as_slice()), "frame {n}");
-    }
-    // On the idle screen.
-    let rig = |t: u64| {
-        let mut r = Rig::with_model(Model::D80, UiConfig { theme: "tides".into(), ..UiConfig::default() });
-        r.ui.set_motion_time(Some(t));
-        r.frame();
-        r
-    };
-    let mut t = 2_000;
-    let mut r = rig(t);
-    let first = r.frame();
-    for n in 1..=8 {
-        t += every;
-        let made = r.ui.motion_frames();
-        r.ui.motion_step(t);
-        assert_eq!(r.ui.motion_frames() - made, 1, "frame {n}");
-    }
-    let (stepped, whole) = (r.frame(), rig(t).frame());
-    let (_, most) = difference(&stepped, &whole);
-    assert!(most <= 1, "differs by {most} from the screen drawn whole");
-    assert_ne!(stepped, first);
 }

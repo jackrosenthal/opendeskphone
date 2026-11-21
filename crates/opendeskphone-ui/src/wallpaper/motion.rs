@@ -41,6 +41,82 @@ fn turn_at(t_ms: u64, turns: i32) -> i32 {
     ((phase * i64::from(turns)) & 0xFFFF) as i32
 }
 
+/// The farthest a turn of `reach` (in any parts of a pixel) at `turns`
+/// turns a cycle goes in `ms` milliseconds, in the same parts, rounded up:
+/// a turn's fastest is 2 pi times its reach.
+fn fastest(reach: i32, turns: i32, ms: u64) -> u64 {
+    (u64::from(reach.unsigned_abs()) * u64::from(turns.unsigned_abs()) * 6_284 * ms).div_ceil(CYCLE_MS * 1000)
+}
+
+/// The farthest the colors of a flow go between two of a row's turns
+/// (frames `every` milliseconds apart), in sixteenths of a pixel, rounded
+/// up: as far as its waves move the positions, over how fast the
+/// positions run across the screen (`whole` along `ax`).  A bound: its
+/// waves at their fastest, all at once.
+fn flow_step(waves: impl Iterator<Item = (i32, i32)>, whole: i32, ax: i32, every: u64) -> u64 {
+    let positions: u64 = waves.map(|(amount, turns)| fastest(amount * 16, turns, FIELDS * every)).sum();
+    (positions * u64::from(whole.unsigned_abs())).div_ceil(u64::from((ONE * ax.max(1)).unsigned_abs()))
+}
+
+/// The shortest time from one frame to the next, in milliseconds: twenty
+/// frames a second.
+const SHORTEST: u32 = 50;
+
+/// The time from one frame of `spec`'s motion to the next on a screen of
+/// `fit`, in milliseconds; `None` for a wallpaper that does not move
+/// there.
+///
+/// On the color skin's screen it is the description's.  On a larger
+/// screen the motion goes as far as the composition is large
+/// ([`Fit::size`]), so a frame moves things farther in pixels: there it is
+/// the longest whole part of the description's time (no shorter than
+/// [`SHORTEST`]) with which nothing goes farther than a pixel from one
+/// frame to the next (a flow's colors: from one of a row's turns to the
+/// next).  The circles move in steps of whole frames, chosen by this time
+/// ([`Disc::new`]).
+pub(super) fn every_ms(spec: &Spec, fit: &Fit) -> Option<u32> {
+    let moves = spec.moves.as_ref()?;
+    if fit.is_native() {
+        return Some(moves.every_ms);
+    }
+    // The farthest anything goes in a frame of `every` milliseconds, in
+    // sixteenths of a pixel (a bound, as `Moving::farthest` has it).
+    let step = |every: u64| -> Option<u64> {
+        match (&moves.motion, &spec.base) {
+            (Motion::Bob(bob), _) => {
+                let reach = |r: i32| fit.size(r).abs();
+                if bob.iter().any(|&(r, ..)| reach(r) + 8 > ABOVE) {
+                    return None;
+                }
+                Some(bob.iter().map(|&(r, turns, _)| fastest(reach(r), turns, every)).max().unwrap_or(0))
+            }
+            (Motion::Wander { reach, turns }, _) => {
+                // As `Disc::new` has its speed, at the most reach and the
+                // most turns.
+                let (a, b) = (fastest(fit.size(reach.0 * 16), turns.1, every), fastest(fit.size(reach.1 * 16), turns.1, every));
+                Some(a.max(b) + a.min(b).div_ceil(2))
+            }
+            (Motion::Run(turns), Base::Flow { flow: Flow::Ribbons { ax, ay, waves }, .. }) if (fit.w as usize).is_multiple_of(KNOT) => {
+                let waves = waves.iter().enumerate().map(|(i, &(amount, ..))| (amount, turns.get(i).copied().unwrap_or(0)));
+                Some(flow_step(waves, fit.w * ax + fit.h * ay, *ax, every))
+            }
+            (Motion::Run(_), _) => None,
+        }
+    };
+    // The whole parts of the description's time that a cycle has a whole
+    // number of pairs of (the rows of a flow take turns), longest first.
+    let every = moves.every_ms;
+    let times = (1..=every / SHORTEST.min(every)).filter(|k| every % k == 0).map(|k| every / k);
+    let mut chosen = every;
+    for time in times.filter(|t| CYCLE_MS.is_multiple_of(2 * u64::from(*t))) {
+        chosen = time;
+        if step(u64::from(time))? <= 16 {
+            break;
+        }
+    }
+    Some(chosen)
+}
+
 // ----------------------------------------------------- to the frame buffer
 
 /// A channel's least and greatest value here: with the noise and the
@@ -149,17 +225,16 @@ impl Moving {
     /// not.
     pub(super) fn new(id: &'static str, spec: &'static Spec, fit: Fit) -> Option<Moving> {
         let moves = spec.moves.as_ref()?;
+        let every = u64::from(every_ms(spec, &fit)?);
         let base: Vec<u32> = match spec.base {
             Base::Flow { .. } => Vec::new(),
             _ => render_base(&spec.base, &fit).into_iter().map(|p| pack(limit(unpack(p)))).collect(),
         };
         let kind = match (&moves.motion, &spec.base) {
             (Motion::Bob(bob), _) => Kind::Waves(Waves::new(spec.layers, bob, fit)?),
-            (Motion::Wander { reach, turns }, _) => {
-                Kind::Discs(Discs::new(spec.layers, *reach, *turns, u64::from(moves.every_ms), &base, fit))
-            }
+            (Motion::Wander { reach, turns }, _) => Kind::Discs(Discs::new(spec.layers, *reach, *turns, every, &base, fit)),
             (Motion::Run(turns), Base::Flow { flow: Flow::Ribbons { ax, ay, waves }, stops }) => {
-                Kind::Flow(Stream::new(*ax, *ay, waves, turns, stops, u64::from(moves.every_ms), fit)?)
+                Kind::Flow(Stream::new(*ax, *ay, waves, turns, stops, every, fit)?)
             }
             (Motion::Run(_), _) => return None,
         };
@@ -170,7 +245,7 @@ impl Moving {
             base,
             dither: spec.dither,
             kind,
-            every: u64::from(moves.every_ms),
+            every,
             drawn: false,
             changed: Vec::new(),
             serial: 0,
@@ -206,14 +281,7 @@ impl Moving {
                 })
                 .max()
                 .unwrap_or(0),
-            // The colors of a flow go as far as its waves move the
-            // positions, over how fast the positions run across the
-            // screen.  (A turn's fastest is 2 pi times its reach.)
-            Kind::Flow(s) => {
-                let fastest = |reach: i32, turns: i32, ms: u64| (u64::from(reach.unsigned_abs()) * u64::from(turns.unsigned_abs()) * 6_284 * ms).div_ceil(CYCLE_MS * 1000);
-                let positions: u64 = s.waves.iter().map(|&((amount, ..), turns)| fastest(amount * 16, turns, FIELDS * every)).sum();
-                (positions * u64::from(s.whole.unsigned_abs())).div_ceil(u64::from((ONE * s.ax.max(1)).unsigned_abs()))
-            }
+            Kind::Flow(s) => flow_step(s.waves.iter().map(|&((amount, ..), turns)| (amount, turns)), s.whole, s.ax, every),
         }
     }
 
@@ -491,10 +559,13 @@ impl Disc {
         let soft = soft_edge(r, soft);
         let reach = (fit.size(reach.0 * 16), fit.size(reach.1 * 16));
         let edge = r + soft / 2 + 16;
-        // A table of at most 1024 entries; the steps across the edge of
-        // the largest circle are a tenth of a pixel.
+        // A table of at most 1024 entries on the color skin's screen, and
+        // on a larger one as many more as the circles are larger (an edge
+        // is as wide there): the steps across the edge of the largest
+        // circle are a tenth of a pixel, or less.
+        let entries = 1024 * fit.size(256) / 256;
         let mut shift = 0;
-        while ((edge * edge) >> shift) >= 1024 {
+        while ((edge * edge) >> shift) >= entries {
             shift += 1;
         }
         let opacity: Vec<u16> = (0..=(edge * edge) >> shift)

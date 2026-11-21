@@ -340,19 +340,20 @@ impl Wallpaper {
         self.spec.moves.as_ref().map(|m| m.every_ms)
     }
 
-    /// [`Wallpaper::frame_ms`] on a screen of `w` x `h` pixels.  On a
-    /// screen of another size than the color skin's, only the waves move
-    /// ([`Motion::Bob`]): a frame changes the rows a crest passed over,
-    /// which grow with the screen's width alone.  What the other motions
-    /// change grows with the screen's area (the ring of a circle grows
-    /// with it, and a flow changes every pixel), and on the touch skin's
-    /// 800 x 1280 a frame of theirs cost 4 to 24 times what it costs on
-    /// the color skin's screen (measured in the simulator, the screen
-    /// brought up to the frame as the UI does it; the waves: 2.5 to 3
-    /// times), so they are still there.
+    /// [`Wallpaper::frame_ms`] on a screen of `w` x `h` pixels.  On the
+    /// color skin's screen it is the same.  On a larger one the motion
+    /// goes as far as the composition is large, and so farther in pixels
+    /// from one frame to the next: where a frame would move something
+    /// farther than a pixel, frames come as often as keeps it within one
+    /// (on the touch skin's 800 x 1280, the flow's: twice as often).
+    ///
+    /// What a frame changes grows with the screen's area (the ring of a
+    /// circle; a flow changes every pixel), and on the touch skin a frame
+    /// costs 2.5 to 24 times what it costs on the color skin's screen, up
+    /// to a few milliseconds in the simulator (the screen brought up to
+    /// the frame as the UI does it); the D80's processor affords that.
     pub fn frame_ms_sized(&self, w: i32, h: i32) -> Option<u32> {
-        let moves = self.spec.moves.as_ref()?;
-        (Fit::new(w, h).is_native() || matches!(moves.motion, Motion::Bob(_))).then_some(moves.every_ms)
+        motion::every_ms(&self.spec, &Fit::new(w, h))
     }
 
     /// The farthest anything in the picture goes from one frame of the
