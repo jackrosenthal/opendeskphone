@@ -907,8 +907,9 @@ impl LightUp {
         ui::claim_touch(cursor, true);
 
         let shown = clock(self.elapsed);
+        // (Clear of the title bar's home button, at the right.)
         let gap = m.line_height / 2;
-        let time = Rect::new(m.back_width as i16, 0, m.width.saturating_sub(m.back_width + gap), m.title_height);
+        let time = Rect::new(m.back_width as i16, 0, m.width.saturating_sub(2 * m.back_width), m.title_height);
         let clock = text(time, Font::Bold, Align::Right, &shown);
         let y = board_y + (side + gap) as i16;
         let line = |n: u16| {

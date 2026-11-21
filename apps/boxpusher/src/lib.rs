@@ -445,10 +445,11 @@ impl BoxPusher {
         }
 
         let board = if m.skin == Skin::Touch {
-            // The panel: one line, after the back button; the level takes
-            // the left of it, and the counts share the rest.
+            // The panel: one line, the title bar between its back and
+            // home buttons; the level, the title, takes the left of it,
+            // and the counts share the rest.
             let x = l.panel_x + m.back_width as i16;
-            let width = l.panel_width.saturating_sub(m.back_width);
+            let width = l.panel_width.saturating_sub(2 * m.back_width);
             let (level, count) = (width * 3 / 8, width * 5 / 16);
             let part = |x: i16, width: u16| Rect::new(x, 0, width, m.title_height);
             let board = Board {
