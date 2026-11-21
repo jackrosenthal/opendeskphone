@@ -123,7 +123,7 @@ pub fn list_as(
 ) -> usize {
     let row_h = row_h.max(1);
     let visible = (r.h / row_h).max(1) as usize;
-    if th.touch {
+    if th.touch() {
         state.settle_touch(len, visible);
     } else {
         state.settle(len, visible);
@@ -137,7 +137,7 @@ pub fn list_as(
             break;
         }
         let rr = IRect::new(r.x, r.y + i as i32 * row_h, w, row_h);
-        if th.touch {
+        if th.touch() {
             c.hit(rr, Hit::Row { list, row: idx as u32 });
         }
         let sel = idx == state.selected && focused;
@@ -166,7 +166,7 @@ pub fn list_as(
 /// that has it.
 pub fn title_bar(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
     c.fill(r, th.title_bg);
-    let r = if th.touch {
+    let r = if th.touch() {
         let (back, rest) = r.split_left(th.back_w);
         back_button(c, th, back, th.title_fg);
         // The title begins where the other skins' does, after the button.

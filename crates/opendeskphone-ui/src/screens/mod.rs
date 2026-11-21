@@ -273,7 +273,7 @@ impl Screen for Menu {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: an item is touched, and the title bar has the way back.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         vec![soft(1, tr::SELECT), soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
@@ -325,18 +325,18 @@ impl Screen for Menu {
         // Touch: no row is the selected one (there is no cursor), and the
         // rows have no numbers (there are no digit keys): an icon, or the
         // title's inset.
-        let numbered = self.numbered && !th.touch;
+        let numbered = self.numbered && !th.touch();
         let num_w = if numbered {
             if th.gray { 15 } else { area.w / 10 }
-        } else if th.touch && items.iter().any(|it| it.icon.is_some()) {
+        } else if th.touch() && items.iter().any(|it| it.icon.is_some()) {
             th.back_w
-        } else if th.touch {
+        } else if th.touch() {
             th.title_pad
         } else {
             th.pad
         };
         let f = th.font(Font::Normal);
-        widgets::list(c, th, widgets::body_rows(th, body), items.len(), &mut self.st, th.row_h, !th.touch, |c, r, i, sel, fg| {
+        widgets::list(c, th, widgets::body_rows(th, body), items.len(), &mut self.st, th.row_h, !th.touch(), |c, r, i, sel, fg| {
             let it = &items[i];
             let (num, rest) = r.split_left(num_w);
             if let Some(icon) = it.icon.and_then(|n| th.icon(n)) {
@@ -428,7 +428,7 @@ impl Screen for EditScreen {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the buttons are by the field, and the keyboard deletes.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         vec![soft(1, tr::OK), soft(0, ""), soft(3, tr::DELETE), soft(4, tr::CANCEL)]
@@ -481,7 +481,7 @@ impl Screen for EditScreen {
         c.fill(area, th.bg);
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, body);
         }
         let h = if th.gray { th.line_h + 4 } else { th.px(40) };
@@ -517,7 +517,7 @@ impl Info {
     fn row_h(th: &Theme) -> i32 {
         if th.gray {
             th.line_h
-        } else if th.touch {
+        } else if th.touch() {
             th.row_h * 3 / 4
         } else {
             th.row_h
@@ -531,7 +531,7 @@ impl Screen for Info {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the title bar has the way back.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         vec![soft(0, ""), soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
@@ -744,7 +744,7 @@ impl Screen for Level {
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the buttons are by the slider, and the title bar has the
         // way back.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         vec![soft(1, "\u{2013}"), soft(2, "+"), soft(0, ""), soft(4, tr::BACK)]
@@ -798,7 +798,7 @@ impl Screen for Level {
         let (title, body) = area.split_top(th.title_h);
         widgets::title_bar(c, th, title, &self.title);
         let level = self.shown.unwrap_or_else(|| (self.get)(cx));
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, body, level);
         }
         let h = if th.gray { 10 } else { th.px(22) };

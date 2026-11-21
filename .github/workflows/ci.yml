@@ -4,7 +4,7 @@
 #
 #   kernel, web, apps, brush, coreutils, sed, workspace,
 #   checks-deps, asterisk                                 (nothing before them)
-#   rootfs, tests, clippy                                 (from those)
+#   rootfs, d80, tests, clippy                            (from those)
 #   one image per model, jffs2-mount                      (from rootfs)
 #   checks                                                (`nix flake check`)
 #   cache                                                 (for the next run)
@@ -105,6 +105,25 @@ jobs:
           stores: nix-new-{kernel,web,apps,brush,coreutils,sed,workspace}
           results: true
 
+  # The firmware binary with the D80's touch skin.  No image is made of it
+  # yet; building it keeps it building, and checks that it has the skin,
+  # as the build of the other binary (in `rootfs`) checks that the phones
+  # with keys do not get it.
+  d80:
+    name: d80
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/nix-build
+        with:
+          name: d80
+          installables: .#opendeskphone-d80
+          cache: true
+          stores: nix-new-{web,workspace}
+
   model:
     name: ${{ matrix.model }}
     needs: rootfs
@@ -187,7 +206,7 @@ jobs:
   # this builds nothing unless a check has been added without a job.
   checks:
     name: checks
-    needs: [rootfs, tests, clippy, jffs2-mount]
+    needs: [rootfs, d80, tests, clippy, jffs2-mount]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -196,7 +215,7 @@ jobs:
       - uses: ./.github/actions/nix-build
         with:
           cache: true
-          stores: nix-new-{kernel,brush,coreutils,sed,rootfs,tests,clippy,jffs2-mount}
+          stores: nix-new-{kernel,brush,coreutils,sed,rootfs,d80,tests,clippy,jffs2-mount}
 
       - run: nix flake check --print-build-logs
 
@@ -208,7 +227,7 @@ jobs:
   # cache needs the vendor's server.
   cache:
     name: cache
-    needs: [build, rootfs, tests, clippy, jffs2-mount]
+    needs: [build, rootfs, d80, tests, clippy, jffs2-mount]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30

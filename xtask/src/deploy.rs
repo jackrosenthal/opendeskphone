@@ -6,6 +6,10 @@
 //! `/tmp/opendeskphone`, and ask the main role to restart.  `/tmp` is a tmpfs,
 //! so a reboot returns the phone to the binary in its flash image.
 //!
+//! The binary is the one the images of the phones with keys (D40 to D70)
+//! have: built without the D80's touch skin (`opendeskphone`'s feature
+//! `d80`), which is large, and `/tmp` is the phone's memory.
+//!
 //! This uses the workstation's `scp` and `ssh` against the phone's built-in
 //! SSH server; the phone must have your key in
 //! `/nvdata/opendeskphone/authorized_keys`.
@@ -17,6 +21,9 @@ use crate::{Result, repo_root};
 
 const TARGET: &str = "arm-unknown-linux-musleabi";
 const REMOTE: &str = "/tmp/opendeskphone";
+/// The build of the phones with keys, as nix/workspace.nix has it.
+const BUILD: [&str; 9] =
+    ["build", "--release", "-p", "opendeskphone", "--target", TARGET, "--no-default-features", "--features", "web"];
 
 #[derive(Debug, clap::Args)]
 pub struct Deploy {
@@ -42,7 +49,7 @@ pub fn deploy(args: Deploy) -> Result<()> {
     let root = repo_root();
     if !args.no_build {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        run(Command::new(cargo).current_dir(&root).args(["build", "--release", "-p", "opendeskphone", "--target", TARGET]))?;
+        run(Command::new(cargo).current_dir(&root).args(BUILD))?;
     }
     let target_dir = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
     let binary = target_dir.join(TARGET).join("release/dphone");

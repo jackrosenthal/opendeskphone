@@ -40,8 +40,8 @@ use opendeskphone_state::{Model, Skin};
 pub struct Theme {
     pub skin: Skin,
     pub gray: bool,
-    /// The touch skin: the screen is touched, and there are no keys.
-    pub touch: bool,
+    /// The touch skin ([`Theme::touch`]).
+    touch: bool,
     /// How many of this skin's pixels a pixel of the color skin is, for a
     /// length that is the same to the eye ([`Theme::px`]): 2 on the touch
     /// skin, 1 on the others.
@@ -201,6 +201,10 @@ const COLOR_INIT: Theme = Theme {
 /// 96, and a title bar is 96 tall with the back button at its left.  The
 /// lines (the D80's stand-in for line keys) are a column of tabs of 96 at
 /// the right half of the screen, from the top, as on the other skins.
+///
+/// Only in a build with the feature `touch`: its fonts and icons are the
+/// largest there are, and a phone with keys has no room for them.
+#[cfg(feature = "touch")]
 static TOUCH: Theme = Theme {
     skin: Skin::Touch,
     touch: true,
@@ -295,6 +299,15 @@ const fn gray_theme(skin: Skin) -> Theme {
         load_fill: GRAY[0],
         wallpaper_fg: GRAY[0],
     }
+}
+
+/// True for the model with the touch skin (the D80) in a build that has
+/// the skin (the feature `touch`); always false, and known to the compiler
+/// to be, in one that has not.  As [`Theme::touch`], for code that has the
+/// model and no theme.
+#[inline(always)]
+pub(crate) const fn is_touch(model: Model) -> bool {
+    cfg!(feature = "touch") && model.is_touch()
 }
 
 /// The colors of a theme: every color role a skin has, and nothing else.
@@ -604,7 +617,7 @@ impl Theme {
         static THEMES: [std::sync::OnceLock<Vec<Theme>>; 2] = [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
         let (base, slot): (&'static Theme, usize) = match self.skin {
             Skin::Color => (&COLOR, 0),
-            Skin::Touch => (&TOUCH, 1),
+            Skin::Touch => (Self::for_skin(Skin::Touch), 1),
             Skin::SmallGray | Skin::LargeGray => return self,
         };
         let all = crate::wallpaper::all();
@@ -629,7 +642,7 @@ impl Theme {
         static MADE: std::sync::Mutex<Vec<&'static Theme>> = std::sync::Mutex::new(Vec::new());
         let base: &'static Theme = match self.skin {
             Skin::Color => &COLOR,
-            Skin::Touch => &TOUCH,
+            Skin::Touch => Self::for_skin(Skin::Touch),
             Skin::SmallGray | Skin::LargeGray => return self,
         };
         let mut made = MADE.lock().unwrap_or_else(|p| p.into_inner());
@@ -641,16 +654,34 @@ impl Theme {
         th
     }
 
+    /// The theme of a skin.  A build without the feature `touch` (the
+    /// firmware of the phones with keys) has no touch skin: it answers
+    /// with the color skin, and is not for a D80 (`dphone` does not start
+    /// as one).
     pub fn for_skin(skin: Skin) -> &'static Theme {
         match skin {
             Skin::SmallGray => &SMALL_GRAY,
             Skin::LargeGray => &LARGE_GRAY,
             Skin::Color => &COLOR,
+            #[cfg(feature = "touch")]
             Skin::Touch => &TOUCH,
+            #[cfg(not(feature = "touch"))]
+            Skin::Touch => &COLOR,
         }
     }
     pub fn for_model(model: Model) -> &'static Theme {
         Self::for_skin(model.skin())
+    }
+
+    /// The touch skin: the screen is touched, and there are no keys.
+    ///
+    /// Always false, and known to the compiler to be, in a build without
+    /// the feature `touch`: what the screens do only on the touch skin is
+    /// behind this, and so is left out of that build with the skin's
+    /// fonts and icons.  (Hence a function, where `gray` is a field.)
+    #[inline(always)]
+    pub const fn touch(&self) -> bool {
+        cfg!(feature = "touch") && self.touch
     }
 
     pub fn font(&self, f: Font) -> &'static FontData {
@@ -721,8 +752,10 @@ impl Theme {
     /// A length given in pixels of the color skin, in this skin's: the
     /// same on the color skin, twice as many on the touch skin.  For the
     /// sizes the screens give in numbers (a dialog's width, an inset).
+    #[inline(always)]
     pub const fn px(&self, color_px: i32) -> i32 {
-        color_px * self.scale
+        // (Without the touch skin, every skin's scale is 1.)
+        if cfg!(feature = "touch") { color_px * self.scale } else { color_px }
     }
 
     /// How many rows of buttons `n` softkeys take on the touch skin: four

@@ -27,7 +27,9 @@ The `result` link points to the image in the Nix store, named `<version>_<model>
 A flake in a git repository sees only the files that git tracks, including uncommitted changes to those files.  A new file is invisible to the build until `git add`.
 :::
 
-The kernel, the root file system, and the `dphone` binary are the same for every model.  The images differ only in the device tree attached to the kernel and in the model name in the image header.
+The kernel, the root file system, and the `dphone` binary are the same for these seven models.  The images differ only in the device tree attached to the kernel and in the model name in the image header.
+
+The D80 has no image yet.  Its `dphone` binary is a separate build; see [Phone families](#phone-families).
 
 ### Image components
 
@@ -35,7 +37,8 @@ Each component of an image is a separate flake output.
 
 | Output | Result |
 | --- | --- |
-| `opendeskphone` | The firmware binary for the phone: static, for ARMv6. |
+| `opendeskphone` | The firmware binary for the phones with keys (D40 to D70): static, for ARMv6, without the D80's touch skin. |
+| `opendeskphone-d80` | The firmware binary with the D80's touch skin.  No image contains it yet. |
 | `opendeskphone-early` | The early-boot stage. |
 | `kernel` | The kernel (`zImage`), a device tree for each model, and the loadable modules. |
 | `kernel-<model>` | `kernel.bin`: the kernel and the model's device tree, as written to a kernel partition. |
@@ -64,11 +67,30 @@ Three Open DPMA crates (`dpma-sys`, `dpma-ast`, and `res_open_dpma`) read the he
 cargo build --workspace --exclude dpma-sys --exclude dpma-ast --exclude res_open_dpma
 ```
 
-`cargo build -p opendeskphone` builds the firmware binary for the workstation, which the [simulator](simulator.md) runs.  For the phone, `.cargo/config.toml` sets the linker and the processor flags of the `arm-unknown-linux-musleabi` target:
+`cargo build -p opendeskphone` builds the firmware binary for the workstation, which the [simulator](simulator.md) runs.  For a phone with keys (D40 to D70), `.cargo/config.toml` sets the linker and the processor flags of the `arm-unknown-linux-musleabi` target:
 
 ```sh
-cargo build --release -p opendeskphone --target arm-unknown-linux-musleabi
+cargo build --release -p opendeskphone --target arm-unknown-linux-musleabi --no-default-features --features web
 ```
+
+### Phone families
+
+The `dphone` binary is built in two ways, selected by the cargo feature `d80` of the `opendeskphone` crate:
+
+| Build | Cargo arguments | Models |
+| --- | --- | --- |
+| Phones with keys | `--no-default-features --features web` | D40, D45, D50, D60, D62, D65, and D70 |
+| Every model | none: `d80` is a default feature | The same, and the D80 |
+
+The phones with keys have little flash, and the D80's touch skin has the largest fonts and artwork of any skin, so the binary in their images is built without `d80`.  That binary has none of the touch skin's fonts, icons, and artwork, and none of the code that only a touchscreen uses, e.g., the on-screen keyboard.  It does not start as a D80: `dphone main --model d80` logs an error and exits.
+
+The feature `d80` enables the feature `touch` of `opendeskphone-ui`.  With `touch` off, the build script of `opendeskphone-ui` generates no touch skin tables, and `Theme::touch()` is false at compile time, so the compiler removes the code behind it.  Code that only the touch skin needs must be behind `Theme::touch()` to stay out of the small build.
+
+A build with default features has every model.  The simulator, `cargo test`, and Clippy use the default features, so one test run covers all eight models.  A crate that depends on `opendeskphone-ui` outside its tests must set `default-features = false`: otherwise cargo enables `touch` in the binary of the phones with keys.
+
+The Nix build guards against that.  The touch skin's icon data begins with a marker string (`TOUCH_MARK` in `crates/opendeskphone-ui/build.rs`).  The build of `.#opendeskphone` fails if the binary contains the marker, and the build of `.#opendeskphone-d80` fails if the binary lacks it.
+
+`.#opendeskphone-d80` is built for the same ARMv6 target as the other binary, as a stand-in until the D80's hardware support exists.
 
 ### Web frontend
 
@@ -116,7 +138,9 @@ The flake's checks skip nothing except the [network namespace tests](#network-na
 | `nix build .#checks.x86_64-linux.tests` | Runs the tests of every crate and of the apps, with the stock images, an Asterisk server with Open DPMA, and an SSH client, and requires the tests that need them to run. |
 | `nix build .#checks.x86_64-linux.clippy` | Lints the workspace and the apps with Clippy.  Any warning fails the check. |
 | `nix build .#checks.x86_64-linux.jffs2-mount` | In a virtual machine, mounts the root file system image with the kernel's JFFS2 driver, on simulated NAND flash and on a RAM device, and compares the files with the source directory.  Requires `/dev/kvm`. |
-| `nix flake check` | Runs every check, and builds the kernel, the utilities, and the `dphone` binary. |
+| `nix build .#checks.x86_64-linux.opendeskphone` | Builds the `dphone` binary for the phones with keys, and fails if the binary contains the D80's touch skin. |
+| `nix build .#checks.x86_64-linux.opendeskphone-d80` | Builds the `dphone` binary with the D80's touch skin, and fails if the binary lacks the skin. |
+| `nix flake check` | Runs every check, and builds the kernel, the utilities, and both `dphone` binaries. |
 
 CI (`.github/workflows/ci.yml`) also uploads the image of every model as a workflow artifact named `firmware-<model>`, so a pushed branch's images need no local build.
 

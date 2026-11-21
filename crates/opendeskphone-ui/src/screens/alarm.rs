@@ -30,7 +30,7 @@ impl Screen for AlarmScreen {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the buttons are on the screen itself.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         vec![soft(SK_SNOOZE, tr::SNOOZE), soft(0, ""), soft(0, ""), soft(SK_DISMISS, tr::DISMISS)]
@@ -60,7 +60,7 @@ impl Screen for AlarmScreen {
         boot::title_band(c, th, title, tr::ALARM);
         let Some(ringing) = &cx.st.alarms.ringing else { return };
         // Touch: the buttons at the bottom, and the time above them.
-        let body = if th.touch {
+        let body = if th.touch() {
             let margin = th.px(16);
             let (rest, buttons) = body.split_bottom(th.touch_min * 4 + margin * 3);
             let buttons = buttons.inset_xy(margin, 0);
@@ -79,7 +79,7 @@ impl Screen for AlarmScreen {
         let gap = if th.gray { 4 } else { th.px(10) };
         let digits = big.glyph('0').map(|g| g.top as i32).unwrap_or(big.ascent as i32);
         let (tw, mw) = (big.width(&time), if mer.is_empty() { 0 } else { sub.width(mer) + gap / 2 });
-        if th.touch {
+        if th.touch() {
             // The alarm's icon above the time, the two in the middle.
             let icon = th.icon("app-alarms");
             let ih = icon.map(|i| i.height() + 2 * gap).unwrap_or(0);

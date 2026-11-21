@@ -3,7 +3,10 @@
 #   kernel                 zImage, DTBs, modules (one build for all models)
 #   kernel-source          v7.3 with the port applied, unbuilt (for editing)
 #   kernel-<model>         boot image for the k0/k1 slot
-#   opendeskphone          the firmware binary (ARMv6, static)
+#   opendeskphone          the firmware binary of the phones with keys, D40
+#                          to D70 (ARMv6, static)
+#   opendeskphone-d80      the firmware binary with the D80's touch skin (no
+#                          image is made of it yet)
 #   opendeskphone-image    host tool: EFF, OTA, kernel image, rootfs
 #   brush, coreutils, sed  shell and utilities (ARMv6, static)
 #   apps                   built-in phone apps (.wasm)
@@ -123,7 +126,12 @@ in
     inherit kernel;
     kernel-source = kernel.source;
     inherit (userland) brush coreutils sed;
-    inherit (workspace) opendeskphone opendeskphone-early opendeskphone-image;
+    inherit (workspace)
+      opendeskphone
+      opendeskphone-d80
+      opendeskphone-early
+      opendeskphone-image
+      ;
     asterisk-modules = asterisk.modules;
     rootfs-tree = image.rootfsTree;
     inherit (image) rootfs;
@@ -148,7 +156,10 @@ in
     inherit (workspace) tests clippy;
     inherit kernel;
     inherit (userland) brush coreutils sed;
-    inherit (workspace) opendeskphone;
+    # Each of the two firmware binaries is checked for the touch skin as it
+    # is built: the one must not have it, and the other must
+    # (workspace.nix).
+    inherit (workspace) opendeskphone opendeskphone-d80;
     # The rootfs image under the kernel's JFFS2 driver, on simulated NAND.
     jffs2-mount = pkgs.callPackage ./jffs2-mount-test.nix {
       image = image.rootfs;

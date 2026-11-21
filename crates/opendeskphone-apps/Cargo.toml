@@ -29,7 +29,9 @@ ui = ["dep:opendeskphone-ui"]
 clap = { version = "4", features = ["derive", "env"], optional = true }
 opendeskphone-state = { path = "../opendeskphone-state" }
 dpma-proto = { workspace = true, optional = true }
-opendeskphone-ui = { path = "../opendeskphone-ui", optional = true }
+# Without its default features: whether the toolkit has the touch skin is
+# for the program to say (`opendeskphone`'s feature `d80`).
+opendeskphone-ui = { path = "../opendeskphone-ui", optional = true, default-features = false }
 getrandom = "0.3"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }

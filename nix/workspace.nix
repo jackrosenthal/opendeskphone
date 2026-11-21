@@ -1,4 +1,5 @@
-# The cargo workspace: `opendeskphone` for the phone, the two host tools
+# The cargo workspace: `opendeskphone` for the phone (one build for the
+# phones with keys, and one with the D80's touch skin), the two host tools
 # (`opendeskphone-image`, `opendeskphone-apps-build`), the DPMA module for the
 # tests' Asterisk (`res_open_dpma`), and the test and lint checks.
 #
@@ -80,18 +81,54 @@ let
       package = craneLib.buildPackage (full // { inherit cargoArtifacts; });
     };
 
-  phone = twoStage (
-    {
-      pname = "opendeskphone";
-      cargoExtraArgs = "--locked -p opendeskphone";
-      dontStrip = true;
-      dontPatchELF = true;
-    }
-    // rust.armEnv
+  # The firmware binary is built twice, by family of phones.  The phones
+  # with keys (D40 to D70) have little flash, so their binary is built
+  # without the feature `d80` of crates/opendeskphone: it has nothing of the
+  # D80's touch skin, whose fonts and artwork are the largest of any skin.
+  # The D80's binary has every feature (cargo's default, which is also what
+  # the simulator and the tests are built with).
+  #
+  # Each build is checked for the bytes that the touch skin's icon data
+  # begins with (`TOUCH_MARK` in crates/opendeskphone-ui/build.rs, which
+  # must say the same): the binary of the phones with keys must not have
+  # them, and the D80's must, so that neither the skin nor the check goes
+  # astray unnoticed.
+  touchSkinMark = "opendeskphone-ui touch skin icons";
+  phoneArgs = {
+    pname = "opendeskphone";
+    cargoExtraArgs = "--locked -p opendeskphone --no-default-features --features web";
+    dontStrip = true;
+    dontPatchELF = true;
+    doInstallCheck = true;
+    installCheckPhase = ''
+      if grep --quiet --text --fixed-strings '${touchSkinMark}' $out/bin/dphone; then
+        echo "dphone for the phones with keys has the D80's touch skin: is opendeskphone-ui built with its feature touch?" >&2
+        exit 1
+      fi
+    '';
+  }
+  // rust.armEnv
+  // {
+    # The frontend where opendeskphone-web's build script looks for it, as
+    # `pnpm build` leaves it in a checkout.
+    preBuild = "mkdir -p web && ln -s ${webDist} web/dist";
+  };
+  phone = twoStage phoneArgs;
+
+  # The features change only the workspace's own crates, so the D80's
+  # binary is built on the same dependency layer.
+  phoneD80 = craneLib.buildPackage (
+    phone.full
     // {
-      # The frontend where opendeskphone-web's build script looks for it, as
-      # `pnpm build` leaves it in a checkout.
-      preBuild = "mkdir -p web && ln -s ${webDist} web/dist";
+      pname = "opendeskphone-d80";
+      cargoExtraArgs = "--locked -p opendeskphone";
+      cargoArtifacts = phone.deps;
+      installCheckPhase = ''
+        if ! grep --quiet --text --fixed-strings '${touchSkinMark}' $out/bin/dphone; then
+          echo "dphone for the D80 has no touch skin, or the skin's mark has changed (TOUCH_MARK in crates/opendeskphone-ui/build.rs)" >&2
+          exit 1
+        fi
+      '';
     }
   );
 
@@ -151,8 +188,15 @@ in
 {
   inherit src version;
 
-  # The firmware binary: static, ARMv6 soft-float.
+  # The firmware binary of the phones with keys (D40 to D70): static, ARMv6
+  # soft-float, without the D80's touch skin.
   opendeskphone = phone.package;
+
+  # The firmware binary with the D80's touch skin.  It is built for the
+  # same target as the other, for want of the D80's own: what the D80's
+  # processor is, is to be settled when its hardware is brought up, and no
+  # image is made of this yet.
+  opendeskphone-d80 = phoneD80;
 
   # `/init` of the kernel's initramfs: static, ARMv6 soft-float, a few
   # kilobytes.

@@ -850,7 +850,7 @@ impl Tree {
     /// Selects a row.  (On the touch skin, where a list does not follow
     /// its selection as it is drawn, this scrolls the row into view.)
     pub fn list_select(&mut self, id: WidgetId, row: u32) {
-        let touch = self.model.is_touch();
+        let touch = crate::skin::is_touch(self.model);
         if let Some(n) = self.node_mut(id) {
             n.selected = row.min(n.rows.len().saturating_sub(1) as u32);
             if touch {
@@ -987,7 +987,7 @@ impl Tree {
     /// on-screen keyboard types into ([`AppView::type_text`],
     /// [`AppView::backspace`]).
     pub fn keyboard_input(&self) -> Option<(WidgetId, InputMode)> {
-        if !self.model.is_touch() {
+        if !crate::skin::is_touch(self.model) {
             return None;
         }
         let n = self.node(self.focus?)?;

@@ -19,7 +19,7 @@ use opendeskphone_state::{Health, HealthStatus, NetPhase, Phase, ProvisionPhase,
 /// back button it has on the touch skin.  (Also the ringing alarm's: there
 /// it is the alarm's buttons that take it down.)
 pub(crate) fn title_band(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
-    if !th.touch {
+    if !th.touch() {
         return widgets::title_bar(c, th, r, title);
     }
     c.fill(r, th.title_bg);
@@ -33,7 +33,7 @@ pub(crate) fn title_band(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
 /// `percent`, each where it is given.
 #[allow(clippy::too_many_arguments)]
 fn notice(c: &mut Canvas, th: &Theme, area: IRect, icon: &str, tint: Rgb, title: &str, text: &str, percent: Option<u32>) {
-    if !th.touch {
+    if !th.touch() {
         return splash(c, th, area, title, text, percent);
     }
     let inner = area.inset_xy(th.pad * 3, 0);
@@ -227,12 +227,12 @@ impl Screen for Recovery {
         let mut text = tr::RECOVERY_TEXT.to_string();
         if let Some(ip) = cx.st.network.ipv4.address {
             // (Touch: the address on a line of its own.)
-            text = format!("{text}{}http://{ip}/", if th.touch { "\n\n" } else { " " });
+            text = format!("{text}{}http://{ip}/", if th.touch() { "\n\n" } else { " " });
         }
         let f = th.font(if th.gray { Font::Small } else { Font::Normal });
         let lh = if th.gray { th.line_h - 3 } else { th.line_h };
-        let inset = if th.touch { th.title_pad } else { th.pad };
-        c.text_wrapped(f, body.inset_xy(inset, if th.touch { th.pad } else { 2 }), &text, th.fg, HAlign::Left, lh);
+        let inset = if th.touch() { th.title_pad } else { th.pad };
+        c.text_wrapped(f, body.inset_xy(inset, if th.touch() { th.pad } else { 2 }), &text, th.fg, HAlign::Left, lh);
     }
 }
 
@@ -350,7 +350,7 @@ impl Screen for Provision {
             // `choosePbx.js` and `noAvahiServers.js`); Cancel there comes
             // back here.
             // (Touch: a row is touched; Select is a cursor's.)
-            ProvisionPhase::AwaitingServer | ProvisionPhase::AwaitingUser if cx.th.touch => {
+            ProvisionPhase::AwaitingServer | ProvisionPhase::AwaitingUser if cx.th.touch() => {
                 vec![soft(0, ""), soft(6, tr::NETWORK), soft(0, ""), soft(4, tr::STATUS)]
             }
             ProvisionPhase::AwaitingServer | ProvisionPhase::AwaitingUser => {
@@ -471,17 +471,17 @@ impl Screen for Provision {
         // Touch: there is no cursor, but the server the count will choose
         // is shown chosen.
         let counting = self.seconds_left(cx);
-        let focused = !th.touch || counting.is_some();
+        let focused = !th.touch() || counting.is_some();
         // The list, under its title; returns the bottom of its last row.
         let listing = |c: &mut Canvas, title: &str, rows: Vec<String>, st: &mut ListState| {
             c.fill(area, th.bg);
             let (t, body) = area.split_top(th.title_h);
             title_band(c, th, t, title);
-            if th.touch {
+            if th.touch() {
                 c.hit(body, Hit::Custom(HIT_ELSEWHERE));
             }
             let body = widgets::body_rows(th, body);
-            let inset = if th.touch { th.title_pad } else { th.pad * 2 };
+            let inset = if th.touch() { th.title_pad } else { th.pad * 2 };
             let shown = widgets::list(c, th, body, rows.len(), st, th.row_h, focused, |c, r, i, _, fg| {
                 c.text_in(f, r.inset_xy(inset, 0), &rows[i], fg, HAlign::Left);
             });
@@ -500,7 +500,7 @@ impl Screen for Provision {
                 if let Some(n) = counting {
                     // The last line of the body, below the three rows (on
                     // touch, right below them, where the eye is).
-                    let y = if th.touch { (end + th.pad).min(area.bottom() - th.line_h) } else { area.bottom() - th.line_h };
+                    let y = if th.touch() { (end + th.pad).min(area.bottom() - th.line_h) } else { area.bottom() - th.line_h };
                     let line = IRect { y, h: th.line_h, ..area };
                     c.fill(line, th.bg);
                     c.text_in(f, line, &format!("{}{n}", AUTO_SELECTING), th.fg, HAlign::Center);

@@ -127,7 +127,7 @@ impl Screen for CallLogScreen {
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: an entry is touched to dial it, its button shows its
         // details, and the title bar has the way back.
-        if cx.th.touch {
+        if cx.th.touch() {
             if cx.st.call_log.entries.is_empty() {
                 return Vec::new();
             }
@@ -158,7 +158,7 @@ impl Screen for CallLogScreen {
             1 => self.dial(cx),
             2 => {
                 let Some(e) = self.rows(cx).get(self.st.selected).map(|e| (*e).clone()) else { return Nav::Stay };
-                let touch = cx.th.touch;
+                let touch = cx.th.touch();
                 let dial = e.clone();
                 let info = Info::boxed("call_log_entry", tr::DETAILS, move |cx| {
                     let civil = crate::time::Civil::from_unix(e.start_unix, cx.cfg.utc_offset_secs);
@@ -216,7 +216,7 @@ impl Screen for CallLogScreen {
     fn hook(&mut self, cx: &Cx, off_hook: bool) -> Nav {
         // Lifting the handset dials the selected entry.  (Touch: there is
         // no selected entry to see; the phone does what it does anywhere.)
-        if off_hook && !self.rows(cx).is_empty() && !cx.th.touch { self.dial(cx) } else { Nav::Ignored }
+        if off_hook && !self.rows(cx).is_empty() && !cx.th.touch() { self.dial(cx) } else { Nav::Ignored }
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         if !self.seen {
@@ -228,7 +228,7 @@ impl Screen for CallLogScreen {
         let th = cx.th;
         c.fill(area, th.bg);
         let (title, mut body) = area.split_top(th.title_h);
-        if th.touch {
+        if th.touch() {
             widgets::title_bar(c, th, title, tr::CALL_LOG);
             let (tabs, rest) = body.split_top(th.row_h);
             self.draw_tabs(c, th, tabs);
@@ -243,7 +243,7 @@ impl Screen for CallLogScreen {
         }
         let h24 = cx.cfg.time_24h;
         let off = cx.cfg.utc_offset_secs;
-        if th.touch {
+        if th.touch() {
             widgets::list(c, th, body, rows.len(), &mut self.st, th.row_h, false, |c, r, i, _, fg| {
                 touch_log_row(c, th, r, rows[i], i, fg, h24, off);
             });
@@ -432,7 +432,7 @@ impl Launcher {
 
 impl Launcher {
     fn columns(th: &Theme) -> usize {
-        if th.gray { 1 } else if th.touch { 3 } else { 4 }
+        if th.gray { 1 } else if th.touch() { 3 } else { 4 }
     }
     fn launch(&self, cx: &Cx) -> Nav {
         if let Some(a) = visible_apps(cx).get(self.st.selected) {
@@ -484,7 +484,7 @@ impl Screen for Launcher {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: an app is touched, and the title bar has the way back.
-        if cx.th.touch {
+        if cx.th.touch() {
             return Vec::new();
         }
         vec![soft(1, tr::SELECT), soft(0, ""), soft(0, ""), soft(4, tr::BACK)]
@@ -545,7 +545,7 @@ impl Screen for Launcher {
             c.text_in(th.font(Font::Normal), body, tr::NO_APPS, th.secondary, HAlign::Center);
             return;
         }
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, body);
         }
         if th.gray {
@@ -992,7 +992,7 @@ impl Screen for Themes {
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: the sheet's title bar has the way back.
-        if cx.th.touch {
+        if cx.th.touch() {
             return if cx.cfg.theme_locked { Vec::new() } else { vec![soft(1, tr::SELECT)] };
         }
         // A theme the provisioning server fixed can be looked at only.
@@ -1035,7 +1035,7 @@ impl Screen for Themes {
     }
     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
         let th = cx.th;
-        if th.touch {
+        if th.touch() {
             return self.draw_touch(cx, c, area);
         }
         // The idle screen, by its own code (without an app's idle view,
@@ -1106,7 +1106,7 @@ impl Screen for Ringtones {
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
         // Touch: a tap plays, and the title bar has the way back; Select
         // once there is a ringtone to choose.
-        if cx.th.touch {
+        if cx.th.touch() {
             return if self.picked.is_some() { vec![soft(1, tr::SELECT)] } else { Vec::new() };
         }
         vec![soft(1, tr::SELECT), soft(2, tr::PLAY), soft(0, ""), soft(4, tr::BACK)]
@@ -1163,8 +1163,8 @@ impl Screen for Ringtones {
         let tones = &cx.cfg.ringtones;
         // Touch: the ringtone marked is the one tapped, if any (there is
         // no cursor).
-        let focused = !th.touch || self.picked.is_some();
-        let mark_w = if th.touch { th.back_w } else { th.icon + 2 * th.pad };
+        let focused = !th.touch() || self.picked.is_some();
+        let mark_w = if th.touch() { th.back_w } else { th.icon + 2 * th.pad };
         widgets::list(c, th, widgets::body_rows(th, body), tones.len(), &mut self.st, th.row_h, focused, |c, r, i, _, fg| {
             let (mark, rest) = r.split_left(mark_w);
             if tones[i] == cx.cfg.ringtone
