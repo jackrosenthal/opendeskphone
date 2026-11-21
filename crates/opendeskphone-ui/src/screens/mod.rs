@@ -815,8 +815,8 @@ impl Level {
         let row = IRect::new(body.x + th.pad * 2, body.y + (body.h - b) / 2, body.w - th.pad * 4, b);
         let (minus, rest) = row.split_left(b);
         let (rest, plus) = rest.split_right(b);
-        widgets::button(c, th, minus, "\u{2013}", th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Custom(LEVEL_MINUS));
-        widgets::button(c, th, plus, "+", th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Custom(LEVEL_PLUS));
+        widgets::button_styled(c, th, minus, "\u{2013}", widgets::ButtonStyle::Secondary, Hit::Custom(LEVEL_MINUS));
+        widgets::button_styled(c, th, plus, "+", widgets::ButtonStyle::Secondary, Hit::Custom(LEVEL_PLUS));
         // The slider: a bar with round ends, filled to the level, and a
         // round knob at the level; the knob's middle goes from one end of
         // the track to the other.

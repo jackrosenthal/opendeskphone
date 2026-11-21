@@ -1703,7 +1703,7 @@ impl Ui {
                     let (minus, rest) = rest.split_left(th.touch_min);
                     let (rest, plus) = rest.split_right(th.touch_min);
                     for (r, label, key) in [(minus, "\u{2013}", Key::VolumeDown), (plus, "+", Key::VolumeUp)] {
-                        widgets::button(c, th, r, label, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Key(key));
+                        widgets::button_styled(c, th, r, label, widgets::ButtonStyle::Secondary, Hit::Key(key));
                     }
                     rest.inset_xy(th.pad, 0)
                 } else {

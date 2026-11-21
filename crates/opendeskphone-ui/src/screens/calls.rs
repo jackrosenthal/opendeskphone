@@ -366,7 +366,7 @@ pub(crate) fn no_account_notice(cx: &Cx) -> bool {
     }
     cx.post(Command::Notify {
         level: opendeskphone_state::NoticeLevel::Warning,
-        title: tr::NO_ACCOUNT_TITLE.into(),
+        title: tr::NO_PHONE_ACCOUNT.into(),
         text: tr::NO_ACCOUNT_TEXT.into(),
         timeout_ms: 6000,
     });

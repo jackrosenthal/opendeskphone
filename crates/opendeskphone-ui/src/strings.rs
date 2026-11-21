@@ -327,7 +327,6 @@ pub const LINE_UNAVAILABLE: &str = "Unavailable";
 // The idle screen in words.
 pub const VOICEMAIL_TITLE: &str = "Voicemail";
 pub const NO_VOICEMAIL_NUMBER: &str = "This phone's account has no voicemail number.";
-pub const NO_ACCOUNT_TITLE: &str = "No phone account";
 pub const NO_ACCOUNT_TEXT: &str = "This phone has no account, so it cannot place calls.";
 pub const NO_PHONE_ACCOUNT: &str = "No phone account";
 pub const TAP_TO_SET_UP: &str = "Tap to set up";

@@ -330,8 +330,8 @@ impl BluetoothScreen {
             let (refuse, accept) = buttons.split_left((buttons.w - gap) / 2);
             let accept = IRect { x: accept.x + gap, w: accept.w - gap, ..accept };
             let yes = if q.pin_needed { tr::OK } else { tr::BT_PAIR };
-            widgets::button(c, th, refuse, tr::CANCEL, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Soft(SK_REFUSE));
-            widgets::button(c, th, accept, yes, th.sel_bg, None, th.sel_fg, Hit::Soft(SK_ACCEPT));
+            widgets::button_styled(c, th, refuse, tr::CANCEL, widgets::ButtonStyle::Secondary, Hit::Soft(SK_REFUSE));
+            widgets::button_styled(c, th, accept, yes, widgets::ButtonStyle::Primary, Hit::Soft(SK_ACCEPT));
         }
         let (head, rest) = inner.split_top(th.line_h);
         let (icon, title) = head.split_left(th.icon + th.pad);
@@ -399,7 +399,7 @@ fn touch_row(cx: &Cx, c: &mut Canvas, r: IRect, row: Row, i: usize) {
     for &(id, text) in buttons.iter().rev() {
         let w = (bf.width(text) + th.px(32)).max(th.touch_min);
         let b = IRect::new(right - w, r.y + (r.h - th.touch_min) / 2, w, th.touch_min);
-        widgets::button(c, th, b, text, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Custom(id << 16 | i as u32));
+        widgets::button_styled(c, th, b, text, widgets::ButtonStyle::Secondary, Hit::Custom(id << 16 | i as u32));
         right = b.x - th.pad;
     }
     // The name, and the state under it.
