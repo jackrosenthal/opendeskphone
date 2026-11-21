@@ -16,7 +16,7 @@ pub enum Model {
 }
 
 /// Old family: grayscale, 16 kHz audio.  New family: color, 32 kHz audio.
-/// Touch: the D80.
+/// Touch: the D80, color, 16 kHz audio, on an i.MX 6DualLite.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Family {
     Old,

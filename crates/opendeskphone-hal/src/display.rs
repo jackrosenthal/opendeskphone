@@ -46,6 +46,11 @@ impl FrameInfo {
             Screen::Main => model.main_screen(),
             Screen::Side => model.side_screen()?,
         };
+        // The D80's panel takes 24 bits a pixel (over LVDS), and the stock
+        // kernel gives it a framebuffer of 32 (`bpp=32` on its command
+        // line).  That it takes `XR24` is not yet seen on the hardware.
+        // Its scan-out is upside down to the user: stock rotates it by 180
+        // degrees, and so it was seen on the hardware.
         let format = if model.is_color() { PixelFormat::Xrgb8888 } else { PixelFormat::R8 };
         Some(FrameInfo {
             width: size.width,
@@ -149,9 +154,9 @@ const fn backlight_table(model: Model, screen: Screen) -> [u8; 11] {
         (Model::D70, Screen::Main) => [0, 1, 4, 6, 9, 11, 13, 15, 17, 19, 21],
         (Model::D70, Screen::Side) => [0, 1, 3, 4, 6, 7, 9, 12, 14, 17, 16],
         (Model::D60 | Model::D62 | Model::D65, _) => [0, 2, 6, 10, 14, 17, 20, 23, 26, 29, 32],
-        // Not stock's: even steps of the range taken for the D80's
-        // backlight, until the hardware's is known.
-        (Model::D80, _) => [0, 26, 51, 77, 102, 128, 153, 179, 204, 230, 255],
+        // Not stock's, which is not yet known (the D80's phone application
+        // is an Android one): even steps of its backlight's range, 0..=248.
+        (Model::D80, _) => [0, 25, 50, 74, 99, 124, 149, 174, 198, 223, 248],
     }
 }
 
@@ -179,7 +184,8 @@ pub const fn backlight_setting(model: Model, screen: Screen, raw: u8) -> u8 {
 
 /// Backlight brightness and (gray panels) contrast.
 pub trait Backlight: Send {
-    /// Highest brightness level (32 color, 31 gray); 0 is off.
+    /// Highest brightness level (32 color, 31 gray, 248 on the D80); 0 is
+    /// off.
     fn max_brightness(&self, screen: Screen) -> u8;
     fn brightness(&self, screen: Screen) -> Result<u8>;
     /// Sets the level.  It lights the backlight only while the panel is on
