@@ -350,6 +350,22 @@ fn focusable(tree: &Tree) -> Vec<WidgetId> {
     out
 }
 
+/// Where a widget is in the view, as it is drawn (within what holds it,
+/// and scrolled as a `Scroll` it is in is).
+pub(crate) fn widget_rect(tree: &Tree, id: WidgetId) -> Option<IRect> {
+    let mut n = tree.node(id)?;
+    let mut r = IRect::new(n.rect.x as i32, n.rect.y as i32, n.rect.w as i32, n.rect.h as i32);
+    while let Some(parent) = n.parent {
+        n = tree.node(parent)?;
+        r.x += n.rect.x as i32;
+        r.y += n.rect.y as i32;
+        if n.kind == WidgetKind::Scroll {
+            r.y -= n.scroll_y as i32;
+        }
+    }
+    Some(r)
+}
+
 /// Deletes the character before the cursor of the focused input.  Returns
 /// whether an input has the focus.
 fn delete_before_cursor(tree: &mut Tree, events: &mut Vec<AppEvent>) -> bool {

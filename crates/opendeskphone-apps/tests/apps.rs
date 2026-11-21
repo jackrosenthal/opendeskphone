@@ -1089,3 +1089,146 @@ fn a_playing_message_has_one_softkey_on_a_phone_with_keys() {
     r.softkey("voicemail", "Play");
     assert_eq!(r.ui.softkeys("voicemail"), ["Stop"]);
 }
+
+// ------------------------------------------- the on-screen keyboard (D80)
+
+/// A simulated D80 with the phone's own UI, which an app draws on and a
+/// finger touches.
+struct TouchPhone {
+    ui: opendeskphone_ui::Ui,
+    sim: opendeskphone_hal::sim::SimHandle,
+    mgr: opendeskphone_apps::AppManager,
+    commands: std::sync::Arc<std::sync::Mutex<Vec<Command>>>,
+    _dir: common::TempDir,
+}
+
+impl TouchPhone {
+    fn new() -> TouchPhone {
+        use opendeskphone_apps::testutil::{FakePbx, FakeStore, services_with_store};
+        use opendeskphone_state::{Domain, Phase, Reply, Store, System};
+        let model = Model::D80;
+        let dir = common::temp_dir("touch-phone");
+        let mut hal = opendeskphone_hal::Hal::sim(model);
+        let sim = hal.sim.clone().unwrap();
+        let store = Store::new(model);
+        let config = opendeskphone_ui::UiConfig { backlight_timeout_secs: 0, ..Default::default() };
+        let mut ui = opendeskphone_ui::Ui::from_hal(&mut hal, store.clone(), config);
+        ui.set_fixed_time(Some((5_000_000, 1_794_607_087)));
+        store.update::<System, _>(|s| {
+            s.phase = Phase::Running;
+            s.time_synced = true;
+        });
+        let commands = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        common::answer_commands(&store, Domain::Provisioning, commands.clone(), |_| Ok(Reply::Done));
+        let shell = opendeskphone_apps::uishell::UiShell::new(ui.handle(), model);
+        let mut cfg = opendeskphone_apps::ManagerConfig::rooted(common::staged(), &dir.0.join("nvdata"));
+        cfg.target = opendeskphone_apps::engine::Target::Pulley64;
+        let services = services_with_store(&FakePbx::default(), FakeConfig::dasp(), &FakeStore::default());
+        let mut mgr =
+            opendeskphone_apps::AppManager::new(cfg, store.clone(), Box::new(shell), services).expect("engine");
+        mgr.scan();
+        let mut phone = TouchPhone { ui, sim, mgr, commands, _dir: dir };
+        phone.settle();
+        phone
+    }
+
+    /// The UI and the manager take turns until both are done.
+    fn settle(&mut self) {
+        for _ in 0..4 {
+            self.ui.pump();
+            self.mgr.pump();
+        }
+        self.ui.pump();
+    }
+
+    /// Whether the picture has a region that does `hit`.
+    fn has(&self, hit: opendeskphone_ui::Hit) -> bool {
+        self.ui.canvas().hit_rect(hit).is_some()
+    }
+
+    /// Touches the middle of the region that does `hit`.
+    fn touch(&mut self, hit: opendeskphone_ui::Hit) {
+        let r = self.ui.canvas().hit_rect(hit).unwrap_or_else(|| panic!("no region {hit:?}"));
+        self.sim.touch_tap((r.x + r.w / 2) as u16, (r.y + r.h / 2) as u16);
+        self.settle();
+    }
+
+    /// Touches the keys of the on-screen keyboard that type `text`.
+    fn type_keys(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.touch(opendeskphone_ui::osk::Cap::Char(ch).hit());
+        }
+    }
+
+    /// Writes the screen as a PNG, to look at.
+    fn shot(&self, name: &str) {
+        let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("apps");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, h) = (800, 1280);
+        let mut rgb = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let p = self.ui.canvas().pixel(x as i32, y as i32);
+                rgb.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, p as u8]);
+            }
+        }
+        let file = std::io::BufWriter::new(std::fs::File::create(dir.join(format!("D80-{name}.png"))).unwrap());
+        let mut enc = png::Encoder::new(file, w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&rgb).unwrap();
+    }
+}
+
+#[test]
+fn hotdesking_is_logged_in_to_with_the_on_screen_keyboard() {
+    use opendeskphone_ui::Hit;
+    use opendeskphone_ui::osk::Cap;
+    let mut p = TouchPhone::new();
+    p.mgr.launch("hotdesking").unwrap();
+    p.settle();
+    assert_eq!(p.ui.screen_name(), "app:hotdesking");
+    // The form opens with the extension focused: the number pad is up,
+    // where the softkey buttons would be.
+    assert!(p.has(Cap::Char('1').hit()) && p.has(Cap::Char('.').hit()) && !p.has(Cap::Char('q').hit()));
+    assert!(!p.has(Hit::Key(Key::Soft(1))));
+    p.type_keys("1011");
+    p.touch(Cap::Backspace.hit());
+    p.shot("hotdesking-extension");
+    // Done: the app moves on to the PIN, whose pad has digits only.
+    p.touch(Cap::Done.hit());
+    assert!(p.has(Cap::Char('1').hit()) && !p.has(Cap::Char('.').hit()));
+    p.type_keys("4321");
+    p.shot("hotdesking-pin");
+    // Done on the last field logs in.
+    p.touch(Cap::Done.hit());
+    assert!(
+        p.commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| matches!(c, Command::SelectUser { id, pin } if id == "101" && pin == "4321"))
+    );
+    assert!(!p.has(Cap::Done.hit()));
+}
+
+#[test]
+fn the_keyboard_is_put_away_for_hotdesking_s_softkeys() {
+    use opendeskphone_ui::Hit;
+    use opendeskphone_ui::osk::Cap;
+    let mut p = TouchPhone::new();
+    p.mgr.launch("hotdesking").unwrap();
+    p.settle();
+    p.type_keys("101");
+    // The back button puts the keyboard away: the softkeys are buttons
+    // again, and the app is still there, with what was typed.
+    p.sim.touch_tap(48, 48);
+    p.settle();
+    assert_eq!(p.ui.screen_name(), "app:hotdesking");
+    assert!(!p.has(Cap::Done.hit()) && p.has(Hit::Key(Key::Soft(1))));
+    p.shot("hotdesking-keyboard-away");
+    // The back button now leaves the app.
+    p.sim.touch_tap(48, 48);
+    p.settle();
+    assert_ne!(p.ui.screen_name(), "app:hotdesking");
+}

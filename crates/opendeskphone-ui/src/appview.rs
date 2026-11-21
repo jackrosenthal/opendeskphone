@@ -85,7 +85,12 @@
 //! finger for the stock widgets: a tap on a list's row focuses the list,
 //! selects the row ([`AppEvent::ListSelected`], if it was not selected),
 //! and activates it ([`AppEvent::ListActivated`]); a drag scrolls a list
-//! or a `Scroll`; a tap on an `Input` focuses it.  A widget (or the
+//! or a `Scroll`; a tap on an `Input` focuses it.  While an `Input` has
+//! the focus, the on-screen keyboard is up in the layout of the input's
+//! mode, over the softkey buttons and the lower part of the view (drawn
+//! farther up, if the input would be under it); its done key is `Select`
+//! (the input is submitted), and the back button, or a tap beside the
+//! input, puts it away for the softkeys.  A widget (or the
 //! window) that *takes touches* ([`AppView::set_touch_claim`]) gets
 //! [`AppEvent::Touch`] instead, with places relative to itself.  A touch
 //! goes to the topmost widget under the finger that takes touches or is a

@@ -9,6 +9,7 @@ use opendeskphone_ui::appview::{
     AppView, Cell, Color, InputMode, KeyClaims, Metrics, Rect, Softkey, Touch, WidgetId, WidgetKind,
 };
 use opendeskphone_ui::gfx::IRect;
+use opendeskphone_ui::osk::{Cap, Keyboard};
 use opendeskphone_ui::skin::Theme;
 use opendeskphone_ui::{AppEvent, AppEvents, Hit, Ui, UiConfig};
 
@@ -294,6 +295,188 @@ fn a_tap_on_an_input_focuses_it_for_the_keyboard() {
     assert_eq!(view.keyboard_input(), None);
 }
 
+/// Saves the picture on the screen as `name` among the D80's snapshots.
+fn save_picture(r: &Rig, name: &str) {
+    let frame = r.sim.frame(opendeskphone_hal::Screen::Main).expect("the main screen");
+    let (w, h) = (frame.info.width as usize, frame.info.height as usize);
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * frame.info.stride + x * 4;
+            rgb.extend_from_slice(&[frame.pixels[i + 2], frame.pixels[i + 1], frame.pixels[i]]);
+        }
+    }
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ui-snapshots").join("D80");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = std::io::BufWriter::new(std::fs::File::create(dir.join(name)).unwrap());
+    let mut enc = png::Encoder::new(file, w as u32, h as u32);
+    enc.set_color(png::ColorType::Rgb);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header().unwrap().write_image_data(&rgb).unwrap();
+}
+
+/// A form as the SDK lays one out: a title, a name, a PIN, and softkeys.
+fn form(r: &Rig) -> (WidgetId, WidgetId) {
+    let m = r.m;
+    let title = r.view.create(WidgetKind::Text, None, Rect::new(m.back_width as i16, 0, m.width - m.back_width, m.title_height));
+    r.view.set_font(title, opendeskphone_ui::appview::Font::Title);
+    r.view.set_text(title, "Log In");
+    let name = r.view.create(WidgetKind::Input, None, Rect::new(16, 112, m.width - 32, m.row_height));
+    let pin = r.view.create(WidgetKind::Input, None, Rect::new(16, 224, m.width - 32, m.row_height));
+    r.view.input_set_mode(pin, InputMode::Pin);
+    r.view.set_softkeys(None, vec![Softkey::new(1, "Log In"), Softkey::new(2, "Cancel")]);
+    (name, pin)
+}
+
+#[test]
+fn a_focused_input_has_the_on_screen_keyboard() {
+    let mut r = Rig::new();
+    let th = Theme::for_model(Model::D80);
+    let (name, pin) = form(&r);
+    r.ui.pump();
+    // Nothing has the focus: the softkeys are buttons, and there is no
+    // keyboard.
+    assert!(r.ui.canvas().hit_rect(Hit::Key(Key::Soft(1))).is_some());
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_none());
+
+    // The app focuses the name (as a form does when it opens): the
+    // letters, across the bottom of the screen, over the softkeys.
+    r.view.focus(Some(name));
+    r.ui.pump();
+    let done = r.region(Cap::Done.hit());
+    assert_eq!(done.bottom(), 1280 - th.px(4));
+    assert!(r.region(Cap::Char('q').hit()).y >= 1280 - Keyboard::height(th));
+    assert!(r.ui.canvas().hit_rect(Hit::Key(Key::Soft(1))).is_none());
+    // The field is above the keyboard, where the app put it.
+    assert_eq!(r.ui.canvas().hit_at(400, 112 + 40), Some(Hit::Custom(0)));
+    save_picture(&r, "app-keyboard.png");
+
+    // What is typed goes into the input, and the app is told.
+    r.tap_hit(Cap::Shift.hit());
+    r.tap_hit(Cap::Char('A').hit());
+    r.tap_hit(Cap::Char('d').hit());
+    r.tap_hit(Cap::Char('x').hit());
+    r.tap_hit(Cap::Backspace.hit());
+    r.tap_hit(Cap::Char('a').hit());
+    assert_eq!(r.view.text(name).as_deref(), Some("Ada"));
+    assert_eq!(
+        r.events().last(),
+        Some(&AppEvent::InputChanged { widget: name, value: "Ada".into() })
+    );
+    // Between the keys nothing is touched (not the view under them).
+    let q = r.region(Cap::Char('q').hit());
+    r.tap(q.right() + 1, q.bottom() + 1);
+    assert_eq!(r.events(), []);
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_some());
+    // A finger that slides on the keys types nothing.
+    r.drag((q.x + 10, q.y + 10), (q.x + 300, q.y + 10));
+    assert_eq!(r.events(), []);
+
+    // The done key submits the input.  The app moves the focus to the
+    // PIN: the number pad, with digits only.
+    r.tap_hit(Cap::Done.hit());
+    assert_eq!(r.events(), [AppEvent::InputSubmitted { widget: name, value: "Ada".into() }]);
+    r.view.focus(Some(pin));
+    r.ui.pump();
+    assert!(r.ui.canvas().hit_rect(Cap::Char('a').hit()).is_none());
+    assert!(r.ui.canvas().hit_rect(Cap::Char('*').hit()).is_none());
+    for ch in "1234".chars() {
+        r.tap_hit(Cap::Char(ch).hit());
+    }
+    assert_eq!(r.view.text(pin).as_deref(), Some("1234"));
+    r.events();
+    // Done on the last input: submitted, and the keyboard is put away,
+    // so the softkeys are there again.
+    r.tap_hit(Cap::Done.hit());
+    assert_eq!(r.events(), [AppEvent::InputSubmitted { widget: pin, value: "1234".into() }]);
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_none());
+    r.tap_hit(Hit::Key(Key::Soft(1)));
+    assert_eq!(r.events(), [AppEvent::Softkey { id: 1 }]);
+}
+
+#[test]
+fn the_keyboard_is_put_away_and_brought_back() {
+    let mut r = Rig::new();
+    let (name, pin) = form(&r);
+    r.view.focus(Some(name));
+    r.ui.pump();
+    let back = IRect::new(0, 0, 96, 96);
+    // While the keyboard is up, the back button puts it away, and the
+    // app hears nothing.
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_some());
+    r.tap(48, 48);
+    assert_eq!(r.events(), []);
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_none());
+    assert_eq!(r.view.focused(), Some(name));
+    assert!(r.ui.canvas().hit_rect(Hit::Key(Key::Soft(2))).is_some());
+    // Then it is the way back again.
+    assert_eq!(r.region(Hit::Key(Key::Cancel)), back);
+    // A touch on the input brings the keyboard back.
+    r.tap(400, 112 + 40);
+    assert_eq!(r.events(), []);
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_some());
+    // A touch on the view beside the input puts it away too.
+    r.tap(400, 500);
+    assert_eq!(r.events(), []);
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_none());
+    // A touch on the other input: the keyboard of that one.
+    r.tap(400, 224 + 40);
+    assert_eq!(r.events(), [AppEvent::Focused { widget: pin }]);
+    assert!(r.ui.canvas().hit_rect(Cap::Char('5').hit()).is_some());
+    // And back on the first, which the keyboard was put away for before.
+    r.tap(400, 112 + 40);
+    assert!(r.ui.canvas().hit_rect(Cap::Char('q').hit()).is_some());
+    // The app takes the focus away: no keyboard.
+    r.view.focus(None);
+    r.ui.pump();
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_none());
+}
+
+#[test]
+fn an_input_under_the_keyboard_is_brought_above_it() {
+    let mut r = Rig::new();
+    let th = Theme::for_model(Model::D80);
+    let m = r.m;
+    let (_name, pin) = form(&r);
+    // An input at the foot of the view.
+    let low = r.view.create(WidgetKind::Input, None, Rect::new(16, 1040, m.width - 32, m.row_height));
+    r.view.set_text(low, "low");
+    r.ui.pump();
+    let top = 1280 - Keyboard::height(th);
+    // Touched: it has the focus, and the view is drawn farther up, so
+    // that the input is above the keyboard.
+    r.tap(400, 1040 + 40);
+    assert_eq!(r.events(), [AppEvent::Focused { widget: low }]);
+    // (The region is the part of the view on the screen: its foot tells
+    // how far up the view is.)
+    let shown = r.region(Hit::Custom(0));
+    let view_y = shown.bottom() - 1160;
+    assert!(view_y < 0);
+    assert!(view_y + 1040 + i32::from(m.row_height) <= top, "{shown:?}");
+    // Nothing shows between the view and the keyboard.
+    assert!(shown.bottom() >= top);
+    save_picture(&r, "app-keyboard-low.png");
+    // What is typed goes in, and a touch goes to what is drawn there:
+    // the input where it is now keeps the keyboard, and another input
+    // is found where it is now.
+    r.tap_hit(Cap::Char('e').hit());
+    assert_eq!(r.view.text(low).as_deref(), Some("lowe"));
+    r.events();
+    r.tap(400, view_y + 1040 + 40);
+    assert_eq!(r.events(), []);
+    assert!(r.ui.canvas().hit_rect(Cap::Done.hit()).is_some());
+    r.tap(400, view_y + 224 + 80);
+    assert_eq!(r.events(), [AppEvent::Focused { widget: pin }]);
+    // That one needs no room made: the view is in its place again.
+    assert_eq!(r.region(Hit::Custom(0)).bottom(), 1160);
+    // Put away, the view is in its place too.
+    r.tap(48, 48);
+    r.tap(400, 1040 + 40);
+    assert!(r.region(Hit::Custom(0)).bottom() < 1160);
+    r.tap(48, 48);
+    assert_eq!(r.region(Hit::Custom(0)), IRect::new(0, 0, 800, 1160));
+}
+
 #[test]
 fn a_drag_scrolls_a_scroll_widget_from_anything_in_it() {
     let mut r = Rig::new();
@@ -493,22 +676,7 @@ fn a_picture_of_an_app_view() {
     let labels = ["Play", "Delete", "Call", "Info", "Exit"];
     r.view.set_softkeys(None, labels.iter().enumerate().map(|(i, l)| Softkey::new(i as u32, *l)).collect());
     r.ui.pump();
-    let frame = r.sim.frame(opendeskphone_hal::Screen::Main).expect("the main screen");
-    let (w, h) = (frame.info.width as usize, frame.info.height as usize);
-    let mut rgb = Vec::with_capacity(w * h * 3);
-    for y in 0..h {
-        for x in 0..w {
-            let i = y * frame.info.stride + x * 4;
-            rgb.extend_from_slice(&[frame.pixels[i + 2], frame.pixels[i + 1], frame.pixels[i]]);
-        }
-    }
-    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("ui-snapshots").join("D80");
-    std::fs::create_dir_all(&dir).unwrap();
-    let file = std::io::BufWriter::new(std::fs::File::create(dir.join("app-view.png")).unwrap());
-    let mut enc = png::Encoder::new(file, w as u32, h as u32);
-    enc.set_color(png::ColorType::Rgb);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.write_header().unwrap().write_image_data(&rgb).unwrap();
+    save_picture(&r, "app-view.png");
     // The back button's arrow is drawn: its corner is not one flat color.
     let corner: Vec<u32> = (0..96 * 96).map(|i| r.ui.canvas().pixel(i % 96, i / 96)).collect();
     assert!(corner.iter().any(|p| *p != corner[0]));
