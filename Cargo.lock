@@ -440,6 +440,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bzip2-rs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beeb59e7e4c811ab37cc73680c798c7a5da77fc9989c62b09138e31ee740f735"
+dependencies = [
+ "crc32fast",
+ "tinyvec",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2745,7 +2755,7 @@ dependencies = [
  "jffs2-image",
  "md-5 0.10.6",
  "miniz_oxide 0.8.9",
- "rsa",
+ "opendeskphone-recovery",
  "sha1",
  "test-inputs",
 ]
@@ -2771,6 +2781,22 @@ dependencies = [
  "log",
  "test-inputs",
  "tokio",
+]
+
+[[package]]
+name = "opendeskphone-recovery"
+version = "3.1.0"
+dependencies = [
+ "bzip2-rs",
+ "eff",
+ "libc",
+ "miniz_oxide 0.8.9",
+ "opendeskphone-hal",
+ "opendeskphone-state",
+ "resvg",
+ "rsa",
+ "sha1",
+ "tempfile",
 ]
 
 [[package]]
@@ -2826,6 +2852,7 @@ dependencies = [
  "log",
  "opendeskphone-ctrl",
  "opendeskphone-hal",
+ "opendeskphone-recovery",
  "opendeskphone-state",
  "tempfile",
 ]

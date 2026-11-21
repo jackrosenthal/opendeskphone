@@ -149,6 +149,20 @@ let
     // rust.armEnv
   );
 
+  # The D80's recovery: `/init` of the recovery image's ramdisk, with its
+  # pictures (the feature `program`).  It is built like the D80's firmware
+  # binary, and it unwinds on a panic, which it catches: a recovery that
+  # stops is started again at every power-on.
+  recovery = twoStage (
+    {
+      pname = "opendeskphone-recovery";
+      cargoExtraArgs = "--locked -p opendeskphone-recovery --features program";
+      dontStrip = true;
+      dontPatchELF = true;
+    }
+    // rust.armv7Env
+  );
+
   imageTool = twoStage (
     {
       pname = "opendeskphone-image";
@@ -201,6 +215,9 @@ in
   # `/init` of the kernel's initramfs: static, ARMv6 soft-float, a few
   # kilobytes.
   opendeskphone-early = early.package;
+
+  # `/init` of the D80's recovery image: static, ARMv7 hard-float.
+  opendeskphone-recovery = recovery.package;
 
   # Host tools.  `opendeskphone-image`: EFF, OTA, kernel image, and JFFS2.
   # `opendeskphone-apps-build`: componentizes and precompiles the WebAssembly
@@ -267,6 +284,7 @@ in
   deps = {
     phone = phone.deps;
     phone-d80 = phoneD80.deps;
+    recovery = recovery.deps;
     image-tool = imageTool.deps;
     apps-tool = appsTool.deps;
     module = module.deps;

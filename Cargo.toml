@@ -15,6 +15,7 @@ members = [
     "crates/opendeskphone-image",
     "crates/opendeskphone-media",
     "crates/opendeskphone-net",
+    "crates/opendeskphone-recovery",
     "crates/opendeskphone-ui",
     "crates/opendeskphone-web",
     "crates/opendeskphone-sip",

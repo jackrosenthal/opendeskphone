@@ -1,0 +1,36 @@
+[package]
+name = "opendeskphone-recovery"
+description = "Open Desk Phone: the D80's recovery (the program that installs an OTA package), and what `dphone` and the image tool share with it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[features]
+# The recovery program itself (`recovery`, the `/init` of the recovery
+# image's ramdisk), with its artwork.  Without it, this is the library that
+# `dphone` and `opendeskphone-image` use: the package's signature, the
+# zip archive, the boot loader's environment, and the stock recovery image.
+program = ["dep:opendeskphone-hal", "dep:opendeskphone-state", "dep:resvg"]
+
+[[bin]]
+name = "recovery"
+path = "src/bin/recovery.rs"
+required-features = ["program"]
+
+[dependencies]
+eff = { path = "../eff" }
+bzip2-rs = "0.1"
+miniz_oxide = "0.8"
+rsa = { version = "0.9", features = ["pem", "sha1"] }
+sha1 = "0.10"
+opendeskphone-hal = { path = "../opendeskphone-hal", optional = true }
+opendeskphone-state = { path = "../opendeskphone-state", optional = true }
+libc = "0.2"
+
+[build-dependencies]
+resvg = { version = "0.48", default-features = false, features = ["text"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"

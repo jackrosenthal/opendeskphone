@@ -10,9 +10,9 @@
 #   cache                                                 (for the next run)
 #
 # Each image is uploaded as a workflow artifact, `firmware-<model>`.  The
-# D80's, which `d80` builds whole, is the artifact `d80-image`: its EFF and
-# the Android OTA package inside it.  It is not among the images of a
-# release.
+# D80's, which `d80` builds whole, is the artifact `d80-image`: its EFF,
+# the Android OTA package inside it, and its recovery image.  It is not
+# among the images of a release.
 #
 # The DPMA module for Asterisk (open-dpma/) is built, linted, and tested for
 # every pinned Asterisk major version on x86_64 and aarch64.  Each of those
@@ -117,8 +117,8 @@ jobs:
   # The D80's image: its firmware binary (built for its own processor,
   # with the touch skin, which the build checks it has, as the build of the
   # other binary in `rootfs` checks that the D40 thru D70 do not get it),
-  # its root file system, and its boot image, as an Android OTA package
-  # and as the EFF that carries the package.  This job downloads the
+  # its root file system, its boot image, and its recovery image, as an
+  # Android OTA package and as the EFF that carries the package.  This job downloads the
   # vendor's stock D80 image for the firmware files of the voice processor
   # and the wireless module; the cache keeps what it takes from it.
   d80:
@@ -132,7 +132,7 @@ jobs:
       - uses: ./.github/actions/nix-build
         with:
           name: d80
-          installables: .#eff-d80 .#ota-d80
+          installables: .#eff-d80 .#ota-d80 .#recovery-d80
           cache: true
           stores: nix-new-{kernel-d80,web,apps,userland-d80,workspace}
 

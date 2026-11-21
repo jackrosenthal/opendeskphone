@@ -12,13 +12,18 @@
   rustPlatform,
   rust,
   target ? rust.armTarget,
+  # The applets of the coreutils binary, or null for the list below.  The
+  # D80's recovery has a short list of its own: its ramdisk shares 8 MiB
+  # with a kernel.
+  only ? null,
 }:
 let
   # Applets in the multi-call coreutils binary.  Chosen for a phone: file
   # handling, text inspection, checksums for update debugging, and the few
   # system queries that have no `dphone` subcommand.  Mounting, networking,
   # and module loading are `dphone` subcommands, not coreutils.
-  applets = [
+  applets = if only != null then only else all;
+  all = [
     "base64"
     "basename"
     "cat"

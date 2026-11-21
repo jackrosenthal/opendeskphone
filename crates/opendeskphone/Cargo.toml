@@ -25,7 +25,7 @@ default = ["web", "d80"]
 # D80.  The Nix build fails if that binary has the touch skin
 # (nix/workspace.nix).  See "Phone families" in
 # docs/src/content/docs/dev-guide/building.md.
-d80 = ["opendeskphone-ui/touch"]
+d80 = ["opendeskphone-ui/touch", "opendeskphone-update/d80"]
 # The web UI.  A feature only so that the rest can be built and tested while
 # that crate is being reworked; every image carries it.
 web = ["dep:opendeskphone-web"]

@@ -42,6 +42,8 @@
 pub mod bank;
 pub mod boot2;
 pub mod ctrl;
+#[cfg(feature = "d80")]
+pub mod d80;
 pub mod error;
 mod flash;
 pub mod inspect;

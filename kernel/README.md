@@ -22,6 +22,7 @@ Nix builds the kernel, and `nix/kernel.nix` is the recipe.
 | `nix build .#kernel-d60` | `kernel.bin`, the file that is written to the kernel partition of a D60.  There is one such output for each model. |
 | `nix build .#kernel-d80` | The D80's kernel.  See [The D80's kernel](#the-d80s-kernel). |
 | `nix build .#boot-d80` | The D80's Android boot image, which is written to the first partition of its eMMC. |
+| `nix build .#recovery-d80` | The D80's recovery image, which is written to the second partition of its eMMC: the same kernel, with the recovery program in its ramdisk. |
 | `nix build .#kernel-source` | The Linux 7.3 tree with both ports applied and nothing built. |
 | `nix build .#eff-d60` | The complete firmware image for a D60, which contains `kernel.bin`. |
 
@@ -55,6 +56,8 @@ The port adds one driver, for the ZL38040 voice processor (`files/sound/soc/code
 `nix build .#boot-d80` wraps `zImage-dtb` as the boot image, with `opendeskphone-image d80 boot-image`.  The build fails if the image does not fit the 8 MiB partition.
 
 The kernel has no early-boot stage.  The D80 has one kernel and one root file system, so there is no firmware bank to select: the kernel mounts the root file system itself, read-only, from the fifth partition of the eMMC (`root=/dev/mmcblk0p5 rootfstype=squashfs` in `CONFIG_CMDLINE`).  The boot image's ramdisk is an empty archive.  With no `/init` in it, the kernel goes on to mount the root file system.
+
+The recovery image has the same kernel.  Its ramdisk has an `/init`, the recovery program (`crates/opendeskphone-recovery`), which the kernel runs in place of mounting the root file system.  The ramdisk is an XZ-compressed archive (`CONFIG_RD_XZ`).  The build fails if the image does not fit the 8 MiB recovery partition, so a larger kernel leaves less room for the ramdisk.
 
 The firmware loads the sound and Bluetooth modules when it starts, from the lists in `crates/opendeskphone/src/init/modules.rs`.  It loads no Wi-Fi module: the firmware does not use Wi-Fi.
 

@@ -7,7 +7,13 @@ license.workspace = true
 authors.workspace = true
 publish = false
 
+[features]
+# Installing an image on a D80 (`d80`): the package is left for the phone's
+# recovery.  The firmware binary of the D40 thru D70 is built without it.
+d80 = ["dep:opendeskphone-recovery"]
+
 [dependencies]
+opendeskphone-recovery = { path = "../opendeskphone-recovery", optional = true }
 eff = { path = "../eff" }
 opendeskphone-ctrl = { path = "../opendeskphone-ctrl" }
 opendeskphone-hal = { path = "../opendeskphone-hal" }

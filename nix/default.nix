@@ -7,6 +7,9 @@
 #   kernel-d80             the D80's kernel: zImage, DTB, the two as one
 #                          file, and modules
 #   boot-d80               the D80's Android boot image, for mmcblk0p1
+#   recovery-d80           the D80's recovery image, for mmcblk0p2: the same
+#                          kernel, with the recovery for its ramdisk
+#   opendeskphone-recovery the recovery program (ARMv7, static)
 #   opendeskphone          the firmware binary of the D40 thru D70 (ARMv6,
 #                          static)
 #   opendeskphone-d80      the D80's firmware binary (ARMv7, static), with
@@ -83,6 +86,32 @@ let
     appendDtb = "imx6dl-digium-d80";
     depmod = true;
   };
+  # The shell and a few utilities for the root shell of the D80's
+  # recovery, whose ramdisk shares 8 MiB with a kernel.
+  userlandRecovery = pkgs.callPackage ./userland.nix {
+    inherit rustPlatform rust;
+    target = rust.armv7Target;
+    only = [
+      "cat"
+      "cp"
+      "dd"
+      "df"
+      "echo"
+      "head"
+      "ln"
+      "ls"
+      "mkdir"
+      "mv"
+      "od"
+      "rm"
+      "sha256sum"
+      "sleep"
+      "stat"
+      "sync"
+      "tail"
+      "touch"
+    ];
+  };
   # The vendor's stock images, downloaded when something needs one, and the
   # DSP firmware taken out of two of them.
   stock = pkgs.callPackage ./vendor-firmware.nix { inherit (workspace) opendeskphone-image; };
@@ -150,9 +179,13 @@ let
     inherit (workspace)
       opendeskphone
       opendeskphone-d80
+      opendeskphone-recovery
       opendeskphone-image
       version
       ;
+    recoveryUserland = {
+      inherit (userlandRecovery) brush coreutils applets;
+    };
     inherit (userland)
       brush
       coreutils
@@ -179,6 +212,7 @@ in
     inherit kernel;
     kernel-d80 = kernelD80;
     boot-d80 = image.d80.bootImage;
+    recovery-d80 = image.d80.recoveryImage;
     rootfs-tree-d80 = image.d80.rootfsTree;
     rootfs-d80 = image.d80.rootfs;
     ota-d80 = image.d80.package;
@@ -192,6 +226,7 @@ in
       opendeskphone
       opendeskphone-d80
       opendeskphone-early
+      opendeskphone-recovery
       opendeskphone-image
       ;
     asterisk-modules = asterisk.modules;

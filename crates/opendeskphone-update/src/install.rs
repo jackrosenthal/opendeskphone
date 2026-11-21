@@ -107,10 +107,13 @@ pub struct Staged {
 }
 
 /// Why nothing here installs an image on a D80.  Its image is an Android
-/// OTA package, which its stock recovery writes to the eMMC; it has no
-/// flash banks, no `ctrl` partition, and no boot2.
+/// OTA package, which its recovery writes to the eMMC; it has no flash
+/// banks, no `ctrl` partition, and no boot2.  `d80` (with the feature of
+/// that name) leaves a package for the recovery, and `dphone update
+/// install` uses it; the updater of this module, which the web interface
+/// and provisioning use, does not.
 pub const D80_NOT_HERE: &str = "a D80's firmware is an Android OTA package, which the phone's recovery installs; \
-     this firmware cannot install one from the running phone yet";
+     'dphone update install' leaves one for the recovery, and nothing else in this firmware does yet";
 
 /// Reads a whole EFF through every check that needs no flash: the
 /// envelope, the model, the OTA header and its CRCs, the kernel's header as

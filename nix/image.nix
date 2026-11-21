@@ -5,17 +5,22 @@
 # The D40 thru D70 share one root file system, a JFFS2 image for their NAND
 # flash, and an EFF with an OTA container of the kernel and that image.  The
 # D80 has its own (`d80` below): a SquashFS image for its eMMC, an Android
-# boot image, and an Android OTA package of the two, which is also what its
+# boot image, a recovery image (the same kernel with the recovery for its
+# ramdisk), and an Android OTA package of the three, which is also what its
 # EFF carries.
 {
   lib,
   runCommand,
   squashfsTools,
+  cpio,
+  xz,
   opendeskphone-image,
   kernel,
   kernelD80,
   opendeskphone,
   opendeskphone-d80,
+  opendeskphone-recovery,
+  recoveryUserland, # brush and a coreutils of few applets, for the D80's recovery
   d80Firmware,
   userlandD80, # brush, coreutils, and sed built for the D80
   brush,
@@ -225,8 +230,9 @@ let
 
   # The D80.  Its eMMC keeps the stock partitions (the table is in
   # crates/opendeskphone-image/src/d80.rs): the boot image goes to the
-  # first, the root file system to the stock `/system`, and nvdata is the
-  # stock `/cache`.  The stock recovery and `/data` are left as they are.
+  # first, the recovery image to the second, the root file system to the
+  # stock `/system`, and nvdata is the stock `/cache`.  `/data` is left as
+  # it is.
   d80 = rec {
     # The firmware binary, the shell, and the utilities built for the
     # D80, its kernel's modules, and the firmware files its kernel loads,
@@ -267,12 +273,70 @@ let
         --out $out
     '';
 
-    # The Android OTA package that writes the two: what the stock recovery
-    # installs.  It is signed with the key in the tool's `keys` directory,
-    # which is in the repository and so is not a secret.
+    # The recovery's ramdisk: the recovery program as `/init`
+    # (crates/opendeskphone-recovery), and for its root shell on the serial
+    # console the shell and a few utilities.  The program mounts `/dev`
+    # itself, so the archive needs no device nodes.  Every file is owned by
+    # root and dated zero, and the archive is compressed as the kernel
+    # unpacks it (XZ with a CRC-32).
+    recoveryTree = runCommand "opendeskphone-d80-recovery-tree-${version}" { } ''
+      mkdir -p $out/{bin,dev,proc,sys,tmp,cache,etc}
+      install -m 0755 ${opendeskphone-recovery}/bin/recovery $out/init
+      # The program restarts the phone under this name.
+      ln -s ../init $out/bin/reboot
+      install -m 0755 ${recoveryUserland.brush}/bin/brush $out/bin/brush
+      ln -s brush $out/bin/sh
+      install -m 0755 ${recoveryUserland.coreutils}/bin/coreutils $out/bin/coreutils
+      for a in ${lib.escapeShellArgs recoveryUserland.applets}; do
+        ln -s coreutils $out/bin/$a
+      done
+      printf 'root:x:0:0:root:/tmp:/bin/sh\n' > $out/etc/passwd
+      printf 'root:x:0:\n' > $out/etc/group
+      # Programs for the D80's processor, as in its root file system.
+      for program in init bin/brush bin/coreutils; do
+        test "$(od -An -tx1 -N6 $out/$program | tr -d ' \n')" = 7f454c460101
+        test "$(od -An -tx4 -j36 -N4 $out/$program | tr -d ' \n')" = 05000400
+      done
+    '';
+    recoveryRamdisk =
+      runCommand "opendeskphone-d80-recovery-${version}.cpio.xz"
+        {
+          nativeBuildInputs = [
+            cpio
+            xz
+          ];
+        }
+        ''
+          cp -r ${recoveryTree} tree
+          chmod -R u+w tree
+          cd tree
+          find . -exec touch -h -d @0 {} +
+          find . -mindepth 1 -print0 | LC_ALL=C sort -z \
+            | cpio --null --create --format=newc --owner=0:0 --reproducible --quiet \
+            | xz --check=crc32 --lzma2=dict=1MiB -9e --threads=1 > $out
+        '';
+
+    # The recovery image for mmcblk0p2: the same kernel, with the recovery
+    # for its ramdisk.  The kernel runs a ramdisk's `/init` before it looks
+    # at `root=`, so the command line is the boot image's.  The tool fails
+    # when the result does not fit the 8 MiB partition.
+    recoveryImage = runCommand "recovery-d80-${version}.img" { nativeBuildInputs = [ opendeskphone-image ]; } ''
+      opendeskphone-image d80 boot-image \
+        --kernel ${kernelD80}/zImage-dtb \
+        --ramdisk ${recoveryRamdisk} \
+        --cmdline "$(sed -n 's/^CONFIG_CMDLINE="\(.*\)"$/\1/p' ${kernelD80}/config)" \
+        --out $out
+    '';
+
+    # The Android OTA package that writes the boot image and the root file
+    # system: what a recovery installs.  It also carries the recovery
+    # image, which `dphone` writes before it restarts into the recovery.
+    # It is signed with the key in the tool's `keys` directory, which is in
+    # the repository and so is not a secret.
     package = runCommand "${wireVersion}_D80_firmware.zip" { nativeBuildInputs = [ opendeskphone-image ]; } ''
       opendeskphone-image d80 package \
         --boot ${bootImage} \
+        --recovery ${recoveryImage} \
         --rootfs ${rootfs} \
         --update-binary ${d80Firmware.updateBinary} \
         --version ${wireVersion} \

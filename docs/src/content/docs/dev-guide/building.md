@@ -44,6 +44,8 @@ Each component of an image is a separate flake output.
 | `kernel-<model>` | `kernel.bin`: the kernel and the model's device tree, as written to a kernel partition.  `<model>` is `d40`, `d45`, `d50`, `d60`, `d62`, `d65`, or `d70`. |
 | `kernel-d80` | The D80's kernel (`zImage`), its device tree, the two as one file (`zImage-dtb`), and the loadable modules.  See `kernel/README.md`. |
 | `boot-d80` | The D80's Android boot image: `zImage-dtb` and an empty ramdisk. |
+| `recovery-d80` | The D80's recovery image: `zImage-dtb` with the recovery as its ramdisk.  See [The D80's recovery](#the-d80s-recovery). |
+| `opendeskphone-recovery` | The recovery program: static, for ARMv7 with hardware floating point. |
 | `rootfs-tree-d80`, `rootfs-d80` | The D80's root file system as a directory, and as the SquashFS image in its OTA package. |
 | `kernel-source` | The Linux tree with the ports applied and nothing built, for editing. |
 | `apps` | The built-in apps, compiled for the phone. |
@@ -62,7 +64,7 @@ nix run .#opendeskphone-image -- eff info result
 
 ## The D80's image
 
-The D80 is built on Android hardware: its storage is an eMMC with the stock Android partitions, its boot loader starts an Android boot image, and its stock recovery installs an Android OTA package, which is a zip file.  Two outputs hold the image:
+The D80 is built on Android hardware: its storage is an eMMC with the stock Android partitions, its boot loader starts an Android boot image, and a recovery installs an Android OTA package, which is a zip file.  Two outputs hold the image:
 
 ```sh
 nix build .#ota-d80
@@ -75,30 +77,67 @@ nix build .#eff-d80
 | `eff-d80` | `<version>_D80_firmware.eff`: the same package in the vendor's EFF envelope. |
 
 :::caution[Not yet run on a phone]
-No D80 has started this image.  The kernel in it has run on a D80, from a test ramdisk.  The `dphone` binary's D80 hardware support (the display, the touchscreen, the hookswitch, the lamp, and the audio) is written from the kernel's interfaces and has run only in the tests on the workstation.
+No D80 has started this image or its recovery.  The kernel in it has run on a D80, from a test ramdisk.  The recovery has installed the package in QEMU, on a disk laid out as the D80's eMMC.  The `dphone` binary's D80 hardware support (the display, the touchscreen, the hookswitch, the lamp, and the audio) is written from the kernel's interfaces and has run only in the tests on the workstation.
 :::
 
-The package writes two partitions and leaves the rest of the eMMC as stock made it:
+The package's script writes two partitions, and `dphone` writes the recovery's before it restarts the phone into the recovery.  The rest of the eMMC stays as stock made it:
 
 | Partition | Size | Stock use | Open Desk Phone |
 | --- | --- | --- | --- |
 | `mmcblk0p1` | 8 MiB | Boot image | The boot image (`boot-d80`). |
-| `mmcblk0p2` | 8 MiB | Recovery | Not written.  The stock recovery stays. |
+| `mmcblk0p2` | 8 MiB | Recovery | The recovery image (`recovery-d80`).  Written by `dphone`, not by the package's script. |
 | `mmcblk0p5` | 512 MiB | `/system` | The root file system (`rootfs-d80`), mounted read-only. |
-| `mmcblk0p6` | 512 MiB | `/cache` | nvdata, on the ext4 file system that stock made.  Not written by the package. |
+| `mmcblk0p6` | 512 MiB | `/cache` | nvdata, on the ext4 file system that stock made.  Not written by the package.  A package to install waits here, in `recovery/`. |
 | `mmcblk0p4` | The rest | `/data` | Not used.  The stock firmware's settings stay. |
 
-The package contains `boot.img`, `rootfs.img`, the script that writes them (`META-INF/com/google/android/updater-script`), and the program that runs the script (`update-binary`).  The program is the stock package's own, because the stock recovery runs whatever program a package brings.
+The package contains `boot.img`, `rootfs.img`, the script that writes them (`META-INF/com/google/android/updater-script`), and the program that runs the script (`update-binary`).  The program is the stock package's own, because a recovery runs whatever program a package brings.  The package also contains `recovery.img`, which the script does not write: a recovery does not replace itself while it runs.
 
-The package is signed the way Android's `signapk -w` signs a whole file: the signature (RSA with SHA-1, as in the stock package) and the certificate are in the zip file's comment.  The key and its certificate are `d80-ota.key.pem` and `d80-ota.x509.pem` in `crates/opendeskphone-image/keys`.  The private key is in the repository, so the signature does not show who built a package: anyone can make it.  It is there for a recovery that installs only signed packages and has this certificate among its keys.
+The package is signed the way Android's `signapk -w` signs a whole file: the signature (RSA with SHA-1, as in the stock package) and the certificate are in the zip file's comment.  The key and its certificate are `d80-ota.key.pem` and `d80-ota.x509.pem` in `crates/opendeskphone-image/keys`.  The private key is in the repository, so the signature does not show who built a package: anyone can make it.  The recovery built here installs only packages signed with this key, and `dphone update install` refuses any other Open Desk Phone package.  The stock recovery's key list has the vendor's key and one other key, and does not have this key.
 
 The image build takes four more files from the stock D80 image, which Nix downloads from the vendor (`nix/d80-firmware.nix`): the firmware of the voice processor, the firmware and the settings file of the Wi-Fi module, and the patch file of the Bluetooth module.
 
-Three things about installing the package are not settled:
+Two things about installing the package are not settled:
 
-- **The signature.**  A stock package is signed with the vendor's key, and the stock firmware's updater also checks a signature at the end of an EFF image.  The package built here is signed with the key in the repository instead, and the EFF image has no signature at its end.  The stock updater passes a bare zip file to the recovery without the EFF check.  Whether the stock recovery installs a package that is not signed with the vendor's key is not known.
-- **The way back.**  The package overwrites the stock `/system` partition.  The stock recovery in `mmcblk0p2` can install a stock package again, but `dphone` cannot start the recovery yet.
-- **Updates from the running phone.**  `dphone update install` refuses on a D80.  A D80 has no firmware banks, so its installer would be the recovery.
+- **The first installation.**  A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither, so the stock recovery refuses it.  This repository provides no way to install the image on a phone that runs stock firmware.
+- **Updates from the web interface and from provisioning.**  Only `dphone update install` leaves a package for the recovery.  The web interface and a DPMA server's firmware entries refuse on a D80.
+
+### The D80's recovery
+
+A D80 has one kernel and one root file system, so the running system cannot replace itself.  The recovery does: a second system in `mmcblk0p2`, which the boot loader starts when `bootcmd` in its environment is `booti mmc3 recovery`.  The stock firmware installs its updates the same way.
+
+```sh
+nix build .#recovery-d80
+```
+
+The recovery image is the D80's kernel with a ramdisk, 7.3 MiB of the partition's 8 MiB.  The ramdisk holds the recovery program as `/init` (`crates/opendeskphone-recovery`), the shell, and a few utilities.  The kernel runs a ramdisk's `/init` before it mounts a root file system, so the kernel and its command line are the boot image's.
+
+[`dphone update install`](firmware-updates.mdx#the-d80) and the recovery work together as the stock firmware and the stock recovery do, with the same files in the same places:
+
+1. `dphone` stores the package in nvdata as `recovery/update.zip`, and names it in `recovery/command`.
+2. `dphone` writes the package's recovery image to `mmcblk0p2`, unless the partition holds that image already.  For a stock package, `dphone` makes the stock recovery image from the package's boot image and recovery patch.
+3. `dphone` sets `bootcmd` to start the recovery.
+4. After the restart, the recovery checks the package's signature, runs the package's `update-binary`, and shows the Open Desk Phone logo with a progress bar.
+5. The recovery writes the result to `recovery/last_install` and its log to `recovery/last_log`, removes the command and an installed package, sets `bootcmd` back, and restarts the phone.
+
+The recovery restarts into the system in every case, as the stock recovery does on this phone, which has no keys to answer a menu with.  With no command, or when a package is not installed, the screen says so for a few seconds first.  A package that fails after its program has started writing leaves a system that may not start.
+
+The recovery differs from the stock recovery in these ways:
+
+- It accepts packages signed with the key in the repository, and no others.
+- It reads the command file only.  The stock recovery also reads the `misc` partition, which the stock firmware does not write.
+- It ignores every command but `--update_package`, and a package's request to erase `/cache`, which is nvdata.
+- It removes a package that it has installed.
+- It has no USB debugging (`adb`).  A root shell runs on the serial console instead.
+
+The stock `update-binary` is an Android program.  The recovery gives it what it needs of Android: the partitions under `/dev/block`, and a properties file with the stock device name, which the package's script checks.
+
+To keep the recovery running for the shell on the serial console, create `/tmp/stay` before the recovery restarts the phone:
+
+```sh
+: > /tmp/stay
+```
+
+The recovery sets `bootcmd` back before it waits, so a power cycle starts the system.  `reboot` in that shell restarts the phone at once.
 
 The D80's `dphone` differs from the other models' in these ways:
 
@@ -198,7 +237,7 @@ The flake's checks skip nothing except the [network namespace tests](#network-na
 | `nix build .#checks.x86_64-linux.opendeskphone-d80` | Builds the `dphone` binary with the D80's touch skin, and fails if the binary lacks the skin. |
 | `nix flake check` | Runs every check, and builds both kernels, the utilities, and both `dphone` binaries. |
 
-CI (`.github/workflows/ci.yml`) also uploads the image of every model as a workflow artifact named `firmware-<model>`, so a pushed branch's images need no local build.  The D80's EFF image and OTA package are the artifact `d80-image`.  A release does not include them.
+CI (`.github/workflows/ci.yml`) also uploads the image of every model as a workflow artifact named `firmware-<model>`, so a pushed branch's images need no local build.  The D80's EFF image, OTA package, and recovery image are the artifact `d80-image`.  A release does not include them.
 
 The Open DPMA tests run in containers against each supported Asterisk version: `cargo xtask ci` in `open-dpma/`; see `open-dpma/README.md`.
 

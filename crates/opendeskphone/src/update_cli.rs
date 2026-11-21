@@ -5,6 +5,11 @@
 //! This is also the way back to stock firmware: `dphone update install
 //! FILE.eff` accepts a stock EFF.
 //!
+//! On a D80 nothing is installed by the running system: `install` stores
+//! the image's package in nvdata, writes the recovery that the package
+//! brings, and has the boot loader start that recovery at the next
+//! restart, which installs the package (`opendeskphone_update::d80`).
+//!
 //! An image need not be copied to the phone first (its `/tmp` is RAM, and
 //! smaller than two images): `dphone update install -` reads it from
 //! standard input (`ssh root@PHONE dphone update install - < FILE.eff`),
@@ -43,6 +48,10 @@ use crate::init::trial::TrialRecord;
 #[derive(Debug, Subcommand)]
 pub enum UpdateCommand {
     /// Show both banks, the ctrl record, and what boot2 will boot next
+    ///
+    /// On a D80, which has no banks: what the next restart starts, the
+    /// package left for the recovery, and what the recovery did with the
+    /// last one.
     Status,
     /// Install an image into the bank that is not running, and select it
     ///
@@ -54,6 +63,11 @@ pub enum UpdateCommand {
     /// should it turn out bad, that bank's old contents are gone and
     /// nothing else has changed.  One update runs at a time, and none while
     /// an installed image is not confirmed yet (see 'abandon').
+    ///
+    /// A D80 has no banks, and its recovery installs an image: the image's
+    /// package is stored in nvdata, the recovery that the package brings is
+    /// written to the recovery partition, and the next restart starts that
+    /// recovery, which installs the package and restarts into it.
     Install {
         /// The image: an EFF file, '-' for standard input, or an http://
         /// or https:// URL (the server's certificate is not checked; the
@@ -81,6 +95,9 @@ pub enum UpdateCommand {
     /// Selects the bank the phone would return to and removes the trial
     /// record, so that another image can be installed.  When the phone is
     /// already running the image given up, reboot afterwards.
+    ///
+    /// On a D80: takes back a package left for the recovery, before the
+    /// restart that would install it.
     Abandon,
     /// Record a trial boot of the bank 'ctrl' selects for the next boot
     ///
@@ -169,14 +186,7 @@ pub fn run(command: UpdateCommand) -> i32 {
 
 fn status() -> Result<(), String> {
     if model().is_some_and(|m| m.is_touch()) {
-        // No banks to report: one kernel and one root file system, on
-        // the eMMC.
-        let line = cmdline();
-        let root = line.split_ascii_whitespace().find_map(|w| w.strip_prefix("root=")).unwrap_or("?");
-        let installed = if root == crate::init::nvdata::D80_ROOT { "the installed firmware" } else { "not the installed firmware" };
-        crate::outln!("running from:   {root} ({installed})");
-        crate::outln!("{}", opendeskphone_update::D80_NOT_HERE);
-        return Ok(());
+        return status_d80();
     }
     let mut mtd = open_mtd()?;
     let dir = own_dir();
@@ -223,6 +233,97 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
+/// A D80 has no banks to report: one kernel and one root file system, on
+/// the eMMC, and a recovery that installs a package left for it.
+fn status_d80() -> Result<(), String> {
+    let line = cmdline();
+    let root = line.split_ascii_whitespace().find_map(|w| w.strip_prefix("root=")).unwrap_or("?");
+    let installed = if root == crate::init::nvdata::D80_ROOT { "the installed firmware" } else { "not the installed firmware" };
+    crate::outln!("running from:   {root} ({installed})");
+    #[cfg(feature = "d80")]
+    {
+        let st = opendeskphone_update::d80::status(&d80_places());
+        match &st.bootcmd {
+            Ok(command) => crate::outln!(
+                "next restart:   {} (bootcmd \"{command}\")",
+                if st.recovery_next { "the recovery" } else { "the system" }
+            ),
+            Err(e) => crate::outln!("next restart:   the system, by the boot loader's own settings ({e})"),
+        }
+        match (&st.command, st.package_len) {
+            (Some(package), Some(len)) => crate::outln!("left to install: {package} ({len} bytes)"),
+            (Some(package), None) => crate::outln!("left to install: {package}, which is not in nvdata"),
+            (None, Some(len)) => crate::outln!("left to install: nothing (a package of {len} bytes is in nvdata, with no command)"),
+            (None, None) => crate::outln!("left to install: nothing"),
+        }
+        match &st.last_install {
+            Some((package, true)) => crate::outln!("last install:   {package}, installed"),
+            Some((package, false)) => crate::outln!("last install:   {package}, NOT installed (the recovery's log: /nvdata/recovery/last_log)"),
+            None => crate::outln!("last install:   none recorded"),
+        }
+    }
+    #[cfg(not(feature = "d80"))]
+    crate::outln!("{}", opendeskphone_update::D80_NOT_HERE);
+    Ok(())
+}
+
+#[cfg(feature = "d80")]
+fn d80_places() -> opendeskphone_update::d80::Places {
+    opendeskphone_update::d80::Places::phone(&crate::paths::Paths::default().nvdata)
+}
+
+/// `install` on a D80: the package is left for the recovery.
+#[cfg(feature = "d80")]
+fn install_d80(source: &Source) -> Result<(), String> {
+    use opendeskphone_update::d80;
+    let mut last = String::new();
+    let progress = |phase: &opendeskphone_state::UpdatePhase| {
+        // The length of a stream is not known: no share of it is shown.
+        let text = match phase {
+            opendeskphone_state::UpdatePhase::Receiving { .. } => "Receiving".to_string(),
+            other => format!("{other:?}"),
+        };
+        if text != last {
+            crate::out!("\r{text:<40}");
+            crate::out::flush();
+            last = text;
+        }
+    };
+    let (places, own) = (d80_places(), own_dir());
+    let left = match source {
+        Source::File(path) => {
+            let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+            d80::leave_for_recovery(std::io::BufReader::with_capacity(64 * 1024, file), &places, &own, progress)
+        }
+        Source::Stdin => d80::leave_for_recovery(std::io::stdin().lock(), &places, &own, progress),
+        Source::Url(url) => {
+            use opendeskphone_dpma::firmware::FirmwareSource;
+            let stream = opendeskphone_dpma::fetch::HttpSource::new()
+                .open(url, &format!("opendeskphone-update/{}", env!("CARGO_PKG_VERSION")))
+                .map_err(|e| format!("{url}: {}", e.message))?;
+            d80::leave_for_recovery(stream, &places, &own, progress)
+        }
+    }
+    .map_err(|e| format!("\n{e}"))?;
+    crate::outln!();
+    crate::outln!(
+        "version {}{} is left for the recovery to install ({} bytes)",
+        left.version,
+        if left.is_stock { " (stock firmware)" } else { "" },
+        left.package_len
+    );
+    crate::outln!(
+        "the recovery partition {}",
+        match (left.recovery_written, left.is_stock) {
+            (true, true) => "was written with the stock recovery, made from the package",
+            (true, false) => "was written with the package's recovery",
+            (false, _) => "has the package's recovery already",
+        }
+    );
+    crate::outln!("'dphone reboot' to install it; 'dphone update abandon' to take it back");
+    Ok(())
+}
+
 fn switch_bank(bank: Bank) -> Result<(), String> {
     let model = model().ok_or("model unknown (no digium_board= and no devicetree match)")?;
     let mut mtd = open_mtd()?;
@@ -249,6 +350,15 @@ fn arm_trial(return_to: Option<Bank>) -> Result<(), String> {
 
 fn abandon() -> Result<(), String> {
     let model = model().ok_or("model unknown (no digium_board= and no devicetree match)")?;
+    #[cfg(feature = "d80")]
+    if model.is_touch() {
+        if opendeskphone_update::d80::take_back(&d80_places(), &own_dir()).map_err(|e| e.to_string())? {
+            crate::outln!("the package left for the recovery is taken back; the next restart is the system's");
+        } else {
+            crate::outln!("no package is left for the recovery; nothing to take back");
+        }
+        return Ok(());
+    }
     let mut mtd = open_mtd()?;
     match opendeskphone_update::abandon(&mut mtd, model, &own_dir()).map_err(|e| e.to_string())? {
         Some(bank) => {
@@ -265,6 +375,13 @@ fn abandon() -> Result<(), String> {
 
 fn install(source: &Source, options: Options) -> Result<(), String> {
     let model = model().ok_or("model unknown (no digium_board= and no devicetree match)")?;
+    #[cfg(feature = "d80")]
+    if model.is_touch() {
+        if options.target.is_some() || options.allow_unbootable_other {
+            return Err("a D80 has no firmware banks: --bank and --allow-unbootable-other do not apply".into());
+        }
+        return install_d80(source);
+    }
     let mut mtd = open_mtd()?;
     let parts = mtd.partitions().map_err(|e| e.to_string())?;
     if parts.is_empty() {
