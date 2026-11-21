@@ -393,13 +393,16 @@ impl Keyboard {
     fn key(&self, c: &mut Canvas, th: &Theme, r: IRect, cap: Cap, font: Font) {
         let rad = th.px(5);
         // Characters in the softkeys' colors; the keys that type none in
-        // the line keys'; done, and shift while it is on, in the
-        // selection's.
+        // the line keys' (with the softkeys' outline: in a light palette
+        // the line keys' fill is the tray's); done, and shift while it is
+        // on, in the selection's.
         let (fill, edge, fg): (Rgb, Option<Rgb>, Rgb) = match cap {
             Cap::Char(_) => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
             Cap::Done => (th.sel_bg, None, th.sel_fg),
             Cap::Shift if self.shift != Shift::Off => (th.sel_bg, None, th.sel_fg),
-            Cap::Shift | Cap::Backspace | Cap::Letters | Cap::Symbols | Cap::More => (th.tab_bg, None, th.tab_fg),
+            Cap::Shift | Cap::Backspace | Cap::Letters | Cap::Symbols | Cap::More => {
+                (th.tab_bg, Some(th.sk_edge), th.tab_fg)
+            }
         };
         match edge {
             Some(edge) => {

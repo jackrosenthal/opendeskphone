@@ -1,5 +1,9 @@
 //! Multi-tap text entry, as on the stock firmware: repeated presses of a
 //! digit key within a timeout cycle through its letters.
+//!
+//! The touch skin (D80), which has no keys, has the on-screen keyboard
+//! ([`crate::osk`]) in its place; its screens still take digit keys from
+//! elsewhere (the web mirror) this way.
 
 use opendeskphone_state::Key;
 
