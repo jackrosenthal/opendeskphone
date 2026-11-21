@@ -84,7 +84,7 @@ fn the_metrics_are_the_touch_skins() {
     assert_eq!(i32::from(m.back_width), th.back_w);
     // A row and the back button are large enough to touch.
     assert!(i32::from(m.row_height) >= th.touch_min && i32::from(m.back_width) >= th.touch_min);
-    // The phones with keys have keys, and no back button.
+    // The phones with physical buttons have no back button.
     for model in [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70] {
         let m = Metrics::for_model(model);
         assert!(m.keys && m.back_width == 0, "{model:?}");
@@ -318,7 +318,7 @@ fn a_tap_on_an_input_focuses_it_for_the_keyboard() {
     r.tap(400, 400 + 10);
     assert_eq!(r.view.keyboard_input(), None);
     assert!(!r.view.type_text("x") && !r.view.backspace());
-    // No model with keys has an on-screen keyboard.
+    // No model with physical buttons has an on-screen keyboard.
     let (view, _events) = AppView::new("demo", Model::D60);
     let input = view.create(WidgetKind::Input, None, Rect::new(0, 0, 100, 30));
     view.focus(Some(input));

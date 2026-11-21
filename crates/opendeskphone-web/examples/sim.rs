@@ -850,7 +850,7 @@ fn main() -> std::io::Result<()> {
 </contacts></phonebooks>"#,
         )?;
     }
-    // The configuration knows the seven keyed models; the D80 takes the
+    // The configuration knows the D40 thru D70; the D80 takes the
     // D60's, as in the main role.
     let cfg_model: opendeskphone_config::Model = model.name().parse().unwrap_or(opendeskphone_config::Model::D60);
     let config = ConfigStore::open(nv, cfg_model, std::env::temp_dir()).map_err(|e| std::io::Error::other(e.to_string()))?;

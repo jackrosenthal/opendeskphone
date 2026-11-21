@@ -131,7 +131,7 @@ const FMT_RGBA_RLE: u8 = 2;
 /// (no record points at them).  A program has these bytes exactly when it
 /// has the touch skin; the Nix build looks for them in the firmware binary
 /// (`touchSkinMark` in nix/workspace.nix, which must say the same), so
-/// that the binary of the phones with keys cannot come to carry the skin
+/// that the binary of the D40 thru D70 cannot come to carry the skin
 /// unnoticed.
 const TOUCH_MARK: &[u8] = b"opendeskphone-ui touch skin icons";
 

@@ -1,6 +1,8 @@
 # Kernel
 
-This directory holds the Open Desk Phone kernel: mainline Linux 7.3 with a port to the Broadcom BCMRING family of system-on-chip processors, which the Digium D40, D45, D50, D60, D62, D65, and D70 phones are built on.  The Linux source itself is not in this repository.  The build downloads the Linux 7.3 release and applies what is here.
+This directory holds the Open Desk Phone kernel: mainline Linux 7.3 with two ports.  One is to the Broadcom BCMRING family of system-on-chip processors, which the Digium D40, D45, D50, D60, D62, D65, and D70 phones are built on.  The other is to the Digium D80, which is built on the NXP i.MX 6DualLite, a processor that Linux 7.3 already supports.  The Linux source itself is not in this repository.  The build downloads the Linux 7.3 release and applies what is here.
+
+Both ports are in one source tree, and the build makes two kernels of it: one for the seven BCMRING phones, and one for the D80.  Except for [The D80's kernel](#the-d80s-kernel), the sections below describe the kernel of the BCMRING phones.
 
 ## What is in this directory
 
@@ -8,7 +10,7 @@ This directory holds the Open Desk Phone kernel: mainline Linux 7.3 with a port 
 | --- | --- |
 | `patches/` | Changes to files that exist in Linux 7.3, with one patch file for each kernel subsystem.  The build applies them in the order of their file names with `patch -p1`. |
 | `files/` | Files that the port adds (drivers, device trees, device tree binding documents, and headers), stored at the paths they have in the kernel tree.  The build copies them into the patched tree. |
-| `configs/` | Kernel configurations.  The build copies them to `arch/arm/configs/`.  The firmware uses `bcmring_tiny_defconfig`.  `bcmring_defconfig` is a larger configuration that the firmware build does not use. |
+| `configs/` | Kernel configurations.  The build copies them to `arch/arm/configs/`.  The firmware of the BCMRING phones uses `bcmring_tiny_defconfig`.  `bcmring_defconfig` is a larger configuration that the firmware build does not use.  The D80's kernel uses `d80_defconfig`. |
 
 ## Building
 
@@ -18,10 +20,11 @@ Nix builds the kernel, and `nix/kernel.nix` is the recipe.
 | --- | --- |
 | `nix build .#kernel` | The compressed kernel (`zImage`), one device tree for each model (`dtbs/`), the loadable modules (`lib/modules/7.3.0/`), and the full configuration that was used (`config`). |
 | `nix build .#kernel-d60` | `kernel.bin`, the file that is written to the kernel partition of a D60.  There is one such output for each model. |
-| `nix build .#kernel-source` | The Linux 7.3 tree with the port applied and nothing built. |
+| `nix build .#kernel-d80` | The D80's kernel.  See [The D80's kernel](#the-d80s-kernel). |
+| `nix build .#kernel-source` | The Linux 7.3 tree with both ports applied and nothing built. |
 | `nix build .#eff-d60` | The complete firmware image for a D60, which contains `kernel.bin`. |
 
-The compiled kernel is the same for all seven models, and only the device tree differs.  Any change under `kernel/` makes Nix build the whole kernel again, because a Nix build cannot reuse object files from an earlier build.
+The compiled kernel is the same for all seven BCMRING models, and only the device tree differs.  Any change under `kernel/` makes Nix build both kernels again, because a Nix build cannot reuse object files from an earlier build.
 
 ## Constraints to know about
 
@@ -34,18 +37,51 @@ The compiled kernel is the same for all seven models, and only the device tree d
 - **The kernel log survives a reset.**  The kernel keeps the last 8 KiB of its console output, and the last 8 KiB of the kernel log from a panic, in a small memory that keeps its contents across a reset.  After the next boot, mount the `pstore` file system on `/sys/fs/pstore` to read them.
 - **The boot loader has no watchdog and no fallback.**  It starts the kernel of the selected firmware bank with the watchdog timer switched off.  If a kernel in flash stops before the firmware starts, nothing resets the phone, and every later power-on starts the same kernel again.  The phone then does not boot until its flash is rewritten through a JTAG adapter.  Try a new kernel from RAM before installing it, as described below.
 
+## The D80's kernel
+
+`nix build .#kernel-d80` builds the same source tree with `d80_defconfig`.  The result holds:
+
+| Path | Contents |
+| --- | --- |
+| `zImage` | The compressed kernel. |
+| `dtbs/imx6dl-digium-d80.dtb` | The device tree (`files/arch/arm/boot/dts/nxp/imx/imx6dl-digium-d80.dts`). |
+| `zImage-dtb` | `zImage` followed by the device tree, which is the form the boot loader starts. |
+| `lib/modules/7.3.0/` | The loadable modules: sound, Wi-Fi, Bluetooth, and some file systems. |
+| `config` | The full configuration that was used. |
+
+The port adds one driver, for the ZL38040 voice processor (`files/sound/soc/codecs/zl38040.c`), and an entry for the RTL8363NB Ethernet switch in the `rtl8365mb` driver.  Everything else is the device tree and the configuration.
+
+The build does not make a boot image or a root file system for the D80 yet, and the kernel has no early-boot stage.
+
+### Constraints to know about
+
+- **The boot loader starts an Android boot image.**  The phone's U-Boot reads the image from the first partition of the eMMC, which is 8 MiB.  The image has a version 0 header and 2048-byte pages.  Its kernel is `zImage-dtb`, loaded at 0x10808000, and its ramdisk is loaded at 0x11800000.  U-Boot passes the memory layout and the location of the ramdisk in ATAGs, which the kernel merges into the appended device tree (`CONFIG_ARM_ATAG_DTB_COMPAT`).
+- **The kernel ignores the boot loader's command line.**  U-Boot passes the command line of the stock Android system, which has `init=/init` and parameters for the stock kernel's drivers.  The configuration replaces it with its own (`CONFIG_CMDLINE` with `CONFIG_CMDLINE_FORCE`).  To add a kernel parameter, add it to `CONFIG_CMDLINE` in `configs/d80_defconfig`.
+- **Three devices need firmware files that are not in the repository.**  The kernel loads them from `/lib/firmware`:
+
+  | Device | File |
+  | --- | --- |
+  | ZL38040 voice processor | `zl38040.fw`: the stock firmware (`ZLS38040App_v2.2.2.s3`, built into the stock kernel), converted to Intel HEX and then with the kernel's `ihex2fw -j`.  The driver does not start without it. |
+  | Wi-Fi (BCM43430 revision 0, in the AP6212 module) | `brcm/brcmfmac43430a0-sdio.bin` and the board's NVRAM file, `brcm/brcmfmac43430a0-sdio.txt` |
+  | Bluetooth (in the same module) | `brcm/BCM4343A0.hcd` |
+
+- **Sound is one PCM device, and a mixer control selects the path.**  The control `Audio Path` of the ZL38040 driver selects `Speaker`, `Handset`, `Headset`, or `Bluetooth`.  `Master Playback Volume` is 0 to 10 and starts at 0, which is silence.  The PCM device is stereo at 8 or 16 kHz, with the voice in the left channel in both directions.
+- **The panel is mounted upside down.**  The first line of the frame buffer is at the bottom of the screen as the phone is viewed, and the device tree says so (`rotation = <180>`).  The kernel does not rotate the picture, and the touchscreen reports positions in the frame buffer's coordinates.
+- **`CONFIG_DRM_IMX_PARALLEL_DISPLAY` is on only to make the kernel link.**  In Linux 7.3, the LVDS driver (`CONFIG_DRM_IMX_LDB`) needs `CONFIG_DRM_DISPLAY_HELPER` and does not select it.  The parallel display driver, which the phone does not use, does.
+- **`make dtbs_check` reports two problems in the device tree.**  The panel has no compatible for its part, which is unknown.  The Ethernet switch has an `mdio` node, which the driver requires and the binding allows only for a switch on the other kind of bus.
+
 ## Working on the kernel
 
-The port is developed in an ordinary git checkout of the Linux `v7.3` tag, outside this repository.  The `patches/`, `files/`, and `configs/` directories are generated from that checkout.
+The ports are developed in an ordinary git checkout of the Linux `v7.3` tag, outside this repository.  The `patches/`, `files/`, and `configs/` directories are generated from that checkout.
 
-To create the checkout with the port applied:
+To create the checkout with the ports applied:
 
 ```text
 git clone --depth 1 --branch v7.3 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git ~/linux-bcmring
 cp -r --no-preserve=mode "$(nix build .#kernel-source --no-link --print-out-paths)"/. ~/linux-bcmring/
 ```
 
-The checkout's `HEAD` stays at `v7.3`, so `git status` and `git diff` in it show exactly the port.
+The checkout's `HEAD` stays at `v7.3`, so `git status` and `git diff` in it show exactly the ports.
 
 After editing the checkout, regenerate this directory and build:
 

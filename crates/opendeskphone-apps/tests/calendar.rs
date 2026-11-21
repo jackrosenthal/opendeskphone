@@ -1,6 +1,6 @@
 //! The Calendar app on the touchscreen (D80), which has no keys: the
 //! month is turned by a swipe or by the buttons beside its name, and the
-//! back button leaves.  The calendar on the phones with keys is tested in
+//! back button leaves.  The calendar on the phones with physical buttons is tested in
 //! `apps.rs`.
 
 mod common;

@@ -56,7 +56,7 @@ Returns `ui::get_metrics().keys`: `false` on a phone that is used by touch alone
 pub fn softkeys(keys: &[Softkey], for_keys: &[u32]) -> Vec<Softkey>
 ```
 
-Returns the softkeys of `keys` that the phone needs: all of them on a phone with keys, and on the touchscreen those whose `id` isn't in `for_keys`.  Name in `for_keys` the softkeys that do what `cancel` does on the screen ("Back", "Exit"), because the touchscreen's [back button](ui.md#touch) is `cancel`, and the softkeys that act on the highlighted row of a list ("Open", "Select"), because a touch on the row does that.
+Returns the softkeys of `keys` that the phone needs: all of them on a phone with physical buttons, and on the touchscreen those whose `id` isn't in `for_keys`.  Name in `for_keys` the softkeys that do what `cancel` does on the screen ("Back", "Exit"), because the touchscreen's [back button](ui.md#touch) is `cancel`, and the softkeys that act on the highlighted row of a list ("Open", "Select"), because a touch on the row does that.
 
 ```rust
 ui::set_softkeys(ROOT, &nav::softkeys(
@@ -71,7 +71,7 @@ ui::set_softkeys(ROOT, &nav::softkeys(
 pub fn focus_list(list: Widget)
 ```
 
-Gives a list the focus on a phone with keys, where the arrows move the list's highlight.  On the touchscreen, does nothing: a list there has no highlighted row until the user touches one (a highlight at rest would look like a choice the user made).  Use `ui::set_focus` instead for a list whose highlighted row is the value that is chosen, such as the current setting.
+Gives a list the focus on a phone with physical buttons, where the arrows move the list's highlight.  On the touchscreen, does nothing: a list there has no highlighted row until the user touches one (a highlight at rest would look like a choice the user made).  Use `ui::set_focus` instead for a list whose highlighted row is the value that is chosen, such as the current setting.
 
 ### `Message`
 
@@ -93,7 +93,7 @@ pub fn note(area: Rect, text: &str) -> Widget
 
 Creates a wrapped `Text` that fills `area` (the rectangle that `screen` returned), inset as the text of a `Message`: for a screen that shows a sentence in place of a list.  The insets of `note`, `Message`, and `Form` are larger on the touchscreen.
 
-A text is in the middle of its widget's height, so on a phone with keys the sentence is in the middle of `area`.  On the touchscreen the sentence is centered, and its middle is a quarter of the way down `area`: in the upper part of the tall screen, which is read first.  Say in the sentence what is missing and what to do about it: "There are no alarms.  Touch New alarm to set one."
+A text is in the middle of its widget's height, so on a phone with physical buttons the sentence is in the middle of `area`.  On the touchscreen the sentence is centered, and its middle is a quarter of the way down `area`: in the upper part of the tall screen, which is read first.  Say in the sentence what is missing and what to do about it: "There are no alarms.  Touch New alarm to set one."
 
 ### `nav::Confirm`
 
@@ -108,7 +108,7 @@ impl Confirm {
 
 Touch: a question before an action, on a screen of its own: `screen(title)`, the question as a [`note`](#navnote), and across the bottom two [buttons](#controls), "Cancel" at the left and the action at the right.  Name the action by what it does ("Delete", "Log out"), and give it `Look::Destructive` if it deletes something.  The back button cancels too.  Hand every `Event::Touch` to `touched`: it returns `Some(true)` when the action was touched, and `Some(false)` when "Cancel" was.
 
-On a phone with keys, ask with a `Message` and softkeys instead.
+On a phone with physical buttons, ask with a `Message` and softkeys instead.
 
 ### `Form`
 
@@ -130,7 +130,7 @@ A screen with a title and a labeled input for each entry of `fields`: label, inp
 
 ## Controls
 
-The `controls` module has the controls of the touchscreen that the widgets don't have: buttons and switches.  Each is a canvas (capability `canvas`) that takes touches, drawn in the skin's colors in the shape of the phone's own buttons.  They are for a phone without keys, where what an app does is touched on its screen; a phone with keys has softkeys for the same things.
+The `controls` module has the controls of the touchscreen that the widgets don't have: buttons and switches.  Each is a canvas (capability `canvas`) that takes touches, drawn in the skin's colors in the shape of the phone's own buttons.  They are for a phone without physical buttons, where what an app does is touched on its screen; a phone with physical buttons has softkeys for the same things.
 
 ```rust
 pub enum Look { Primary, Secondary, Destructive, Call }

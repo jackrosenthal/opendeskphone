@@ -688,7 +688,7 @@ fn forward_target(f: &opendeskphone_state::Forward, kind: ForwardKind) -> &str {
     }
 }
 
-/// Call forwarding.  On the phones with keys, a menu of the three rules,
+/// Call forwarding.  On the phones with physical buttons, a menu of the three rules,
 /// each with its number or Off (Select types the number, and an empty
 /// number turns the rule off), and Do Not Disturb.
 ///
@@ -702,7 +702,7 @@ pub(crate) fn forward_menu() -> Box<dyn Screen> {
 }
 
 struct ForwardScreen {
-    /// The menu of the phones with keys.
+    /// The menu of the phones with physical buttons.
     keys: Box<dyn Screen>,
     /// Touch: the last number of each rule, in the order of
     /// [`FORWARD_RULES`], kept while the rule is off; shared with the
@@ -1749,7 +1749,7 @@ pub(crate) fn empty_state(c: &mut Canvas, th: &Theme, r: IRect, title: &str, hin
 /// caller's words are in one of these, and [`ask`] is the one place that
 /// gives them to `Confirm`.
 pub(crate) struct Ask {
-    /// The question as the phones with keys ask it.
+    /// The question as the phones with physical buttons ask it.
     pub question: String,
     /// Touch: the dialog's title.
     pub title: &'static str,

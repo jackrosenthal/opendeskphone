@@ -147,7 +147,7 @@ fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
         out.contrast = v;
     }
     // (With none configured, the D80 keeps its own home buttons: the
-    // configuration's default softkeys are those of a phone with keys.)
+    // configuration's default softkeys are those of a phone with physical buttons.)
     let softkeys = cfg.idle_softkeys();
     if softkeys.source != opendeskphone_config::SettingSource::Default || !ctx.store.model().is_touch() {
         out.idle_softkeys = idle_softkeys(&softkeys.keys);
@@ -420,7 +420,7 @@ mod tests {
     }
 
     /// With no softkeys configured the D80 has its own home buttons, and
-    /// the models with keys the configuration's default softkeys;
+    /// the models with physical buttons the configuration's default softkeys;
     /// configured softkeys are the softkeys of either.
     #[test]
     fn the_d80_has_its_own_home_buttons_until_softkeys_are_configured() {

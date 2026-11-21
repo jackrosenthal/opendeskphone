@@ -1,5 +1,5 @@
 # The cargo workspace: `opendeskphone` for the phone (one build for the
-# phones with keys, and one with the D80's touch skin), the two host tools
+# D40 thru D70, and one with the D80's touch skin), the two host tools
 # (`opendeskphone-image`, `opendeskphone-apps-build`), the DPMA module for the
 # tests' Asterisk (`res_open_dpma`), and the test and lint checks.
 #
@@ -81,8 +81,8 @@ let
       package = craneLib.buildPackage (full // { inherit cargoArtifacts; });
     };
 
-  # The firmware binary is built twice, by family of phones.  The phones
-  # with keys (D40 to D70) have little flash, so their binary is built
+  # The firmware binary is built twice, by family of phones.  The D40
+  # thru D70 have little flash, so their binary is built
   # without the feature `d80` of crates/opendeskphone: it has nothing of the
   # D80's touch skin, whose fonts and artwork are the largest of any skin.
   # The D80's binary has every feature (cargo's default, which is also what
@@ -90,7 +90,7 @@ let
   #
   # Each build is checked for the bytes that the touch skin's icon data
   # begins with (`TOUCH_MARK` in crates/opendeskphone-ui/build.rs, which
-  # must say the same): the binary of the phones with keys must not have
+  # must say the same): the binary of the D40 thru D70 must not have
   # them, and the D80's must, so that neither the skin nor the check goes
   # astray unnoticed.
   touchSkinMark = "opendeskphone-ui touch skin icons";
@@ -102,7 +102,7 @@ let
     doInstallCheck = true;
     installCheckPhase = ''
       if grep --quiet --text --fixed-strings '${touchSkinMark}' $out/bin/dphone; then
-        echo "dphone for the phones with keys has the D80's touch skin: is opendeskphone-ui built with its feature touch?" >&2
+        echo "dphone for the D40 thru D70 has the D80's touch skin: is opendeskphone-ui built with its feature touch?" >&2
         exit 1
       fi
     '';
@@ -188,7 +188,7 @@ in
 {
   inherit src version;
 
-  # The firmware binary of the phones with keys (D40 to D70): static, ARMv6
+  # The firmware binary of the D40 thru D70: static, ARMv6
   # soft-float, without the D80's touch skin.
   opendeskphone = phone.package;
 

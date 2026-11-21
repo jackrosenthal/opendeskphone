@@ -37,7 +37,7 @@
 //! a key draws again only the rows it changed.  The app makes no sound,
 //! and like any app it leaves the screen to a call.
 //!
-//! On a phone without keys (the touchscreen) there is no cursor and no
+//! On a phone without physical buttons (the touchscreen) there is no cursor and no
 //! picture of keys.  The board is as wide as the upright window, under a
 //! line with the time; a touch on a cell puts a light there, a touch on a
 //! light makes it a square, and a touch on a square clears the cell.
@@ -66,7 +66,7 @@ const SK_UNDO: u32 = 8;
 const SK_SCORES: u32 = 9;
 const SK_SIZE: u32 = 10;
 const SK_LEVEL: u32 = 11;
-/// On a phone without keys: what the key 8 does.
+/// On a phone without physical buttons: what the key 8 does.
 const SK_AUTO: u32 = 12;
 
 /// The softkeys the touchscreen does without: the back button is the way
@@ -80,7 +80,7 @@ fn set_keys(all: &[Softkey]) {
     ui::set_softkeys(ROOT, &keys(all));
 }
 
-/// What the line under the board says on a phone without keys.
+/// What the line under the board says on a phone without physical buttons.
 const TOUCH_HINT: &str = "Touch a cell: a light, then a square, then empty.";
 
 /// The key, in the app's storage, that holds the puzzle with its
@@ -876,7 +876,7 @@ impl LightUp {
         self.run_clock(true);
     }
 
-    /// The playing screen of a phone without keys, in its upright window:
+    /// The playing screen of a phone without physical buttons, in its upright window:
     /// the title (the puzzle's size and difficulty) with the time at the
     /// right of it, under it the board, as wide as the window allows, and
     /// under that what a touch does; "Solved!" and the time take that

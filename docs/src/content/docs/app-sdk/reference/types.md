@@ -67,11 +67,11 @@ pub struct Metrics {
 
 `width` and `height` are the window's size.  `row_height` is the height of a list row.
 
-`Skin::Touch` is the touchscreen of a phone without keys (the D80): an upright screen, about twice as many pixels to the inch as the color models have, with rows and buttons tall enough for a finger.
+`Skin::Touch` is the touchscreen of a phone without physical buttons (the D80): an upright screen, about twice as many pixels to the inch as the color models have, with rows and buttons tall enough for a finger.
 
 `keys` tells whether the phone has keys: a dial pad, arrow keys, and keys below the display.  Where `keys` is `false`, no key press ever arrives from a key, so offer every action on the screen: in a list, as a softkey, or on a widget that takes touches ([`ui::claim_touch`](ui.md#claim_touch)).  Don't show hints such as "Press 5" there.
 
-`back_width` is the width of the [back button](ui.md#touch), which the phone draws over the top-left corner of the window on a phone without keys, `title_height` tall, and of the home button, which it draws over the top-right corner of a window that isn't full-screen.  Keep both corners free; a title is between the two buttons.  `back_width` is 0 on a phone with keys.
+`back_width` is the width of the [back button](ui.md#touch), which the phone draws over the top-left corner of the window on a phone without physical buttons, `title_height` tall, and of the home button, which it draws over the top-right corner of a window that isn't full-screen.  Keep both corners free; a title is between the two buttons.  `back_width` is 0 on a phone with physical buttons.
 
 ## Widgets
 

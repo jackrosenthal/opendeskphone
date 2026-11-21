@@ -83,7 +83,7 @@ Up to four softkeys fill the four positions in order.  With more than four, the 
 
 On the touchscreen, the softkeys are buttons in a row below the window, side by side: the buttons share the width of the row, and one softkey alone is as wide as the window.  With more than four softkeys, the row has the first three and "More", which opens a menu of the others over the window; nothing pages.
 
-While an `Input` has the focus and the third position is empty, a phone with keys shows "Delete" there.  "Delete" deletes the character before the cursor and sends `WidgetEvent::Changed`.  The touchscreen has no "Delete": its keyboard has a backspace key.
+While an `Input` has the focus and the third position is empty, a phone with physical buttons shows "Delete" there.  "Delete" deletes the character before the cursor and sends `WidgetEvent::Changed`.  The touchscreen has no "Delete": its keyboard has a backspace key.
 
 ## Idle window
 
@@ -352,7 +352,7 @@ A widget's claims apply while the widget or a descendant has the focus; the wind
 
 Line key 1, the volume keys, `Mute`, `Speaker`, and `Headset` can't be claimed (see [`input::capture`](input.md)).  The four keys below the display can be claimed only in a full-screen window.
 
-On a phone without keys ([`Metrics::keys`](types.md#metrics-and-skin) is `false`), the only key that arrives is `Cancel`, from the [back button](#touch).
+On a phone without physical buttons ([`Metrics::keys`](types.md#metrics-and-skin) is `false`), the only key that arrives is `Cancel`, from the [back button](#touch).
 
 ### `claim_touch`
 

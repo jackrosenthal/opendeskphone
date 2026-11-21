@@ -1,16 +1,25 @@
-# Mainline Linux v7.3 with the bcmring port: kernel/patches applied in name
-# order, kernel/files copied over the tree, configured from kernel/configs.
-# One build serves every model; only the appended DTB differs.
+# Mainline Linux v7.3 with the ports to the phones: kernel/patches applied in
+# name order, kernel/files copied over the tree, configured from
+# kernel/configs.  The one source tree has both ports, and this file builds
+# one kernel of it; nix/default.nix calls it once for each:
 #
-# The kernel image carries an initramfs with one program, the early-boot
-# stage (crates/opendeskphone-early): it counts trial boots and can select the
-# previous bank before the root file system is needed, then mounts the
-# root and runs its init.  The initramfs is not compressed by itself; it
-# is compressed with the rest of the zImage.
+#   bcmring (the default arguments)   the D40, D45, D50, D60, D62, D65, and
+#                                     D70.  One build serves all seven; only
+#                                     the appended DTB differs.
+#   d80_defconfig                     the D80 (i.MX 6DualLite)
+#
+# With `earlyInit`, the kernel image carries an initramfs with one program,
+# the early-boot stage (crates/opendeskphone-early): it counts trial boots and
+# can select the previous bank before the root file system is needed, then
+# mounts the root and runs its init.  The initramfs is not compressed by
+# itself; it is compressed with the rest of the zImage.
 #
 # Output layout:
 #   zImage                       XZ-compressed kernel, no DTB appended
-#   dtbs/<board>.dtb             the seven board devicetrees
+#   dtbs/<board>.dtb             the board devicetrees
+#   zImage-dtb                   with `appendDtb`: zImage and then that
+#                                board's DTB, which is how the D80's boot
+#                                loader takes the two
 #   lib/modules/<release>/...    stripped modules; no depmod indexes (the
 #                                init role carries its own load list)
 #   config                       the resolved .config
@@ -27,9 +36,30 @@
   xz,
   openssl,
   kernelSrc, # path: the repository's kernel/ directory
-  earlyInit, # the built opendeskphone-early ($out/bin/opendeskphone-early, static ARM)
-  initramfsList, # path: crates/opendeskphone-early/initramfs.list
+  pname ? "linux-bcmring",
   defconfig ? "bcmring_tiny_defconfig",
+  # The built opendeskphone-early ($out/bin/opendeskphone-early, static ARM)
+  # and crates/opendeskphone-early/initramfs.list, or null for a kernel
+  # without the early-boot stage.
+  earlyInit ? null,
+  initramfsList ? null,
+  # The make targets that build the devicetrees, and which of the built
+  # ones to install, as a glob under arch/arm/boot/dts.
+  dtbTargets ? [ "dtbs" ],
+  dtbs ? "broadcom/*-digium-*.dtb",
+  # Model to devicetree name.
+  boards ? {
+    d40 = "bcm11170-digium-d40";
+    d45 = "bcm11109-digium-d45";
+    d50 = "bcm11170-digium-d50";
+    d60 = "bcm11189-digium-d60";
+    d62 = "bcm11188-digium-d62";
+    d65 = "bcm11188-digium-d65";
+    d70 = "bcm11109-digium-d70";
+  },
+  # A devicetree name: also install zImage-dtb, the zImage with that
+  # devicetree after it.
+  appendDtb ? null,
 }:
 let
   version = "7.3";
@@ -63,10 +93,10 @@ let
     cp ${kernelSrc + "/configs"}/* arch/arm/configs/
   '';
 
-  # The v7.3 tree with the port applied and nothing built: what a developer
-  # copies over a git checkout of v7.3 to work on the port (kernel/README.md).
+  # The v7.3 tree with the ports applied and nothing built: what a developer
+  # copies over a git checkout of v7.3 to work on them (kernel/README.md).
   source = stdenv.mkDerivation {
-    pname = "linux-bcmring-source";
+    pname = "linux-opendeskphone-source";
     inherit version src patches;
     postPatch = applyPort;
     dontConfigure = true;
@@ -76,8 +106,12 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "linux-bcmring";
-  inherit version patches makeFlags;
+  inherit
+    pname
+    version
+    patches
+    makeFlags
+    ;
 
   inherit src;
 
@@ -104,16 +138,20 @@ stdenv.mkDerivation {
   configurePhase = ''
     runHook preConfigure
     make $makeFlags ${defconfig}
+  ''
+  + lib.optionalString (earlyInit != null) ''
     sed 's|@INIT@|${earlyInit}/bin/opendeskphone-early|' ${initramfsList} > initramfs.list
     scripts/config --file build/.config --set-str INITRAMFS_SOURCE "$PWD/initramfs.list"
     make $makeFlags olddefconfig
     grep -q '^CONFIG_INITRAMFS_COMPRESSION_NONE=y' build/.config
+  ''
+  + ''
     runHook postConfigure
   '';
 
   buildPhase = ''
     runHook preBuild
-    make $makeFlags -j$NIX_BUILD_CORES zImage dtbs modules
+    make $makeFlags -j$NIX_BUILD_CORES zImage ${lib.escapeShellArgs dtbTargets} modules
     runHook postBuild
   '';
 
@@ -121,7 +159,10 @@ stdenv.mkDerivation {
     runHook preInstall
     mkdir -p $out/dtbs
     cp build/arch/arm/boot/zImage $out/zImage
-    cp build/arch/arm/boot/dts/broadcom/*-digium-*.dtb $out/dtbs/
+    cp build/arch/arm/boot/dts/${dtbs} $out/dtbs/
+    ${lib.optionalString (
+      appendDtb != null
+    ) "cat $out/zImage $out/dtbs/${appendDtb}.dtb > $out/zImage-dtb"}
     cp build/.config $out/config
     make $makeFlags INSTALL_MOD_PATH=$out INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
     rm -f $out/lib/modules/*/build $out/lib/modules/*/source
@@ -132,15 +173,7 @@ stdenv.mkDerivation {
   dontPatchELF = true;
 
   passthru.source = source;
-  passthru.boards = {
-    d40 = "bcm11170-digium-d40";
-    d45 = "bcm11109-digium-d45";
-    d50 = "bcm11170-digium-d50";
-    d60 = "bcm11189-digium-d60";
-    d62 = "bcm11188-digium-d62";
-    d65 = "bcm11188-digium-d65";
-    d70 = "bcm11109-digium-d70";
-  };
+  passthru.boards = boards;
 
   meta.license = lib.licenses.gpl2Only;
 }

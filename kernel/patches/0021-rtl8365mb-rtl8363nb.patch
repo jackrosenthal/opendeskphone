@@ -1,0 +1,28 @@
+net: dsa: realtek: rtl8365mb: add the RTL8363NB
+
+The RTL8363NB is a two-port member of the family: PHYs 1 and 3, and one
+extension interface, which the driver numbers port 6.  The one in the Digium
+D80 reports chip ID 0x6367 and version 0x0060.  With this entry it links at
+1 Gbit/s over RGMII to the i.MX6 FEC and passes traffic on both jacks.
+
+--- a/drivers/net/dsa/realtek/rtl8365mb_main.c
++++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
+@@ -723,6 +723,18 @@ static const struct rtl8365mb_chip_info rtl8365mb_chip_infos[] = {
+ 		.jam_table = rtl8365mb_init_jam_8365mb_vc,
+ 		.jam_size = ARRAY_SIZE(rtl8365mb_init_jam_8365mb_vc),
+ 	},
++	{
++		/* Digium D80: reports id 0x6367, version 0x0060. */
++		.name = "RTL8363NB",
++		.chip_id = 0x6367,
++		.chip_ver = 0x0060,
++		.extints = {
++			{ 6, 1, PHY_INTF(MII) | PHY_INTF(TMII) |
++				PHY_INTF(RMII) | PHY_INTF(RGMII) },
++		},
++		.jam_table = rtl8365mb_init_jam_8365mb_vc,
++		.jam_size = ARRAY_SIZE(rtl8365mb_init_jam_8365mb_vc),
++	},
+ 	{
+ 		.name = "RTL8367S",
+ 		.chip_id = 0x6367,

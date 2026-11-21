@@ -8,7 +8,7 @@ pub struct Page {
     /// The grid of the picture, as [`Grid::parse`] reads it.
     pub picture: &'static str,
     pub text: &'static str,
-    /// The text on a phone without keys, where it is another.
+    /// The text on a phone without physical buttons, where it is another.
     pub touch_text: Option<&'static str>,
 }
 
@@ -17,7 +17,7 @@ impl Page {
         Grid::parse(self.picture).expect("a grid")
     }
 
-    /// The page's sentences on a phone with keys (`true`), or on one that
+    /// The page's sentences on a phone with physical buttons (`true`), or on one that
     /// is used by touch alone, which names no key.
     pub fn words(&self, keys: bool) -> &'static str {
         match self.touch_text {

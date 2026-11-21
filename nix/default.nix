@@ -1,10 +1,14 @@
 # Everything the flake exports.  Each artifact is its own small derivation:
 #
-#   kernel                 zImage, DTBs, modules (one build for all models)
-#   kernel-source          v7.3 with the port applied, unbuilt (for editing)
-#   kernel-<model>         boot image for the k0/k1 slot
-#   opendeskphone          the firmware binary of the phones with keys, D40
-#                          to D70 (ARMv6, static)
+#   kernel                 zImage, DTBs, modules (one build for the D40 thru
+#                          the D70)
+#   kernel-source          v7.3 with the ports applied, unbuilt (for editing)
+#   kernel-<model>         boot image for the k0/k1 slot, D40 thru D70
+#   kernel-d80             the D80's kernel: zImage, DTB, the two as one
+#                          file, and modules (no boot image is made of it
+#                          yet)
+#   opendeskphone          the firmware binary of the D40 thru D70 (ARMv6,
+#                          static)
 #   opendeskphone-d80      the firmware binary with the D80's touch skin (no
 #                          image is made of it yet)
 #   opendeskphone-image    host tool: EFF, OTA, kernel image, rootfs
@@ -50,6 +54,18 @@ let
     earlyInit = workspace.opendeskphone-early;
     initramfsList = root + "/crates/opendeskphone-early/initramfs.list";
   };
+  # The D80's kernel is built from the same source with its own
+  # configuration.  It has no early-boot stage: the D80's boot loader gives
+  # the kernel a ramdisk from the boot image, and none is made yet.
+  kernelD80 = pkgs.callPackage ./kernel.nix {
+    kernelSrc = root + "/kernel";
+    pname = "linux-d80";
+    defconfig = "d80_defconfig";
+    dtbTargets = [ "nxp/imx/imx6dl-digium-d80.dtb" ];
+    dtbs = "nxp/imx/imx6dl-digium-d80.dtb";
+    boards.d80 = "imx6dl-digium-d80";
+    appendDtb = "imx6dl-digium-d80";
+  };
   # The vendor's stock images, downloaded when something needs one, and the
   # DSP firmware taken out of two of them.
   stock = pkgs.callPackage ./vendor-firmware.nix { inherit (workspace) opendeskphone-image; };
@@ -60,7 +76,9 @@ let
 
   # The hash of the fetched pnpm store; when web/pnpm-lock.yaml changes, set
   # it to lib.fakeHash, build, and copy the hash Nix reports.
-  web = pkgs.callPackage ./web.nix { pnpmDepsHash = "sha256-eKjJ675HiFF5dqpBcEQtN8emaPRtxpHTf2mMOXHcwFg="; };
+  web = pkgs.callPackage ./web.nix {
+    pnpmDepsHash = "sha256-eKjJ675HiFF5dqpBcEQtN8emaPRtxpHTf2mMOXHcwFg=";
+  };
 
   asterisk = pkgs.callPackage ./asterisk.nix { module = workspace.res_open_dpma; };
   workspace = pkgs.callPackage ./workspace.nix {
@@ -124,6 +142,7 @@ in
 {
   packages = {
     inherit kernel;
+    kernel-d80 = kernelD80;
     kernel-source = kernel.source;
     inherit (userland) brush coreutils sed;
     inherit (workspace)
@@ -155,6 +174,7 @@ in
   checks = {
     inherit (workspace) tests clippy;
     inherit kernel;
+    kernel-d80 = kernelD80;
     inherit (userland) brush coreutils sed;
     # Each of the two firmware binaries is checked for the touch skin as it
     # is built: the one must not have it, and the other must

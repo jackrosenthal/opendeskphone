@@ -19,8 +19,8 @@
 //! and is touched when the finger is lifted where it came down
 //! (`Touch::Tap`); a finger that slides off touches nothing.
 //!
-//! The controls are for a phone without keys ([`crate::has_keys`]): there,
-//! what an app does on its screen is touched, and a phone with keys has
+//! The controls are for a phone without physical buttons ([`crate::has_keys`]): there,
+//! what an app does on its screen is touched, and a phone with physical buttons has
 //! softkeys for the same things.
 //!
 //! [`Touch`]: crate::Touch

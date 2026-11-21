@@ -197,7 +197,7 @@ fn handle(&mut self, event: Event) {
 }
 ```
 
-On a phone with keys nothing is touched: `claim_touch` does nothing there, and no `Event::Touch` comes.
+On a phone with physical buttons nothing is touched: `claim_touch` does nothing there, and no `Event::Touch` comes.
 
 ## Storage
 

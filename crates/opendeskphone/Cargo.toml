@@ -19,7 +19,7 @@ path = "src/main.rs"
 default = ["web", "d80"]
 # The D80: its touch skin (`opendeskphone-ui`'s feature `touch`).  On by
 # default, so that the simulator and the tests have every model.  The
-# firmware images of the phones with keys (D40 to D70) are built without
+# firmware images of the D40 thru D70 are built without
 # it (`--no-default-features --features web`): their flash has no room for
 # the D80's fonts and artwork, and `dphone` built so does not start as a
 # D80.  The Nix build fails if that binary has the touch skin

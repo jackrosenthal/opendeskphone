@@ -21,7 +21,7 @@
 //!   takes text.
 //!
 //! The touch skin is the feature `touch`, which is on by default.  Without
-//! it (the firmware of the phones with keys, which have little flash) the
+//! it (the firmware of the D40 thru D70, which have little flash) the
 //! build has none of that skin's fonts, icons, and artwork, and
 //! [`skin::Theme::touch`] is false at compile time, so the compiler leaves
 //! out what the screens do only by touch, [`osk`] included.  The API is

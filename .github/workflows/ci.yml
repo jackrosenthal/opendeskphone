@@ -2,8 +2,8 @@
 # checks.  The work is split into jobs that run at once, each building some
 # of the flake's outputs (.github/actions/nix-build):
 #
-#   kernel, web, apps, brush, coreutils, sed, workspace,
-#   checks-deps, asterisk                                 (nothing before them)
+#   kernel, kernel-d80, web, apps, brush, coreutils, sed,
+#   workspace, checks-deps, asterisk                      (nothing before them)
 #   rootfs, d80, tests, clippy                            (from those)
 #   one image per model, jffs2-mount                      (from rootfs)
 #   checks                                                (`nix flake check`)
@@ -55,6 +55,10 @@ jobs:
         include:
           - name: kernel
             installables: .#kernel
+          # The D80's kernel.  No image is made of it yet; building it
+          # keeps it building.
+          - name: kernel-d80
+            installables: .#kernel-d80
           - name: web
             installables: .#web
           - name: apps
@@ -107,8 +111,8 @@ jobs:
 
   # The firmware binary with the D80's touch skin.  No image is made of it
   # yet; building it keeps it building, and checks that it has the skin,
-  # as the build of the other binary (in `rootfs`) checks that the phones
-  # with keys do not get it.
+  # as the build of the other binary (in `rootfs`) checks that the D40 thru
+  # D70 do not get it.
   d80:
     name: d80
     needs: build
@@ -215,7 +219,7 @@ jobs:
       - uses: ./.github/actions/nix-build
         with:
           cache: true
-          stores: nix-new-{kernel,brush,coreutils,sed,rootfs,d80,tests,clippy,jffs2-mount}
+          stores: nix-new-{kernel,kernel-d80,brush,coreutils,sed,rootfs,d80,tests,clippy,jffs2-mount}
 
       - run: nix flake check --print-build-logs
 

@@ -941,7 +941,7 @@ fn the_models_with_keys_keep_their_softkeys_and_register_nothing() {
         store.update::<System, _>(|s| s.phase = Phase::Running);
         store.update::<Accounts, _>(|a| a.accounts.push(Account::new(AccountId(0))));
         let calls = store.handle(Domain::Calls);
-        // The softkeys of the idle screen are those of a phone with keys.
+        // The softkeys of the idle screen are those of a phone with physical buttons.
         assert!(UiConfig::for_model(model) == UiConfig::default());
         let mut ui = Ui::from_hal(&mut hal, store.clone(), UiConfig { backlight_timeout_secs: 0, ..UiConfig::for_model(model) });
         ui.pump();

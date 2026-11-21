@@ -1415,7 +1415,7 @@ fn on_the_touchscreen_the_other_screens_name_no_key_and_fit() {
     r.launch(APP);
     assert_eq!(board(&r, 14), (0, 96, 14 * 57 + 1));
 
-    // The phones with keys have their sentences, their keys, and their
+    // The phones with physical buttons have their sentences, their keys, and their
     // cursor, and take no touches.
     let mut r = rig_with(Model::D60, WRONG);
     r.launch(APP);

@@ -147,7 +147,7 @@ fn a_native_screens_softkeys_are_packed_without_more() {
     assert!(left >= th.soft_x0);
     assert_eq!(keys.iter().map(|(k, _)| k.right()).max(), Some(th.width - left));
     assert!(keys.iter().all(|(_, id)| *id != u32::MAX));
-    // The call log's softkeys on the phones with keys have empty places
+    // The call log's softkeys on the phones with physical buttons have empty places
     // between them; here it has one button, from side to side.
     r.fill_call_log(3);
     r.show("call_log");
@@ -184,7 +184,7 @@ fn a_question_is_a_card_with_cancel_at_the_left() {
     r.tap(Hit::Soft(4));
     assert_eq!(r.screen(), "call_log");
     assert_eq!(r.store.get::<CallLog>().entries.len(), 3);
-    // The phones with keys have the question and Yes and No, as before.
+    // The phones with physical buttons have the question and Yes and No, as before.
     let mut k = Rig::new(Model::D65);
     k.show("call_log");
     k.sim.tap(Key::Soft(3));
@@ -451,7 +451,7 @@ fn every_title_bar_has_back_at_the_left_and_home_at_the_right() {
     assert_eq!(r.screen(), "menu");
     r.tap(Hit::Home);
     assert_eq!(r.screen(), "call");
-    // The phones with keys have no such buttons.
+    // The phones with physical buttons have no such on-screen buttons.
     let mut k = Rig::new(Model::D65);
     k.show("menu");
     assert!(k.ui.canvas().hits().is_empty());

@@ -638,7 +638,7 @@ impl Screen for Info {
 
 /// A question before something is done.
 ///
-/// With keys: the question, and the softkeys "Yes" and "No".
+/// With physical buttons: the question, and the softkeys "Yes" and "No".
 ///
 /// Touch: a card in the middle of the screen with a title (if it has
 /// one), the question (best a sentence that says what will happen), and

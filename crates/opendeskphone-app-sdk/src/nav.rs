@@ -68,7 +68,7 @@ pub fn note(area: Rect, text: &str) -> Widget {
     w
 }
 
-/// Gives a list the focus on a phone with keys, where the arrows move its
+/// Gives a list the focus on a phone with physical buttons, where the arrows move its
 /// highlight.  On the touchscreen a list has no highlighted row until a
 /// row is touched: [`screen`] gives its title the focus there, and this
 /// leaves it.

@@ -162,7 +162,7 @@ fn the_lines_are_on_the_screen_and_are_the_line_keys() {
     // for the line's account.)
     let line = r.region(Hit::Custom(101));
     assert!(line.h >= th.touch_min && line.w >= th.touch_min);
-    // A model with keys registers nothing.
+    // A model with physical buttons registers nothing.
     let d60 = Rig::new(Model::D60);
     assert!(d60.ui.canvas().hits().is_empty());
 }

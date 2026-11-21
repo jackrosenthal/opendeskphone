@@ -477,7 +477,7 @@ fn soft_slots(keys: &[Soft], page: u8) -> [(u32, String); 4] {
 }
 
 /// The softkey buttons of a native screen on the touch skin: the actions
-/// that have a label, in order, without the places the phones with keys
+/// that have a label, in order, without the places the phones with physical buttons
 /// leave empty (a screen puts "Back" at the fourth key), and all of them:
 /// they take as many rows as they need, and there is no "More".
 fn touch_soft_slots(keys: &[Soft]) -> Vec<Soft> {

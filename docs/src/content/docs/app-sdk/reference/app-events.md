@@ -57,7 +57,7 @@ The last event of an instance.  The phone sends `Exit` before discarding the ins
 Event::Key(key)
 ```
 
-A key claimed with [`ui::claim_keys`](ui.md#claim_keys) by the window or one of the app's widgets was pressed, or any key while [`input::capture`](input.md) is on.  On a phone without keys, the only key is `Key::Cancel`, from the [back button](ui.md#touch).  Releases and repeats aren't reported, and the event doesn't name the claiming widget.  [`Key`](types.md#keys) names the key.
+A key claimed with [`ui::claim_keys`](ui.md#claim_keys) by the window or one of the app's widgets was pressed, or any key while [`input::capture`](input.md) is on.  On a phone without physical buttons, the only key is `Key::Cancel`, from the [back button](ui.md#touch).  Releases and repeats aren't reported, and the event doesn't name the claiming widget.  [`Key`](types.md#keys) names the key.
 
 ## `Hook`
 

@@ -205,7 +205,7 @@ pub struct Metrics {
     /// The width of the back button the toolkit draws over the top-left
     /// corner of the view on the touch skin (`title_height` high), and of
     /// the home button it draws over the top-right corner of a view that
-    /// is not full-screen; 0 on the skins of phones with keys.
+    /// is not full-screen; 0 on the skins of phones with physical buttons.
     pub back_width: u16,
 }
 

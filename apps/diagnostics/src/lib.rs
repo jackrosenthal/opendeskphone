@@ -23,7 +23,7 @@ const ITEMS: [&str; 6] = [
 const ITEM_KEYS: usize = 1;
 
 /// The items of the menu on this phone, as their places in `ITEMS`: a
-/// phone without keys has no key test.
+/// phone without physical buttons has no key test.
 fn menu_items() -> Vec<usize> {
     let keys = ui::get_metrics().keys;
     (0..ITEMS.len()).filter(|i| keys || *i != ITEM_KEYS).collect()
@@ -217,7 +217,7 @@ fn inset(m: &opendeskphone_app_sdk::Metrics) -> u16 {
     }
 }
 
-/// The softkeys of a page: on a phone with keys, `keys`; on the
+/// The softkeys of a page: on a phone with physical buttons, `keys`; on the
 /// touchscreen none, where a row is touched and the back button goes
 /// back.
 fn page_softkeys(keys: &[Softkey]) {

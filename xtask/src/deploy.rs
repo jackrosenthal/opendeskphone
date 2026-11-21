@@ -6,7 +6,7 @@
 //! `/tmp/opendeskphone`, and ask the main role to restart.  `/tmp` is a tmpfs,
 //! so a reboot returns the phone to the binary in its flash image.
 //!
-//! The binary is the one the images of the phones with keys (D40 to D70)
+//! The binary is the one the images of the D40 thru D70
 //! have: built without the D80's touch skin (`opendeskphone`'s feature
 //! `d80`), which is large, and `/tmp` is the phone's memory.
 //!
@@ -21,7 +21,7 @@ use crate::{Result, repo_root};
 
 const TARGET: &str = "arm-unknown-linux-musleabi";
 const REMOTE: &str = "/tmp/opendeskphone";
-/// The build of the phones with keys, as nix/workspace.nix has it.
+/// The build of the D40 thru D70, as nix/workspace.nix has it.
 const BUILD: [&str; 9] =
     ["build", "--release", "-p", "opendeskphone", "--target", TARGET, "--no-default-features", "--features", "web"];
 

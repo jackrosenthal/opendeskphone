@@ -1,0 +1,826 @@
+// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
+/*
+ * Digium D80 desk phone (stock board name "Digium Model80 Board"), with the
+ * LVDS panel (hardware ID 0xc).
+ *
+ * NXP i.MX 6DualLite (MCIMX6U5DVM10AC), 1 GiB DDR3, 8 GB eMMC, AP6212
+ * Wi-Fi/Bluetooth, RTL8363NB Ethernet switch, ZL38040 voice DSP, 800x1280
+ * LVDS panel with a FocalTech touch controller.
+ *
+ * Pad settings follow the stock 3.0.35 kernel's pad table.  Where the stock
+ * kernel left a pad's electrical configuration alone (NO_PAD_CTRL), this file
+ * uses 0x80000000 so that the pad configuration is likewise left untouched.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/sound/fsl-imx-audmux.h>
+#include "imx6dl.dtsi"
+
+/ {
+	model = "Digium D80";
+	compatible = "digium,d80", "fsl,imx6dl";
+
+	aliases {
+		/* Match the stock numbering: mmcblk0 is the eMMC. */
+		mmc0 = &usdhc4;
+		mmc1 = &usdhc3;
+		/delete-property/ mmc2;
+		/delete-property/ mmc3;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	memory@10000000 {
+		device_type = "memory";
+		reg = <0x10000000 0x40000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		/* Same 1 MiB region the stock kernel used for ram_console. */
+		ramoops@3ff00000 {
+			compatible = "ramoops";
+			reg = <0x3ff00000 0x100000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0>;
+			pmsg-size = <0x20000>;
+		};
+	};
+
+	/*
+	 * Stock pwm-backlight platform data: PWM1, 50000 ns period, linear
+	 * brightness 0..248, default 128.  The stock notify hook sets GPIO6_11
+	 * to (brightness > 0), which is what pwm-backlight does with
+	 * enable-gpios.
+	 */
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_backlight>;
+		pwms = <&pwm1 0 50000 0>;
+		brightness-levels = <0 248>;
+		num-interpolated-steps = <248>;
+		default-brightness-level = <128>;
+		enable-gpios = <&gpio6 11 GPIO_ACTIVE_HIGH>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio_keys>;
+
+		key-volume-up {
+			label = "Volume Up";
+			gpios = <&gpio2 0 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+		};
+
+		key-volume-down {
+			label = "Volume Down";
+			gpios = <&gpio2 1 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEDOWN>;
+		};
+
+		key-power {
+			label = "Power";
+			gpios = <&gpio3 29 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_POWER>;
+			wakeup-source;
+		};
+
+		/*
+		 * The stock kernel reports the hook switch as EV_SW code 13,
+		 * which is SW_LINEIN_INSERT in today's numbering.  Whether
+		 * "active" (low) means on-hook or off-hook has not been
+		 * determined.
+		 */
+		switch-hook {
+			label = "Hook Switch";
+			gpios = <&gpio4 5 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_SW>;
+			linux,code = <SW_LINEIN_INSERT>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_leds>;
+
+		led-red {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_RED>;
+			gpios = <&gpio1 2 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+			retain-state-suspended;
+		};
+
+		led-green {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+			retain-state-suspended;
+		};
+	};
+
+	/*
+	 * The panel's part number is unknown, so there is no specific
+	 * compatible (the binding wants one in front of "panel-lvds").  The
+	 * timing is the stock "LDB-XGA" entry, which despite its name is
+	 * 800x1280.
+	 */
+	panel {
+		compatible = "panel-lvds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_panel>;
+		backlight = <&backlight>;
+		/* Assumed: 7 inch diagonal at 800x1280; not measured. */
+		width-mm = <94>;
+		height-mm = <151>;
+		/* Stock LDB control: 24 bit, SPWG mapping. */
+		data-mapping = "vesa-24";
+		/*
+		 * The panel is mounted upside down: the first scan line is at
+		 * the bottom as the phone is viewed.
+		 */
+		rotation = <180>;
+
+		panel-timing {
+			/*
+			 * Stock pixclock is 16666 ps (60.0 MHz nominal).  With
+			 * the PLL2 PFD0 parent the achievable rate is
+			 * 528 MHz * 18 / 23 / 7 = 59.03 MHz, about 49.2 Hz,
+			 * which is also what the stock kernel produces.
+			 */
+			clock-frequency = <60000000>;
+			hactive = <800>;
+			hfront-porch = <72>;
+			hback-porch = <24>;
+			hsync-len = <24>;
+			vactive = <1280>;
+			vfront-porch = <12>;
+			vback-porch = <10>;
+			vsync-len = <2>;
+			hsync-active = <0>;
+			vsync-active = <0>;
+			de-active = <1>;
+		};
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&lvds0_out>;
+			};
+		};
+	};
+
+	/* GEN_3V3: discrete regulator, not software controlled. */
+	reg_3v3: regulator-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "GEN_3V3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
+
+	/*
+	 * Auxiliary 5 V rail.  The stock kernel drives the enable high at boot
+	 * and never touches it again; its consumers are unknown, so keep it on.
+	 */
+	reg_aux_5v: regulator-aux-5v {
+		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_reg_aux_5v>;
+		regulator-name = "aux_5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio6 10 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	reg_usb_otg_vbus: regulator-usb-otg-vbus {
+		compatible = "regulator-fixed";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_reg_usb_otg_vbus>;
+		regulator-name = "usb_otg_vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio3 22 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	/*
+	 * As in the stock machine driver (imx_board_hw_params): I2S, normal
+	 * clock polarity, with the SSI providing both clocks to the DSP.
+	 */
+	sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "Digium D80";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,bitclock-master = <&sound_cpu>;
+		simple-audio-card,frame-master = <&sound_cpu>;
+
+		sound_cpu: simple-audio-card,cpu {
+			sound-dai = <&ssi2>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&zl38040>;
+		};
+	};
+
+	/* AP6212 WL_REG_ON, plus the 32 kHz low-power clock from the SoC. */
+	wifi_pwrseq: wifi-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_wifi_pwrseq>;
+		reset-gpios = <&gpio6 7 GPIO_ACTIVE_LOW>;
+		clocks = <&clks IMX6QDL_CLK_CKIL>;
+		clock-names = "ext_clock";
+	};
+};
+
+/*
+ * Stock imx_zl38040_probe(): SSI2 is internal port 2 and the DSP is on
+ * external port 3 (0-based 1 and 2 here).  Port 3 drives its frame sync and
+ * bit clock pins from port 2; both ports are synchronous (4-wire).
+ */
+&audmux {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_audmux>;
+	status = "okay";
+
+	mux-ssi2 {
+		fsl,audmux-port = <1>;
+		fsl,port-config = <
+			IMX_AUDMUX_V2_PTCR_SYN
+			IMX_AUDMUX_V2_PDCR_RXDSEL(2)
+		>;
+	};
+
+	mux-aud3 {
+		fsl,audmux-port = <2>;
+		fsl,port-config = <
+			(IMX_AUDMUX_V2_PTCR_TFSDIR |
+			IMX_AUDMUX_V2_PTCR_TFSEL(1) |
+			IMX_AUDMUX_V2_PTCR_TCLKDIR |
+			IMX_AUDMUX_V2_PTCR_TCSEL(1) |
+			IMX_AUDMUX_V2_PTCR_SYN)
+			IMX_AUDMUX_V2_PDCR_RXDSEL(1)
+		>;
+	};
+};
+
+/*
+ * The stock kernel parents ldb_di0_clk to pll2_pfd_352M.  The clock driver
+ * only honors an LDB mux selection made here, at clock init.
+ */
+&clks {
+	assigned-clocks = <&clks IMX6QDL_CLK_LDB_DI0_SEL>;
+	assigned-clock-parents = <&clks IMX6QDL_CLK_PLL2_PFD0_352M>;
+};
+
+/* ZL38040 voice DSP control port */
+&ecspi1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_ecspi1>;
+	cs-gpios = <&gpio4 9 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	zl38040: audio-codec@0 {
+		compatible = "mscc,zl38040";
+		reg = <0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_zl38040>;
+		#sound-dai-cells = <0>;
+		/* Stock zl38040_spi_probe(): 20 MHz, SPI mode 3. */
+		spi-max-frequency = <20000000>;
+		spi-cpol;
+		spi-cpha;
+		reset-gpios = <&gpio1 0 GPIO_ACTIVE_LOW>;
+		handset-select-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+		speaker-amp-gpios = <&gpio7 12 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/*
+ * FEC (RGMII, MDC/MDIO) <-> switch extension interface 1 (driver port 6;
+ *                           the vendor API calls it EXT_PORT0 / port 16)
+ * switch PHY 1 <-> J4 "LAN" jack (PoE in)
+ * switch PHY 3 <-> J3 "PC" jack
+ *
+ * GPIO_6 is the green LED on this board, so the ENET interrupt workaround
+ * (fsl,err006687-workaround-present), which takes that pad, is not used.
+ */
+&fec {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_enet>;
+	/*
+	 * Both RGMII clock delays are inserted by the switch (see the CPU
+	 * port below); the i.MX6 MAC cannot add any.
+	 */
+	phy-mode = "rgmii";
+	status = "okay";
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+		pause;
+	};
+
+	mdio {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Realtek "MDIO as SMI" management; the switch answers at 0 */
+		ethernet-switch@0 {
+			compatible = "realtek,rtl8365mb";
+			reg = <0>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&pinctrl_enet_switch>;
+			reset-gpios = <&gpio1 25 GPIO_ACTIVE_LOW>;
+
+			/*
+			 * No interrupt-controller node: no switch interrupt
+			 * line is known, so the PHYs are polled.
+			 */
+
+			ethernet-ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				ethernet-port@1 {
+					reg = <1>;
+					label = "lan";
+					phy-handle = <&switch_phy1>;
+				};
+
+				ethernet-port@3 {
+					reg = <3>;
+					label = "pc";
+					phy-handle = <&switch_phy3>;
+				};
+
+				ethernet-port@6 {
+					reg = <6>;
+					ethernet = <&fec>;
+					phy-mode = "rgmii";
+					/* Stock: rtk_port_rgmiiDelayExt_set(EXT0, 1, 4) */
+					tx-internal-delay-ps = <2000>;
+					rx-internal-delay-ps = <1200>;
+
+					fixed-link {
+						speed = <1000>;
+						full-duplex;
+						pause;
+					};
+				};
+			};
+
+			/*
+			 * The driver takes the PHYs from this node on an
+			 * MDIO-connected switch too, although the binding
+			 * allows the node only on an SMI-connected one.
+			 */
+			mdio {
+				compatible = "realtek,smi-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				switch_phy1: ethernet-phy@1 {
+					reg = <1>;
+				};
+
+				switch_phy3: ethernet-phy@3 {
+					reg = <3>;
+				};
+			};
+		};
+	};
+};
+
+/*
+ * Panel control lines, as the stock kernel leaves them: "lvds-fmt" GPIO1_1
+ * driven high, "lcd-en" GPIO6_14 driven low.  Left floating, the panel stays
+ * black with the backlight lit.  What each level means to the panel is not
+ * known, so they are plain hogs.
+ */
+&gpio1 {
+	lvds-fmt-hog {
+		gpio-hog;
+		gpios = <1 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "lvds-fmt";
+	};
+};
+
+&gpio2 {
+	/* HWID straps (this board reads 0xc); readable from user space. */
+	gpio-line-names = "", "", "", "",
+			  "hwid0", "hwid1", "hwid2", "hwid3";
+};
+
+&gpio6 {
+	lcd-en-hog {
+		gpio-hog;
+		gpios = <14 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "lcd-en";
+	};
+};
+
+/* Muxed by the stock kernel, but no devices are registered on it. */
+&i2c1 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_i2c1>;
+	status = "okay";
+};
+
+&i2c2 {
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_i2c2>;
+	status = "okay";
+
+	/*
+	 * Stock driver "ft5x02-touch" (ft5x0x_ts_probe): tp-int GPIO6_8
+	 * (falling edge), tp-wake GPIO1_3, tp-rst GPIO7_11, 10 slots.
+	 * It reports X = 800 - raw_y (0..800) and Y = raw_x (0..1280); the
+	 * properties below reproduce that mapping.  The coordinates are in
+	 * the panel's scan-out frame, which is rotated 180 degrees from the
+	 * viewer's (see the panel's rotation).
+	 */
+	touchscreen@38 {
+		compatible = "edt,edt-ft5306";
+		reg = <0x38>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_touchscreen>;
+		interrupt-parent = <&gpio6>;
+		interrupts = <8 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&gpio7 11 GPIO_ACTIVE_LOW>;
+		wake-gpios = <&gpio1 3 GPIO_ACTIVE_HIGH>;
+		touchscreen-size-x = <1280>;
+		touchscreen-size-y = <800>;
+		touchscreen-inverted-y;
+		touchscreen-swapped-x-y;
+		/* Stock probe writes 0x28 to register 0x80. */
+		threshold = <40>;
+	};
+};
+
+&iomuxc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_hog>;
+
+	pinctrl_hog: hoggrp {
+		fsl,pins = <
+			/* HWID straps */
+			MX6QDL_PAD_NANDF_D4__GPIO2_IO04		0x80000000
+			MX6QDL_PAD_NANDF_D5__GPIO2_IO05		0x80000000
+			MX6QDL_PAD_NANDF_D6__GPIO2_IO06		0x80000000
+			MX6QDL_PAD_NANDF_D7__GPIO2_IO07		0x80000000
+		>;
+	};
+
+	pinctrl_audmux: audmuxgrp {
+		fsl,pins = <
+			MX6QDL_PAD_CSI0_DAT4__AUD3_TXC		0x80000000
+			MX6QDL_PAD_CSI0_DAT5__AUD3_TXD		0x130b0
+			MX6QDL_PAD_CSI0_DAT6__AUD3_TXFS		0x80000000
+			MX6QDL_PAD_CSI0_DAT7__AUD3_RXD		0x130b0
+		>;
+	};
+
+	pinctrl_backlight: backlightgrp {
+		fsl,pins = <
+			MX6QDL_PAD_NANDF_CS0__GPIO6_IO11	0x80000000
+		>;
+	};
+
+	pinctrl_bluetooth: bluetoothgrp {
+		fsl,pins = <
+			MX6QDL_PAD_NANDF_CS2__GPIO6_IO15	0x80000000
+			MX6QDL_PAD_NANDF_CS3__GPIO6_IO16	0x80000000
+		>;
+	};
+
+	pinctrl_ecspi1: ecspi1grp {
+		fsl,pins = <
+			MX6QDL_PAD_KEY_COL0__ECSPI1_SCLK	0x80000000
+			MX6QDL_PAD_KEY_ROW0__ECSPI1_MOSI	0x80000000
+			MX6QDL_PAD_KEY_COL1__ECSPI1_MISO	0x80000000
+			MX6QDL_PAD_KEY_ROW1__GPIO4_IO09		0x80000000
+		>;
+	};
+
+	pinctrl_enet: enetgrp {
+		fsl,pins = <
+			MX6QDL_PAD_ENET_MDIO__ENET_MDIO		0x1b0b0
+			MX6QDL_PAD_ENET_MDC__ENET_MDC		0x1b0b0
+			/* Stock leaves the TXC pad control at its boot value */
+			MX6QDL_PAD_RGMII_TXC__RGMII_TXC		0x1b0b0
+			MX6QDL_PAD_RGMII_TD0__RGMII_TD0		0x1b0b0
+			MX6QDL_PAD_RGMII_TD1__RGMII_TD1		0x1b0b0
+			MX6QDL_PAD_RGMII_TD2__RGMII_TD2		0x1b0b0
+			MX6QDL_PAD_RGMII_TD3__RGMII_TD3		0x1b0b0
+			MX6QDL_PAD_RGMII_TX_CTL__RGMII_TX_CTL	0x1b0b0
+			MX6QDL_PAD_ENET_REF_CLK__ENET_TX_CLK	0x0a0b1
+			MX6QDL_PAD_RGMII_RXC__RGMII_RXC		0x1b0b0
+			MX6QDL_PAD_RGMII_RD0__RGMII_RD0		0x1b0b0
+			MX6QDL_PAD_RGMII_RD1__RGMII_RD1		0x1b0b0
+			MX6QDL_PAD_RGMII_RD2__RGMII_RD2		0x1b0b0
+			MX6QDL_PAD_RGMII_RD3__RGMII_RD3		0x1b0b0
+			MX6QDL_PAD_RGMII_RX_CTL__RGMII_RX_CTL	0x1b0b0
+		>;
+	};
+
+	pinctrl_enet_switch: enetswitchgrp {
+		fsl,pins = <
+			/* Switch reset ("RMII_RST"), active low */
+			MX6QDL_PAD_ENET_CRS_DV__GPIO1_IO25	0x1b0b0
+		>;
+	};
+
+	pinctrl_gpio_keys: gpiokeysgrp {
+		fsl,pins = <
+			MX6QDL_PAD_NANDF_D0__GPIO2_IO00		0x80000000
+			MX6QDL_PAD_NANDF_D1__GPIO2_IO01		0x80000000
+			MX6QDL_PAD_EIM_D29__GPIO3_IO29		0x80000000
+			MX6QDL_PAD_GPIO_19__GPIO4_IO05		0x80000000
+		>;
+	};
+
+	pinctrl_i2c1: i2c1grp {
+		fsl,pins = <
+			MX6QDL_PAD_CSI0_DAT8__I2C1_SDA		0x4001b8b1
+			MX6QDL_PAD_CSI0_DAT9__I2C1_SCL		0x4001b8b1
+		>;
+	};
+
+	pinctrl_i2c2: i2c2grp {
+		fsl,pins = <
+			MX6QDL_PAD_KEY_COL3__I2C2_SCL		0x4001b8b1
+			MX6QDL_PAD_KEY_ROW3__I2C2_SDA		0x4001b8b1
+		>;
+	};
+
+	pinctrl_leds: ledsgrp {
+		fsl,pins = <
+			MX6QDL_PAD_GPIO_2__GPIO1_IO02		0x80000000
+			MX6QDL_PAD_GPIO_6__GPIO1_IO06		0x80000000
+		>;
+	};
+
+	pinctrl_panel: panelgrp {
+		fsl,pins = <
+			MX6QDL_PAD_GPIO_1__GPIO1_IO01		0x80000000
+			MX6QDL_PAD_NANDF_CS1__GPIO6_IO14	0x80000000
+		>;
+	};
+
+	pinctrl_pwm1: pwm1grp {
+		fsl,pins = <
+			MX6QDL_PAD_SD1_DAT3__PWM1_OUT		0x80000000
+		>;
+	};
+
+	pinctrl_reg_aux_5v: regaux5vgrp {
+		fsl,pins = <
+			MX6QDL_PAD_NANDF_RB0__GPIO6_IO10	0x80000000
+		>;
+	};
+
+	pinctrl_reg_usb_otg_vbus: regusbotgvbusgrp {
+		fsl,pins = <
+			MX6QDL_PAD_EIM_D22__GPIO3_IO22		0x80000000
+		>;
+	};
+
+	pinctrl_touchscreen: touchscreengrp {
+		fsl,pins = <
+			MX6QDL_PAD_NANDF_ALE__GPIO6_IO08	0x80000000
+			MX6QDL_PAD_GPIO_3__GPIO1_IO03		0x80000000
+			MX6QDL_PAD_GPIO_16__GPIO7_IO11		0x80000000
+		>;
+	};
+
+	pinctrl_uart1: uart1grp {
+		fsl,pins = <
+			MX6QDL_PAD_CSI0_DAT10__UART1_TX_DATA	0x1b0b1
+			MX6QDL_PAD_CSI0_DAT11__UART1_RX_DATA	0x1b0b1
+		>;
+	};
+
+	pinctrl_uart2: uart2grp {
+		fsl,pins = <
+			MX6QDL_PAD_GPIO_7__UART2_TX_DATA	0x1b0b1
+			MX6QDL_PAD_GPIO_8__UART2_RX_DATA	0x1b0b1
+		>;
+	};
+
+	pinctrl_uart4: uart4grp {
+		fsl,pins = <
+			MX6QDL_PAD_CSI0_DAT12__UART4_TX_DATA	0x1b0b1
+			MX6QDL_PAD_CSI0_DAT13__UART4_RX_DATA	0x1b0b1
+			MX6QDL_PAD_CSI0_DAT16__UART4_RTS_B	0x1b0b1
+			MX6QDL_PAD_CSI0_DAT17__UART4_CTS_B	0x1b0b1
+		>;
+	};
+
+	pinctrl_usbotg: usbotggrp {
+		fsl,pins = <
+			MX6QDL_PAD_ENET_RX_ER__USB_OTG_ID	0x80000000
+		>;
+	};
+
+	pinctrl_usdhc3: usdhc3grp {
+		fsl,pins = <
+			MX6QDL_PAD_SD3_CMD__SD3_CMD		0x1f071
+			MX6QDL_PAD_SD3_CLK__SD3_CLK		0x1f071
+			MX6QDL_PAD_SD3_DAT0__SD3_DATA0		0x1f071
+			MX6QDL_PAD_SD3_DAT1__SD3_DATA1		0x1f071
+			MX6QDL_PAD_SD3_DAT2__SD3_DATA2		0x1f071
+			MX6QDL_PAD_SD3_DAT3__SD3_DATA3		0x1f071
+		>;
+	};
+
+	pinctrl_usdhc4: usdhc4grp {
+		fsl,pins = <
+			MX6QDL_PAD_SD4_CMD__SD4_CMD		0x1f071
+			MX6QDL_PAD_SD4_CLK__SD4_CLK		0x1f071
+			MX6QDL_PAD_SD4_DAT0__SD4_DATA0		0x1f071
+			MX6QDL_PAD_SD4_DAT1__SD4_DATA1		0x1f071
+			MX6QDL_PAD_SD4_DAT2__SD4_DATA2		0x1f071
+			MX6QDL_PAD_SD4_DAT3__SD4_DATA3		0x1f071
+			MX6QDL_PAD_SD4_DAT4__SD4_DATA4		0x1f071
+			MX6QDL_PAD_SD4_DAT5__SD4_DATA5		0x1f071
+			MX6QDL_PAD_SD4_DAT6__SD4_DATA6		0x1f071
+			MX6QDL_PAD_SD4_DAT7__SD4_DATA7		0x1f071
+		>;
+	};
+
+	pinctrl_wifi_pwrseq: wifipwrseqgrp {
+		fsl,pins = <
+			MX6QDL_PAD_NANDF_CLE__GPIO6_IO07	0x80000000
+			/* 32 kHz LPO clock to the AP6212 */
+			MX6QDL_PAD_ENET_RXD0__OSC32K_32K_OUT	0x80000000
+		>;
+	};
+
+	pinctrl_zl38040: zl38040grp {
+		fsl,pins = <
+			/* audio_reset */
+			MX6QDL_PAD_GPIO_0__GPIO1_IO00		0x80000000
+			/* audio_sw: 1 = handset, 0 = headset */
+			MX6QDL_PAD_GPIO_9__GPIO1_IO09		0x80000000
+			/* speaker-en */
+			MX6QDL_PAD_GPIO_17__GPIO7_IO12		0x80000000
+		>;
+	};
+};
+
+/* Stock: "ldb=sin0", IPU1 DI0, single channel on LVDS0. */
+&ldb {
+	status = "okay";
+
+	lvds-channel@0 {
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		status = "okay";
+
+		port@4 {
+			reg = <4>;
+
+			lvds0_out: endpoint {
+				remote-endpoint = <&panel_in>;
+			};
+		};
+	};
+};
+
+&pwm1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_pwm1>;
+	status = "okay";
+};
+
+/* The stock kernel powers off through SNVS (mx6_snvs_poweroff). */
+&snvs_poweroff {
+	status = "okay";
+};
+
+/*
+ * The stock board file sets the SSI2 clock to 12.288 MHz and the machine
+ * driver divides it to 64 bit clocks per frame.  The SSI driver picks its
+ * own dividers, so give it a parent that 64 x 8 kHz and 64 x 16 kHz divide
+ * evenly: PLL4 at 64 x 12.288 MHz.
+ */
+&ssi2 {
+	assigned-clocks = <&clks IMX6QDL_CLK_SSI2_SEL>,
+			  <&clks IMX6QDL_CLK_PLL4_AUDIO_DIV>;
+	assigned-clock-parents = <&clks IMX6QDL_CLK_PLL4_AUDIO_DIV>;
+	assigned-clock-rates = <0>, <786432000>;
+	status = "okay";
+};
+
+/* CN1 debug console, ttymxc0 */
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_uart1>;
+	status = "okay";
+};
+
+/* J508 electronic hook switch (EHS) port, ttymxc1 */
+&uart2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_uart2>;
+	status = "okay";
+};
+
+/* AP6212 Bluetooth HCI, ttymxc3 */
+&uart4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_uart4>;
+	uart-has-rtscts;
+	status = "okay";
+
+	bluetooth {
+		compatible = "brcm,bcm43438-bt";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_bluetooth>;
+		/*
+		 * Stock "bt-reset": held low while Bluetooth is off, pulsed
+		 * low and then driven high to power it on (AP6212 BT_RST_N).
+		 */
+		shutdown-gpios = <&gpio6 15 GPIO_ACTIVE_HIGH>;
+		device-wakeup-gpios = <&gpio6 16 GPIO_ACTIVE_HIGH>;
+		clocks = <&clks IMX6QDL_CLK_CKIL>;
+		clock-names = "lpo";
+		vbat-supply = <&reg_3v3>;
+		vddio-supply = <&reg_3v3>;
+	};
+};
+
+/* J505 internal micro-USB */
+&usbotg {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_usbotg>;
+	vbus-supply = <&reg_usb_otg_vbus>;
+	dr_mode = "otg";
+	disable-over-current;
+	status = "okay";
+};
+
+/* AP6212 Wi-Fi (SDIO) */
+&usdhc3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_usdhc3>;
+	bus-width = <4>;
+	vmmc-supply = <&reg_3v3>;
+	mmc-pwrseq = <&wifi_pwrseq>;
+	non-removable;
+	no-1-8-v;
+	no-mmc;
+	no-sd;
+	keep-power-in-suspend;
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	wifi@1 {
+		compatible = "brcm,bcm43430a0-fmac", "brcm,bcm4329-fmac";
+		reg = <1>;
+	};
+};
+
+/* SanDisk SDIN8DE2 8 GB eMMC */
+&usdhc4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_usdhc4>;
+	bus-width = <8>;
+	vmmc-supply = <&reg_3v3>;
+	non-removable;
+	no-sd;
+	no-sdio;
+	no-1-8-v;
+	status = "okay";
+};
+
+/* No WDOG_B pin is routed; the watchdog resets the SoC internally. */
+&wdog1 {
+	status = "okay";
+};

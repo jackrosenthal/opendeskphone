@@ -204,7 +204,7 @@ const COLOR_INIT: Theme = Theme {
 /// the right half of the screen, from the top, as on the other skins.
 ///
 /// Only in a build with the feature `touch`: its fonts and icons are the
-/// largest there are, and a phone with keys has no room for them.
+/// largest there are, and the D40 thru D70 have no room for them.
 #[cfg(feature = "touch")]
 static TOUCH: Theme = Theme {
     skin: Skin::Touch,
@@ -656,7 +656,7 @@ impl Theme {
     }
 
     /// The theme of a skin.  A build without the feature `touch` (the
-    /// firmware of the phones with keys) has no touch skin: it answers
+    /// firmware of the D40 thru D70) has no touch skin: it answers
     /// with the color skin, and is not for a D80 (`dphone` does not start
     /// as one).
     pub fn for_skin(skin: Skin) -> &'static Theme {

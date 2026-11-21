@@ -12,8 +12,8 @@ default = ["touch"]
 # The touch skin, which only the D80 has: its fonts, icons, and artwork
 # (the largest of any skin), its on-screen keyboard, and what the screens
 # do only when they are touched.  On by default, so that the simulator and
-# the tests have every model.  The firmware of the phones with keys (D40 to
-# D70), whose flash has no room to spare, is built without it
+# the tests have every model.  The firmware of the D40 thru D70,
+# whose flash has no room to spare, is built without it
 # (`opendeskphone`'s feature `d80`).
 touch = []
 
