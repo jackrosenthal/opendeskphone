@@ -12,6 +12,19 @@ const fn solid(id: &'static str, name: &'static str, color: Rgb, scheme: Scheme)
 const FACETS_RIGHT: &[Band] = &[(60, 170, 120, 0), (330, 150, 88, 0), (560, 190, 128, 0)];
 const FACETS_LEFT: &[Band] = &[(-120, 160, 96, 0), (130, 140, 72, 0), (300, 170, 112, 0)];
 
+/// The first wallpaper (`harbor`) as a description, for the screens it is
+/// not kept for pixel for pixel ([`Base::Original`]): its gradient, and its
+/// facets lit by its brighter blue, as the other facets have theirs.
+static ORIGINAL: Spec = Spec {
+    base: vertical(&[(0, 0x151E2C), (21, 0x102444), (56, 0x0D203E), (100, 0x0A1426)]),
+    layers: &[
+        Layer::Bands { num: 3, den: 5, add: true, color: 0x061638, bands: FACETS_RIGHT },
+        Layer::Bands { num: -3, den: 5, add: true, color: 0x061638, bands: FACETS_LEFT },
+    ],
+    dither: true,
+    moves: None,
+};
+
 /// The first wallpaper in another hue: its gradient from the stops, its
 /// facets lit by `light`.
 macro_rules! facets {

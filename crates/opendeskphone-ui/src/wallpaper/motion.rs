@@ -105,6 +105,9 @@ fn blend(p: u32, c: Px, t: i32) -> u32 {
 /// A wallpaper in motion: what is kept from one frame to the next.
 pub(super) struct Moving {
     pub(super) id: &'static str,
+    /// The screen it moves on: its size, and how the description is laid
+    /// out on it (the motion's reach grows as the sizes do).
+    pub(super) fit: Fit,
     /// The frame, as the canvas takes it (`0x00RRGGBB`).
     out: Vec<u32>,
     /// The parts that do not move, as packed [`Px`] colors within the
@@ -142,24 +145,28 @@ enum Kind {
 }
 
 impl Moving {
-    /// What `spec` needs to move; `None` when it does not.
-    pub(super) fn new(id: &'static str, spec: &'static Spec) -> Option<Moving> {
+    /// What `spec` needs to move on a screen of `fit`; `None` when it does
+    /// not.
+    pub(super) fn new(id: &'static str, spec: &'static Spec, fit: Fit) -> Option<Moving> {
         let moves = spec.moves.as_ref()?;
         let base: Vec<u32> = match spec.base {
             Base::Flow { .. } => Vec::new(),
-            _ => render_base(&spec.base).into_iter().map(|p| pack(limit(unpack(p)))).collect(),
+            _ => render_base(&spec.base, &fit).into_iter().map(|p| pack(limit(unpack(p)))).collect(),
         };
         let kind = match (&moves.motion, &spec.base) {
-            (Motion::Bob(bob), _) => Kind::Waves(Waves::new(spec.layers, bob)?),
-            (Motion::Wander { reach, turns }, _) => Kind::Discs(Discs::new(spec.layers, *reach, *turns, u64::from(moves.every_ms), &base)),
+            (Motion::Bob(bob), _) => Kind::Waves(Waves::new(spec.layers, bob, fit)?),
+            (Motion::Wander { reach, turns }, _) => {
+                Kind::Discs(Discs::new(spec.layers, *reach, *turns, u64::from(moves.every_ms), &base, fit))
+            }
             (Motion::Run(turns), Base::Flow { flow: Flow::Ribbons { ax, ay, waves }, stops }) => {
-                Kind::Flow(Stream::new(*ax, *ay, waves, turns, stops, u64::from(moves.every_ms)))
+                Kind::Flow(Stream::new(*ax, *ay, waves, turns, stops, u64::from(moves.every_ms), fit)?)
             }
             (Motion::Run(_), _) => return None,
         };
         Some(Moving {
             id,
-            out: vec![0; (WIDTH * HEIGHT) as usize],
+            fit,
+            out: vec![0; (fit.w * fit.h) as usize],
             base,
             dither: spec.dither,
             kind,
@@ -205,7 +212,7 @@ impl Moving {
             Kind::Flow(s) => {
                 let fastest = |reach: i32, turns: i32, ms: u64| (u64::from(reach.unsigned_abs()) * u64::from(turns.unsigned_abs()) * 6_284 * ms).div_ceil(CYCLE_MS * 1000);
                 let positions: u64 = s.waves.iter().map(|&((amount, ..), turns)| fastest(amount * 16, turns, FIELDS * every)).sum();
-                (positions * u64::from((WIDTH * s.ax + HEIGHT * s.ay).unsigned_abs())).div_ceil(u64::from((ONE * s.ax.max(1)).unsigned_abs()))
+                (positions * u64::from(s.whole.unsigned_abs())).div_ceil(u64::from((ONE * s.ax.max(1)).unsigned_abs()))
             }
         }
     }
@@ -279,13 +286,19 @@ impl Swell {
 
 struct Waves {
     waves: Vec<Swell>,
-    bob: &'static [(i32, i32, i32)],
+    /// For each wave: how far it goes each way (in sixteenths of a pixel
+    /// of the screen), its turns in a cycle, and where in a turn it begins.
+    bob: Vec<(i32, i32, i32)>,
     line: Vec<u32>,
+    /// The screen's size.
+    w: i32,
+    h: i32,
 }
 
 impl Waves {
-    fn new(layers: &'static [Layer], bob: &'static [(i32, i32, i32)]) -> Option<Waves> {
+    fn new(layers: &'static [Layer], bob: &'static [(i32, i32, i32)], fit: Fit) -> Option<Waves> {
         let [Layer::Waves(list)] = layers else { return None };
+        let bob: Vec<(i32, i32, i32)> = bob.iter().map(|&(reach, turns, begin)| (fit.size(reach), turns, begin)).collect();
         if list.len() != bob.len() || bob.iter().any(|(reach, ..)| reach.abs() + 8 > ABOVE) {
             return None;
         }
@@ -293,26 +306,19 @@ impl Waves {
             .iter()
             .map(|w| {
                 // As `wave` has it.
-                let shape: Vec<i32> = (0..WIDTH)
-                    .map(|x| {
-                        let mut edge = w.y * 16 + ((w.amp * 16 * sin(x * 65536 / w.period + w.phase * 256)) >> 12);
-                        if w.period2 > 0 {
-                            edge += (w.amp2 * 16 * sin(x * 65536 / w.period2 + w.phase * 613)) >> 12;
-                        }
-                        edge
-                    })
-                    .collect();
-                let deepest = if w.fade > 0 { w.fade * 16 } else { -ABOVE };
+                let shape: Vec<i32> = (0..fit.w).map(|x| crest(w, &fit, x)).collect();
+                let fade = fit.size(w.fade * 16);
+                let deepest = if fade > 0 { fade } else { -ABOVE };
                 let fill = (-ABOVE..=deepest)
                     .map(|depth| {
-                        let a = if w.fade > 0 { w.alpha * (w.fade * 16 - depth).max(0) / (w.fade * 16) } else { w.alpha };
+                        let a = if fade > 0 { w.alpha * (fade - depth).max(0) / fade } else { w.alpha };
                         (a * 16).clamp(0, ONE) as u16
                     })
                     .collect();
                 Swell { color: limit(px(w.color)), fill, hides: w.alpha >= 256 && w.fade == 0, edge: shape.clone(), before: shape.clone(), shape, span: (0, 0) }
             })
             .collect();
-        Some(Waves { waves, bob, line: vec![0; WIDTH as usize] })
+        Some(Waves { waves, bob, line: vec![0; fit.w as usize], w: fit.w, h: fit.h })
     }
 
     /// The color of the pixel in column `x` whose center is at height
@@ -339,9 +345,10 @@ impl Waves {
     }
 
     fn frame(&mut self, t_ms: u64, first: bool, base: &[u32], out: &mut [u32], dither: bool, changed: &mut Vec<Run>) {
-        let w = WIDTH as usize;
+        let w = self.w as usize;
+        let height = self.h;
         // The crests of this frame, and of the frame before.
-        for (wave, &(reach, turns, begin)) in self.waves.iter_mut().zip(self.bob) {
+        for (wave, &(reach, turns, begin)) in self.waves.iter_mut().zip(&self.bob) {
             let off = (reach * sin(turn_at(t_ms, turns) + begin * 256)) >> 12;
             std::mem::swap(&mut wave.edge, &mut wave.before);
             wave.span = (i32::MAX, i32::MIN);
@@ -353,7 +360,7 @@ impl Waves {
         if first {
             // Every row.
             let mut line = std::mem::take(&mut self.line);
-            for y in 0..HEIGHT {
+            for y in 0..height {
                 let yc = y * 16 + 8;
                 let row = y as usize * w;
                 line.copy_from_slice(&base[row..row + w]);
@@ -394,7 +401,7 @@ impl Waves {
         for i in 0..self.waves.len() {
             let rows = |x: usize| {
                 let (now, old) = (self.waves[i].edge[x], self.waves[i].before[x]);
-                ((now.min(old) >> 4).max(0), ((now.max(old) - 1) >> 4).min(HEIGHT - 1))
+                ((now.min(old) >> 4).max(0), ((now.max(old) - 1) >> 4).min(height - 1))
             };
             for nth in 0.. {
                 // The run of pixels being drawn: its row, and where it began.
@@ -475,8 +482,14 @@ const STEP: i64 = 2;
 const WAIT: u64 = 16;
 
 impl Disc {
-    fn new(index: u32, (cx, cy, r, color, alpha): Circle, soft: i32, rim: i32, reach: (i32, i32), turns: (i32, i32), every_ms: u64, base: &[u32]) -> Disc {
-        let (r, soft) = (r * 16, soft_edge(r, soft));
+    /// Circle number `index` of a wallpaper, on a screen of `fit`
+    /// (`base` is what is under the circles there); `reach` is in pixels
+    /// of the description.
+    fn new(index: u32, circle: Circle, soft: i32, rim: i32, reach: (i32, i32), turns: (i32, i32), every_ms: u64, base: &[u32], fit: &Fit) -> Disc {
+        let (cx, cy, r) = fit.circle(circle);
+        let (color, alpha) = (circle.3, circle.4);
+        let soft = soft_edge(r, soft);
+        let reach = (fit.size(reach.0 * 16), fit.size(reach.1 * 16));
         let edge = r + soft / 2 + 16;
         // A table of at most 1024 entries; the steps across the edge of
         // the largest circle are a tenth of a pixel.
@@ -507,7 +520,7 @@ impl Disc {
             up = if across == turns.1 { turns.0 } else { across + 1 };
         }
         // Between half of the reach and all of it.
-        let go = |reach: i32, h: u32| reach * 16 * (128 + (h >> 20) as i32 % 129) / 256;
+        let go = |reach: i32, h: u32| reach * (128 + (h >> 20) as i32 % 129) / 256;
         let path = [(go(reach.0, h[0]), across, (h[1] & 0xFFFF) as i32), (go(reach.1, h[1]), up, ((h[1] >> 4) & 0xFFFF) as i32)];
         // How many frames to a step.  The fastest the circle goes, in
         // sixteenths of a pixel a second, rounded up (a turn's fastest is
@@ -521,7 +534,7 @@ impl Disc {
         // half again as steep in the middle as on average), and of its
         // rim (which rises over 20 sixteenths), by how far its color is
         // from what is under its center.
-        let under = unpack(base[(cy.clamp(0, HEIGHT - 1) * WIDTH + cx.clamp(0, WIDTH - 1)) as usize]);
+        let under = unpack(base[((cy >> 4).clamp(0, fit.h - 1) * fit.w + (cx >> 4).clamp(0, fit.w - 1)) as usize]);
         let contrast = i64::from((0..3).map(|i| (px(color)[i] - under[i]).abs()).max().unwrap_or(0) / 4);
         let steep = contrast * i64::from(alpha) * if soft > 32 { 24 } else { 16 } / i64::from(soft) + contrast * i64::from(rim) * 16 / 20;
         // The change in a step of `frames` frames is `steep` / 256 a
@@ -535,7 +548,7 @@ impl Disc {
         let frames = (1..=WAIT).rev().find(|f| fits(*f)).unwrap_or(1);
         let step = (frames * every_ms, u64::from(index) % frames * every_ms);
         Disc {
-            home: (cx * 16, cy * 16),
+            home: (cx, cy),
             path,
             step,
             color: limit(px(color)),
@@ -544,7 +557,7 @@ impl Disc {
             outer,
             edge: r + soft / 2 + table(r + soft / 2),
             level: level - table(level),
-            at: (cx * 16, cy * 16),
+            at: (cx, cy),
         }
     }
 
@@ -596,11 +609,14 @@ impl Disc {
 struct Discs {
     discs: Vec<Disc>,
     line: Vec<u32>,
+    /// The screen's size.
+    w: i32,
+    h: i32,
 }
 
 impl Discs {
     /// The circles of the layers, in the order they are drawn.
-    fn new(layers: &'static [Layer], reach: (i32, i32), turns: (i32, i32), every_ms: u64, base: &[u32]) -> Discs {
+    fn new(layers: &'static [Layer], reach: (i32, i32), turns: (i32, i32), every_ms: u64, base: &[u32], fit: Fit) -> Discs {
         let mut discs = Vec::new();
         for layer in layers {
             let (soft, rim, circles) = match layer {
@@ -609,19 +625,20 @@ impl Discs {
                 _ => continue,
             };
             for circle in circles {
-                discs.push(Disc::new(discs.len() as u32, circle, soft, rim, reach, turns, every_ms, base));
+                discs.push(Disc::new(discs.len() as u32, circle, soft, rim, reach, turns, every_ms, base, &fit));
             }
         }
-        Discs { discs, line: vec![0; WIDTH as usize] }
+        Discs { discs, line: vec![0; fit.w as usize], w: fit.w, h: fit.h }
     }
 
     fn frame(&mut self, t_ms: u64, first: bool, base: &[u32], out: &mut [u32], dither: bool, changed: &mut Vec<Run>) {
-        let w = WIDTH as usize;
+        let (width, height) = (self.w, self.h);
+        let w = width as usize;
         // The circles that moved: which, where its center is, how far it
         // moved, and whether its ring alone changed.
         let mut moved: Vec<(usize, (i32, i32), i32, bool)> = Vec::new();
         // The rows with something to draw again.
-        let (mut top, mut bottom) = (HEIGHT, -1);
+        let (mut top, mut bottom) = (height, -1);
         for (i, d) in self.discs.iter_mut().enumerate() {
             let at = d.place(t_ms);
             if at == d.at && !first {
@@ -644,16 +661,16 @@ impl Discs {
             d.at = at;
         }
         if first {
-            (top, bottom) = (0, HEIGHT - 1);
+            (top, bottom) = (0, height - 1);
         }
         let mut line = std::mem::take(&mut self.line);
         let mut spans: Vec<(i32, i32)> = Vec::with_capacity(2 * moved.len() + 1);
-        for y in top.max(0)..=bottom.min(HEIGHT - 1) {
+        for y in top.max(0)..=bottom.min(height - 1) {
             // The stretches of this row to draw again, in order, none
             // touching the next.
             spans.clear();
             if first {
-                spans.push((0, WIDTH - 1));
+                spans.push((0, width - 1));
             } else {
                 for &(i, at, by, ring) in &moved {
                     let Some((one, two)) = self.discs[i].changed(at, by, ring, y) else { continue };
@@ -661,7 +678,7 @@ impl Discs {
                     spans.extend(two);
                 }
                 spans.retain_mut(|s| {
-                    *s = (s.0.max(0), s.1.min(WIDTH - 1));
+                    *s = (s.0.max(0), s.1.min(width - 1));
                     s.0 <= s.1
                 });
                 if spans.is_empty() {
@@ -747,9 +764,16 @@ impl Discs {
 struct Stream {
     ax: i32,
     ay: i32,
+    /// The screen's size, and `w * ax + h * ay`: the straight run's length.
+    w: i32,
+    h: i32,
+    whole: i32,
+    /// The knots of a row: one in [`KNOT`] pixels, and one past the end.
+    knot_count: usize,
     /// The time from one frame to the next, in milliseconds.
     every: u64,
-    /// The waves, with the turns each makes in a cycle.
+    /// The waves (their lengths in pixels of the screen), with the turns
+    /// each makes in a cycle.
     waves: Vec<((i32, i32, i32, i32), i32)>,
     /// The straight run by `x * ax + y * ay`, in [`FINE`] parts of a
     /// position.
@@ -774,8 +798,8 @@ type Colors = [u32; ONE as usize + 1];
 
 /// From one pixel whose position is worked out to the next.
 const KNOT: usize = 8;
-/// The knots of a row: the last is one past the row's end.
-const KNOTS: usize = WIDTH as usize / KNOT + 1;
+/// The most knots [`paint_row`] paints at once (a bit each).
+const KNOTS_PAINTED: usize = 64;
 /// The parts of a position along the stops that the flow is worked out
 /// in.
 const FINE: i32 = 16;
@@ -790,33 +814,48 @@ const LOW: i32 = 2 * FINE + 6;
 const FIELDS: u64 = 2;
 
 impl Stream {
-    fn new(ax: i32, ay: i32, waves: &'static [(i32, i32, i32, i32)], turns: &'static [i32], stops: Stops, every: u64) -> Stream {
-        let whole = WIDTH * ax + HEIGHT * ay;
-        let mut across = Vec::with_capacity(waves.len() * KNOTS);
+    /// `None` for a screen whose width is not a whole number of knots.
+    fn new(ax: i32, ay: i32, waves: &'static [(i32, i32, i32, i32)], turns: &'static [i32], stops: Stops, every: u64, fit: Fit) -> Option<Stream> {
+        if fit.w as usize % KNOT != 0 {
+            return None;
+        }
+        let whole = fit.w * ax + fit.h * ay;
+        let knot_count = fit.w as usize / KNOT + 1;
+        let waves: Vec<((i32, i32, i32, i32), i32)> = waves
+            .iter()
+            .enumerate()
+            .map(|(i, &(amount, px, py, phase))| ((amount, fit.size(px), fit.size(py), phase), turns.get(i).copied().unwrap_or(0)))
+            .collect();
+        let mut across = Vec::with_capacity(waves.len() * knot_count);
         let mut swing = Vec::new();
-        for &(amount, px, py, _) in waves {
-            across.extend((0..KNOTS as i32).map(|k| if px != 0 { k * KNOT as i32 * 65536 / px } else { 0 }));
+        for &((amount, px, py, _), _) in &waves {
+            across.extend((0..knot_count as i32).map(|k| if px != 0 { k * KNOT as i32 * 65536 / px } else { 0 }));
             swing.push(if px != 0 && py != 0 { (0..4096).map(|k| ((amount * FINE * sin(k * 16 + 8)) >> 12) as i16).collect() } else { Vec::new() });
         }
-        Stream {
+        Some(Stream {
             ax,
             ay,
+            w: fit.w,
+            h: fit.h,
+            whole,
+            knot_count,
             every,
-            waves: waves.iter().enumerate().map(|(i, w)| (*w, turns.get(i).copied().unwrap_or(0))).collect(),
+            waves,
             straight: (0..=whole).map(|v| v * ONE * FINE / whole).collect(),
             colors: Box::new(std::array::from_fn(|t| pack(limit(stops_at(stops, t as i32))))),
             across,
             swing,
-            knots: vec![0; KNOTS],
-            shows: vec![u64::MAX; HEIGHT as usize],
-        }
+            knots: vec![0; knot_count],
+            shows: vec![u64::MAX; fit.h as usize],
+        })
     }
 
     /// Every pixel as [`Flow::at`] has it, with each wave moved on by the
     /// time: the time of the last frame in which the pixel's row had its
     /// turn.
     fn frame(&mut self, t_ms: u64, out: &mut [u32], dither: bool, changed: &mut Vec<Run>) {
-        let w = WIDTH as usize;
+        let w = self.w as usize;
+        let knots = self.knot_count;
         // The time each of the rows' turns shows: turn `n` is drawn every
         // `FIELDS` frames, `n` frames after the first.
         let t = t_ms % CYCLE_MS + CYCLE_MS;
@@ -828,7 +867,7 @@ impl Stream {
         // What the waves that do not vary down the screen add at each
         // knot, at each of the times, when a row first needs it.
         let mut columns: [Vec<i32>; FIELDS as usize] = std::array::from_fn(|_| Vec::new());
-        for y in 0..HEIGHT {
+        for y in 0..self.h {
             let turn_of_rows = y as usize % FIELDS as usize;
             let time = times[turn_of_rows];
             if std::mem::replace(&mut self.shows[y as usize], time) == time {
@@ -841,11 +880,11 @@ impl Stream {
             let columns = &mut columns[turn_of_rows];
             let first = columns.is_empty();
             if first {
-                columns.resize(KNOTS, 0);
+                columns.resize(knots, 0);
             }
             for (i, &((amount, px, py, phase), turns)) in self.waves.iter().enumerate() {
                 let turn = if py != 0 { y * 65536 / py } else { 0 } + phase * 256 + turn_at(time, turns);
-                let across = &self.across[i * KNOTS..(i + 1) * KNOTS];
+                let across = &self.across[i * knots..(i + 1) * knots];
                 if px == 0 {
                     rows += (amount * FINE * sin(turn)) >> 12;
                 } else if py == 0 {
@@ -867,15 +906,23 @@ impl Stream {
                 *knot = (t - LOW).clamp(0, ONE * FINE);
             }
             let row = y as usize * w;
-            let mut stretches = paint_row(&mut out[row..row + w], &self.knots, &self.colors, table, noise_at(0, y));
-            // The pixels that changed, in runs of stretches.  (Most pixels
-            // are what they were when the row was last drawn: the colors
-            // move slowly, and there are stretches of one color.)
-            while stretches != 0 {
-                let first = stretches.trailing_zeros();
-                let count = (!(stretches >> first)).trailing_zeros();
-                run(changed, y as usize, first as usize * KNOT, (first + count) as usize * KNOT - 1);
-                stretches &= !(((1 << count) - 1) << first);
+            // As many knots at a time as `paint_row` paints (on the color
+            // skin's screen, the whole row).
+            for start in (0..knots - 1).step_by(KNOTS_PAINTED) {
+                let end = (start + KNOTS_PAINTED).min(knots - 1);
+                let (x0, x1) = (start * KNOT, end * KNOT);
+                let mut stretches =
+                    paint_row(&mut out[row + x0..row + x1], &self.knots[start..=end], &self.colors, table, noise_at(x0 as i32, y));
+                // The pixels that changed, in runs of stretches.  (Most
+                // pixels are what they were when the row was last drawn:
+                // the colors move slowly, and there are stretches of one
+                // color.)
+                while stretches != 0 {
+                    let first = stretches.trailing_zeros();
+                    let count = (!(stretches >> first)).trailing_zeros();
+                    run(changed, y as usize, x0 + first as usize * KNOT, x0 + (first + count) as usize * KNOT - 1);
+                    stretches &= !((u64::MAX >> (64 - count)) << first);
+                }
             }
         }
     }
@@ -893,7 +940,7 @@ impl Stream {
 /// instructions a frame (counted under `qemu-arm` for an ARM1176).
 #[inline(never)]
 fn paint_row(out: &mut [u32], knots: &[i32], colors: &Colors, table: &[u32; 16], mut noise: u32) -> u64 {
-    const { assert!(WIDTH as usize / KNOT <= 64) };
+    debug_assert!(out.len() / KNOT <= KNOTS_PAINTED);
     let mut changed = 0;
     for (k, (o, ends)) in out.as_chunks_mut::<KNOT>().0.iter_mut().zip(knots.windows(2)).enumerate() {
         // In 1/256 of a position.

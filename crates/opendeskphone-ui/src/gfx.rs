@@ -743,9 +743,10 @@ impl Canvas {
 impl Canvas {
     /// Paints the idle/call background over the whole screen: the
     /// wallpaper on the color skin, the plain background on gray.  On a
-    /// screen of another size than the wallpapers are drawn at (the touch
-    /// skin's), the wallpaper's still picture fitted to the screen
-    /// ([`crate::wallpaper::with_fitted`]); nothing moves there.
+    /// screen of another size than the wallpapers are described at (the
+    /// touch skin's), the wallpaper drawn for the screen
+    /// ([`crate::wallpaper::with_fitted`],
+    /// [`crate::wallpaper::Wallpaper::with_frame_and_changes_sized`]).
     ///
     /// Returns the number of the frame drawn, of a wallpaper in motion
     /// ([`crate::wallpaper::Changes::serial`]).
@@ -758,13 +759,20 @@ impl Canvas {
         let clip = self.clip;
         if self.w != WIDTH || self.h != HEIGHT {
             let (w, h, pix) = (self.w, self.h, &mut self.pix);
-            crate::wallpaper::with_fitted(backdrop, w, h, |src| {
+            let mut copy = |src: &[u32]| {
                 for y in clip.y..clip.bottom() {
                     let row = (y * w) as usize;
                     let (a, b) = (row + clip.x as usize, row + clip.right() as usize);
                     pix[a..b].copy_from_slice(&src[a..b]);
                 }
-            });
+            };
+            if let Backdrop::Moving(wallpaper, t_ms) = backdrop {
+                return Some(wallpaper.with_frame_and_changes_sized(w, h, t_ms, |frame, changes| {
+                    copy(frame);
+                    changes.serial
+                }));
+            }
+            crate::wallpaper::with_fitted(backdrop, w, h, copy);
             return None;
         }
         let (w, pix) = (self.w, &mut self.pix);

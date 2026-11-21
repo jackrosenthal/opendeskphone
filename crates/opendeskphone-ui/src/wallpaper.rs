@@ -1,5 +1,6 @@
-//! The built-in wallpapers of the color skin (480 x 272), which the touch
-//! skin shows fitted to its screen ([`with_fitted`]).
+//! The built-in wallpapers, described for the color skin (480 x 272) and
+//! drawn from the same description for the touch skin's upright screen
+//! (800 x 1280), composed for its shape ([`Fit`], [`with_fitted`]).
 //!
 //! A wallpaper is a small description (a gradient and a few layers of
 //! shapes) that is drawn on the phone, in integers, when it is first
@@ -25,9 +26,120 @@ use crate::gfx::Rgb;
 use crate::skin::{Palette, Theme};
 use std::sync::Mutex;
 
-/// The size every wallpaper is drawn at.
+/// The size every wallpaper is described at: the color skin's screen.
 pub const WIDTH: i32 = 480;
 pub const HEIGHT: i32 = 272;
+
+/// How a wallpaper's description is laid out on a picture of some size:
+/// the description's numbers are pixels of the color skin's screen
+/// ([`WIDTH`] x [`HEIGHT`]), and this says what they are on the picture.
+/// On the color skin's screen ([`Fit::NATIVE`]) every number is a pixel.
+///
+/// On a screen of another shape (the touch skin's, upright) the picture
+/// is composed for that shape: it is not the color skin's picture turned,
+/// cut, or stretched.
+///
+/// - A place is where it is in proportion, on each axis: what is a third
+///   of the way across and a quarter of the way up the color skin's
+///   screen is a third of the way across and a quarter of the way up this
+///   one.  So the reach of a gradient (corner to corner) and of the
+///   slanted bands is the screen's.
+/// - The size of a thing in the composition (a circle, a glow, a wave,
+///   the radius of a radial gradient) grows with the screen's diagonal,
+///   so that it covers about as much of the screen as it does on the
+///   color skin's ([`Fit::size`]).
+/// - A pattern (threads, stripes, dots, contour lines, a field of
+///   triangles) keeps its size to the eye: a pixel of it is a square of
+///   [`Fit::grain`] pixels each way.
+///
+/// Slants keep their angles, and shapes their proportions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fit {
+    /// The picture's size in pixels.
+    pub w: i32,
+    pub h: i32,
+    /// The picture's pixels to one of the description's, for a size in
+    /// the composition, in 1/256.
+    size: i32,
+    /// The picture's pixels to one of the description's, for a pattern.
+    grain: i32,
+}
+
+impl Fit {
+    /// The color skin's screen, which the descriptions are made for.
+    pub const NATIVE: Fit = Fit { w: WIDTH, h: HEIGHT, size: 256, grain: 1 };
+
+    /// A picture of `w` x `h` pixels.
+    pub fn new(w: i32, h: i32) -> Fit {
+        let (w, h) = (w.max(1), h.max(1));
+        if (w, h) == (WIDTH, HEIGHT) {
+            return Fit::NATIVE;
+        }
+        // The diagonals, in 1/256 pixel.
+        let diagonal = |w: i32, h: i32| ((i64::from(w) * i64::from(w) + i64::from(h) * i64::from(h)) * 65536).isqrt();
+        let size = (diagonal(w, h) * 256 / diagonal(WIDTH, HEIGHT)) as i32;
+        // The whole number nearest to the lesser of the two ratios of the
+        // sides (on the touch skin, 800 / 480: 2, the skin's own scale).
+        let least = (i64::from(w) * i64::from(HEIGHT)).min(i64::from(h) * i64::from(WIDTH));
+        let grain = ((2 * least + i64::from(WIDTH * HEIGHT)) / i64::from(2 * WIDTH * HEIGHT)).max(1) as i32;
+        Fit { w, h, size: size.max(1), grain }
+    }
+
+    /// Whether this is the color skin's screen.
+    pub fn is_native(&self) -> bool {
+        *self == Fit::NATIVE
+    }
+
+    /// A place across the screen, in pixels of the description or in
+    /// parts of them (sixteenths), in the same parts of the picture's.
+    #[inline]
+    fn x(&self, v: i32) -> i32 {
+        v * self.w / WIDTH
+    }
+
+    /// A place down the screen, as [`Fit::x`].
+    #[inline]
+    fn y(&self, v: i32) -> i32 {
+        v * self.h / HEIGHT
+    }
+
+    /// A size in the composition (a radius, the length and height of a
+    /// wave, how far a thing moves), in any parts of a pixel.
+    #[inline]
+    fn size(&self, v: i32) -> i32 {
+        (v * self.size + 128) >> 8
+    }
+
+    /// A size in a pattern.
+    #[inline]
+    fn grain(&self, v: i32) -> i32 {
+        v * self.grain
+    }
+
+    /// Where a circle of the description is, in sixteenths of a pixel of
+    /// the picture: its center and its radius.
+    fn circle(&self, (cx, cy, r, ..): Circle) -> (i32, i32, i32) {
+        (self.x(cx * 16), self.y(cy * 16), self.size(r * 16))
+    }
+
+    /// The span of `x + y * num / den` over the screen, in sixteenths of a
+    /// pixel: where it begins, and how far it goes.
+    fn slant_span(&self, num: i32, den: i32) -> (i32, i32) {
+        let slant = self.h * 16 * num / den;
+        (slant.min(0), self.w * 16 + slant.abs())
+    }
+
+    /// A band of the description ([`Layer::Bands`]): where it begins and
+    /// how wide it is, in sixteenths of a pixel of the picture, along
+    /// `x + y * num / den`.  It is where it is in proportion along the span
+    /// of that over the screen.
+    fn band(&self, num: i32, den: i32, start: i32, width: i32) -> (i32, i32) {
+        let (lo, span) = Fit::NATIVE.slant_span(num, den);
+        let (to_lo, to_span) = self.slant_span(num, den);
+        let along = |v: i32| (i64::from(v) * i64::from(to_span) / i64::from(span)) as i32;
+        (to_lo + along(start * 16 - lo), along(width * 16))
+    }
+}
 
 /// The groups the wallpapers are listed in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,7 +308,14 @@ impl Wallpaper {
     /// Draws the wallpaper: `WIDTH * HEIGHT` pixels as `0x00RRGGBB`,
     /// row-major.  The same pixels every time.
     pub fn render(&self) -> Vec<u32> {
-        render(&self.spec)
+        render(&self.spec, &Fit::NATIVE)
+    }
+
+    /// Draws the wallpaper for a screen of `w` x `h` pixels, composed for
+    /// its shape ([`Fit`]): `w * h` pixels as `0x00RRGGBB`, row-major.  At
+    /// the color skin's size, [`Wallpaper::render`].
+    pub fn render_sized(&self, w: i32, h: i32) -> Vec<u32> {
+        render(&self.spec, &Fit::new(w, h))
     }
 
     /// Calls `f` with the wallpaper's pixels, drawing them first unless
@@ -221,12 +340,33 @@ impl Wallpaper {
         self.spec.moves.as_ref().map(|m| m.every_ms)
     }
 
+    /// [`Wallpaper::frame_ms`] on a screen of `w` x `h` pixels.  On a
+    /// screen of another size than the color skin's, only the waves move
+    /// ([`Motion::Bob`]): a frame changes the rows a crest passed over,
+    /// which grow with the screen's width alone.  What the other motions
+    /// change grows with the screen's area (the ring of a circle grows
+    /// with it, and a flow changes every pixel), and on the touch skin's
+    /// 800 x 1280 a frame of theirs cost 4 to 24 times what it costs on
+    /// the color skin's screen (measured in the simulator, the screen
+    /// brought up to the frame as the UI does it; the waves: 2.5 to 3
+    /// times), so they are still there.
+    pub fn frame_ms_sized(&self, w: i32, h: i32) -> Option<u32> {
+        let moves = self.spec.moves.as_ref()?;
+        (Fit::new(w, h).is_native() || matches!(moves.motion, Motion::Bob(_))).then_some(moves.every_ms)
+    }
+
     /// The farthest anything in the picture goes from one frame of the
     /// motion to the next, over a cycle, in sixteenths of a pixel (rounded
     /// up; for a flow, a bound from the fastest its waves go); `None` for
     /// a wallpaper that is still.
     pub fn farthest_step(&'static self) -> Option<u64> {
-        motion::Moving::new(self.id, &self.spec).map(|m| m.farthest())
+        self.farthest_step_sized(WIDTH, HEIGHT)
+    }
+
+    /// [`Wallpaper::farthest_step`] on a screen of `w` x `h` pixels
+    /// ([`Wallpaper::render_sized`]).
+    pub fn farthest_step_sized(&'static self, w: i32, h: i32) -> Option<u64> {
+        motion::Moving::new(self.id, &self.spec, Fit::new(w, h)).map(|m| m.farthest())
     }
 
     /// The picture at `t_ms` (any clock that counts milliseconds) of a
@@ -234,9 +374,16 @@ impl Wallpaper {
     /// The same pixels for the same time, and again one [`CYCLE_MS`]
     /// later.
     pub fn render_at(&'static self, t_ms: u64) -> Vec<u32> {
-        match motion::Moving::new(self.id, &self.spec) {
+        self.render_at_sized(WIDTH, HEIGHT, t_ms)
+    }
+
+    /// [`Wallpaper::render_at`] on a screen of `w` x `h` pixels
+    /// ([`Wallpaper::render_sized`]).
+    pub fn render_at_sized(&'static self, w: i32, h: i32, t_ms: u64) -> Vec<u32> {
+        let fit = Fit::new(w, h);
+        match motion::Moving::new(self.id, &self.spec, fit) {
             Some(mut moving) => moving.frame(t_ms).to_vec(),
-            None => self.render(),
+            None => render(&self.spec, &fit),
         }
     }
 
@@ -253,15 +400,24 @@ impl Wallpaper {
     /// of the picture.  For a wallpaper that is still: the still picture,
     /// and no frame before.
     pub fn with_frame_and_changes<R>(&'static self, t_ms: u64, f: impl FnOnce(&[u32], Changes) -> R) -> R {
+        self.with_frame_and_changes_sized(WIDTH, HEIGHT, t_ms, f)
+    }
+
+    /// [`Wallpaper::with_frame_and_changes`] on a screen of `w` x `h`
+    /// pixels ([`Wallpaper::render_sized`]).  What is kept is kept for one
+    /// wallpaper at one size.
+    pub fn with_frame_and_changes_sized<R>(&'static self, w: i32, h: i32, t_ms: u64, f: impl FnOnce(&[u32], Changes) -> R) -> R {
         static MOVING: Mutex<Option<motion::Moving>> = Mutex::new(None);
+        let fit = Fit::new(w, h);
         let mut moving = MOVING.lock().unwrap_or_else(|p| p.into_inner());
-        if moving.as_ref().is_none_or(|m| m.id != self.id) {
+        if moving.as_ref().is_none_or(|m| m.id != self.id || m.fit != fit) {
             *moving = None;
-            *moving = motion::Moving::new(self.id, &self.spec);
+            *moving = motion::Moving::new(self.id, &self.spec, fit);
         }
         let Some(m) = moving.as_mut() else {
             drop(moving);
-            return self.with_pixels(|pixels| f(pixels, Changes { serial: motion::next_serial(), before: 0, runs: &[] }));
+            let still = Changes { serial: motion::next_serial(), before: 0, runs: &[] };
+            return if fit.is_native() { self.with_pixels(|pixels| f(pixels, still)) } else { with_fitted(Backdrop::Builtin(self), w, h, |pixels| f(pixels, still)) };
         };
         let before = m.serial;
         let (frame, runs, serial) = m.frame_and_changes(t_ms);
@@ -325,6 +481,12 @@ pub struct Picture {
     pixels: Vec<u32>,
     /// The palette file's colors; `None` is the color skin's own palette.
     pub palette: Option<Palette>,
+    /// The picture as it came, for a screen of another size or shape than
+    /// the color skin's ([`with_fitted`]): an upright picture made for the
+    /// touch skin's screen would be mostly cut away on the way to the
+    /// color skin's, and a small one blurred.  (The decoded pixels are
+    /// shared, not copied; they are at most `image::MAX_PIXELS`.)
+    source: crate::image::Image,
 }
 
 impl std::fmt::Debug for Picture {
@@ -337,36 +499,82 @@ impl Picture {
     /// From decoded RGBA pixels of any size: scaled to cover the screen
     /// (the excess cut off evenly), transparent parts over black.
     pub fn new(image: &crate::image::Image, palette: Option<Palette>) -> Picture {
-        let (w, h) = (i64::from(image.width.max(1)), i64::from(image.height.max(1)));
-        let (sw, sh) = (i64::from(WIDTH), i64::from(HEIGHT));
-        // The source rectangle with the screen's shape, in 1/65536 pixel.
-        let (cw, ch) = if w * sh >= h * sw { (h * sw * 65536 / sh, h * 65536) } else { (w * 65536, w * sh * 65536 / sw) };
-        let (x0, y0) = ((w * 65536 - cw) / 2, (h * 65536 - ch) / 2);
-        let mut pixels = Vec::with_capacity((WIDTH * HEIGHT) as usize);
-        for y in 0..sh {
-            let (ya, yb) = ((y0 + y * ch / sh) >> 16, ((y0 + (y + 1) * ch / sh - 1) >> 16).min(h - 1));
-            for x in 0..sw {
-                let (xa, xb) = ((x0 + x * cw / sw) >> 16, ((x0 + (x + 1) * cw / sw - 1) >> 16).min(w - 1));
-                // The mean of the source pixels this one covers.
-                let (mut sum, mut n) = ([0u64; 3], 0u64);
-                for sy in ya..=yb.max(ya) {
-                    for sx in xa..=xb.max(xa) {
-                        let p = &image.pixels[((sy * w + sx) * 4) as usize..];
-                        for i in 0..3 {
-                            sum[i] += u64::from(p[i]) * u64::from(p[3]) / 255;
-                        }
-                        n += 1;
-                    }
-                }
-                pixels.push(((sum[0] / n) as u32) << 16 | ((sum[1] / n) as u32) << 8 | (sum[2] / n) as u32);
-            }
-        }
-        Picture { pixels, palette }
+        Picture { pixels: cover(image, WIDTH, HEIGHT, false), palette, source: image.clone() }
     }
 
     pub fn pixels(&self) -> &[u32] {
         &self.pixels
     }
+
+    /// The picture scaled to cover a screen of `w` x `h` pixels, the
+    /// excess cut off evenly, from the picture as it came: an upright
+    /// picture fills an upright screen whole.  A picture is never turned.
+    /// Where the screen has more pixels than the part of the picture shown
+    /// on it, they are between the picture's in proportion; where it has
+    /// fewer, each is the mean of those it covers.
+    pub fn pixels_sized(&self, w: i32, h: i32) -> Vec<u32> {
+        if (w, h) == (WIDTH, HEIGHT) {
+            return self.pixels.clone();
+        }
+        cover(&self.source, w, h, true)
+    }
+}
+
+/// `image` scaled to cover `sw` x `sh` pixels, the excess cut off evenly,
+/// transparent parts over black: each pixel the mean of the image's that
+/// it covers (where it covers less than one, that one), or with `smooth`,
+/// where the image is enlarged, between the image's in proportion.
+fn cover(image: &crate::image::Image, sw: i32, sh: i32, smooth: bool) -> Vec<u32> {
+    let (w, h) = (i64::from(image.width.max(1)), i64::from(image.height.max(1)));
+    let (sw, sh) = (i64::from(sw.max(1)), i64::from(sh.max(1)));
+    // A channel of a pixel of the image, over black.
+    let channel = |sx: i64, sy: i64, i: usize| {
+        let p = &image.pixels[((sy * w + sx) * 4) as usize..];
+        u64::from(p[i]) * u64::from(p[3]) / 255
+    };
+    // The source rectangle with the screen's shape, in 1/65536 pixel.
+    let (cw, ch) = if w * sh >= h * sw { (h * sw * 65536 / sh, h * 65536) } else { (w * 65536, w * sh * 65536 / sw) };
+    let (x0, y0) = ((w * 65536 - cw) / 2, (h * 65536 - ch) / 2);
+    let mut pixels = Vec::with_capacity((sw * sh) as usize);
+    if smooth && cw < sw * 65536 {
+        // Enlarged: the four pixels around each one's center, by how near.
+        let (step_x, step_y) = (cw / sw, ch / sh);
+        for y in 0..sh {
+            let fy = (y0 + y * step_y + step_y / 2 - 32768).clamp(0, (h - 1) * 65536);
+            let (ya, ty) = (fy >> 16, ((fy & 0xFFFF) >> 8) as u64);
+            let yb = (ya + 1).min(h - 1);
+            for x in 0..sw {
+                let fx = (x0 + x * step_x + step_x / 2 - 32768).clamp(0, (w - 1) * 65536);
+                let (xa, tx) = (fx >> 16, ((fx & 0xFFFF) >> 8) as u64);
+                let xb = (xa + 1).min(w - 1);
+                let ch = |i: usize| {
+                    let top = channel(xa, ya, i) * (256 - tx) + channel(xb, ya, i) * tx;
+                    let bottom = channel(xa, yb, i) * (256 - tx) + channel(xb, yb, i) * tx;
+                    ((top * (256 - ty) + bottom * ty + 32768) >> 16) as u32
+                };
+                pixels.push(ch(0) << 16 | ch(1) << 8 | ch(2));
+            }
+        }
+        return pixels;
+    }
+    for y in 0..sh {
+        let (ya, yb) = ((y0 + y * ch / sh) >> 16, ((y0 + (y + 1) * ch / sh - 1) >> 16).min(h - 1));
+        for x in 0..sw {
+            let (xa, xb) = ((x0 + x * cw / sw) >> 16, ((x0 + (x + 1) * cw / sw - 1) >> 16).min(w - 1));
+            // The mean of the source pixels this one covers.
+            let (mut sum, mut n) = ([0u64; 3], 0u64);
+            for sy in ya..=yb.max(ya) {
+                for sx in xa..=xb.max(xa) {
+                    for (i, s) in sum.iter_mut().enumerate() {
+                        *s += channel(sx, sy, i);
+                    }
+                    n += 1;
+                }
+            }
+            pixels.push(((sum[0] / n) as u32) << 16 | ((sum[1] / n) as u32) << 8 | (sum[2] / n) as u32);
+        }
+    }
+    pixels
 }
 
 /// What is behind the idle and call screens.
@@ -379,16 +587,12 @@ pub enum Backdrop<'a> {
     Picture(&'a Picture),
 }
 
-/// Calls `f` with the still picture of `backdrop` fitted to a screen of
-/// `w` x `h` pixels that is not the size the wallpapers are drawn at (the
-/// touch skin's 800 x 1280): scaled to cover the screen, the excess cut
-/// off evenly.  A built-in wallpaper is turned for an upright screen (its
-/// rows become the screen's columns), so that most of it shows; a picture
-/// is not turned.  One fitted picture is kept.
-///
-/// This is the simplest thing that fills the D80's screen with the theme's
-/// picture: a wallpaper drawn at the screen's own size, and the motion,
-/// are still to be done.
+/// Calls `f` with the still picture of `backdrop` for a screen of `w` x
+/// `h` pixels that is not the size the wallpapers are described at (the
+/// touch skin's 800 x 1280): a built-in wallpaper drawn from its
+/// description for that screen ([`Wallpaper::render_sized`]), or a
+/// picture scaled to cover it ([`Picture::pixels_sized`]).  One such
+/// picture is kept.
 pub fn with_fitted<R>(backdrop: Backdrop, w: i32, h: i32, f: impl FnOnce(&[u32]) -> R) -> R {
     static KEPT: Mutex<Option<(String, i32, i32, Vec<u32>)>> = Mutex::new(None);
     let key = match backdrop {
@@ -401,47 +605,17 @@ pub fn with_fitted<R>(backdrop: Backdrop, w: i32, h: i32, f: impl FnOnce(&[u32])
     };
     let mut kept = KEPT.lock().unwrap_or_else(|p| p.into_inner());
     if kept.as_ref().is_none_or(|(k, kw, kh, _)| *k != key || (*kw, *kh) != (w, h)) {
+        // The old picture goes before the new one is made.
         *kept = None;
+        let start = std::time::Instant::now();
         let fitted = match backdrop {
-            Backdrop::Builtin(wallpaper) | Backdrop::Moving(wallpaper, _) => wallpaper.with_pixels(|src| fit(src, w, h, h > w)),
-            Backdrop::Picture(picture) => fit(picture.pixels(), w, h, false),
+            Backdrop::Builtin(wallpaper) | Backdrop::Moving(wallpaper, _) => wallpaper.render_sized(w, h),
+            Backdrop::Picture(picture) => picture.pixels_sized(w, h),
         };
+        log::debug!("wallpaper {key} drawn for {w} x {h} in {} ms", start.elapsed().as_millis());
         *kept = Some((key, w, h, fitted));
     }
     f(&kept.as_ref().expect("just set").3)
-}
-
-/// `src` (`WIDTH` x `HEIGHT`) scaled to cover `w` x `h`, between its
-/// pixels in proportion; `turn` swaps its rows and columns first.
-fn fit(src: &[u32], w: i32, h: i32, turn: bool) -> Vec<u32> {
-    // The source's size along the screen's x and y.
-    let (sw, sh) = if turn { (HEIGHT, WIDTH) } else { (WIDTH, HEIGHT) };
-    let at = |sx: i32, sy: i32| {
-        let (sx, sy) = (sx.clamp(0, sw - 1), sy.clamp(0, sh - 1));
-        src[if turn { sx * WIDTH + sy } else { sy * WIDTH + sx } as usize]
-    };
-    // Source pixels to one of the screen's, in 1/256: the lesser of the
-    // two directions' covers the screen.
-    let step = (sw * 256 / w.max(1)).min(sh * 256 / h.max(1)).max(1);
-    let (x0, y0) = ((sw * 256 - w * step) / 2, (sh * 256 - h * step) / 2);
-    let mut out = Vec::with_capacity((w * h) as usize);
-    for y in 0..h {
-        let fy = y0 + y * step;
-        let (sy, ty) = (fy >> 8, (fy & 255) as u32);
-        for x in 0..w {
-            let fx = x0 + x * step;
-            let (sx, tx) = (fx >> 8, (fx & 255) as u32);
-            let (a, b, c, d) = (at(sx, sy), at(sx + 1, sy), at(sx, sy + 1), at(sx + 1, sy + 1));
-            let ch = |shift: u32| {
-                let v = |p: u32| (p >> shift) & 255;
-                let top = v(a) * (256 - tx) + v(b) * tx;
-                let bottom = v(c) * (256 - tx) + v(d) * tx;
-                ((top * (256 - ty) + bottom * ty + 32768) >> 16) << shift
-            };
-            out.push(ch(16) | ch(8) | ch(0));
-        }
-    }
-    out
 }
 
 /// Every wallpaper, grouped by family in the order of [`Family::ALL`].
@@ -662,12 +836,13 @@ fn hash(x: i32, y: i32, seed: u32) -> u32 {
 
 impl Flow {
     /// The position along the stops (0..=[`ONE`]) of pixel (`x`, `y`).
-    fn at(&self, x: i32, y: i32) -> i32 {
-        let straight = |ax: i32, ay: i32| (x * ax + y * ay) * ONE / (WIDTH * ax + HEIGHT * ay);
+    fn at(&self, f: &Fit, x: i32, y: i32) -> i32 {
+        let straight = |ax: i32, ay: i32| (x * ax + y * ay) * ONE / (f.w * ax + f.h * ay);
         let t = match *self {
             Flow::Ribbons { ax, ay, waves } => {
                 let mut t = straight(ax, ay);
                 for &(amount, px, py, phase) in waves {
+                    let (px, py) = (f.size(px), f.size(py));
                     let turn = if px != 0 { x * 65536 / px } else { 0 } + if py != 0 { y * 65536 / py } else { 0 } + phase * 256;
                     t += (amount * sin(turn)) >> 12;
                 }
@@ -704,20 +879,20 @@ fn stops_at(stops: Stops, t: i32) -> Px {
 
 impl Grad {
     /// The color at a point given in sixteenths of a pixel.
-    fn at(&self, sx: i32, sy: i32) -> Px {
+    fn at(&self, f: &Fit, sx: i32, sy: i32) -> Px {
         match *self {
             Grad::Solid(c) => px(c),
             Grad::Linear { ax, ay, stops } => {
-                let (w, h) = (WIDTH * 16 * ax, HEIGHT * 16 * ay);
+                let (w, h) = (f.w * 16 * ax, f.h * 16 * ay);
                 let lo = 0.min(w).min(h).min(w + h);
                 let hi = 0.max(w).max(h).max(w + h);
                 let p = sx * ax + sy * ay;
-                stops_at(stops, ((p - lo).clamp(0, hi - lo) * ONE) / (hi - lo))
+                stops_at(stops, ((i64::from((p - lo).clamp(0, hi - lo)) * i64::from(ONE)) / i64::from(hi - lo)) as i32)
             }
             Grad::Radial { cx, cy, r, stops } => {
-                let (dx, dy) = (sx - cx * 16, sy - cy * 16);
+                let (dx, dy) = (sx - f.x(cx * 16), sy - f.y(cy * 16));
                 let d = ((dx * dx + dy * dy) as u32).isqrt() as i32;
-                stops_at(stops, (d * ONE / (r * 16)).min(ONE))
+                stops_at(stops, (d * ONE / f.size(r * 16)).min(ONE))
             }
         }
     }
@@ -745,29 +920,31 @@ fn bubbles(seed: u32, count: u32, r: (i32, i32), alpha: (i32, i32), colors: &[Rg
 }
 
 /// The base of a wallpaper, under its layers, as [`Px`] colors.
-fn render_base(base: &Base) -> Vec<u32> {
-    let mut buf = vec![0u32; (WIDTH * HEIGHT) as usize];
+fn render_base(base: &Base, f: &Fit) -> Vec<u32> {
+    let mut buf = vec![0u32; (f.w * f.h) as usize];
     match base {
         Base::Grad(g) => {
-            for y in 0..HEIGHT {
-                for x in 0..WIDTH {
-                    buf[(y * WIDTH + x) as usize] = pack(g.at(x * 16 + 8, y * 16 + 8));
+            for y in 0..f.h {
+                for x in 0..f.w {
+                    buf[(y * f.w + x) as usize] = pack(g.at(f, x * 16 + 8, y * 16 + 8));
                 }
             }
         }
-        Base::Poly { grad, cell, jitter, seed, amp } => poly(&mut buf, grad, *cell, *jitter, *seed, *amp),
+        Base::Poly { grad, cell, jitter, seed, amp } => poly(&mut buf, f, grad, f.grain(*cell), f.grain(*jitter), *seed, *amp),
         Base::Flow { flow, stops } => {
-            for y in 0..HEIGHT {
-                for x in 0..WIDTH {
-                    buf[(y * WIDTH + x) as usize] = pack(stops_at(stops, flow.at(x, y)));
+            for y in 0..f.h {
+                for x in 0..f.w {
+                    buf[(y * f.w + x) as usize] = pack(stops_at(stops, flow.at(f, x, y)));
                 }
             }
         }
-        Base::Original => {
+        Base::Original if f.is_native() => {
             for (o, p) in buf.iter_mut().zip(original()) {
                 *o = pack(px(p));
             }
         }
+        // Elsewhere, its gradient (its facets are layers: `render`).
+        Base::Original => return render_base(&ORIGINAL.base, f),
     }
     buf
 }
@@ -783,64 +960,75 @@ fn to_frame(p: u32, x: i32, y: i32, dither: bool) -> u32 {
     (c[0] << 16) | (c[1] << 8) | c[2]
 }
 
-fn render(spec: &Spec) -> Vec<u32> {
-    let mut buf = render_base(&spec.base);
+fn render(spec: &Spec, f: &Fit) -> Vec<u32> {
+    // The first wallpaper is kept pixel for pixel on the color skin's
+    // screen; elsewhere it is drawn from its description.
+    if matches!(spec.base, Base::Original) && !f.is_native() {
+        return render(&ORIGINAL, f);
+    }
+    let mut buf = render_base(&spec.base, f);
+    let (w, h) = (f.w, f.h);
     for layer in spec.layers {
         match layer {
-            Layer::Bands { num, den, add, color, bands } => draw_bands(&mut buf, *num, *den, *add, px(*color), bands),
-            Layer::Glow { cx, cy, r, color, alpha } => glow(&mut buf, *cx, *cy, *r, px(*color), *alpha),
+            Layer::Bands { num, den, add, color, bands } => draw_bands(&mut buf, f, *num, *den, *add, px(*color), bands),
+            Layer::Glow { cx, cy, r, color, alpha } => glow(&mut buf, f, f.x(*cx), f.y(*cy), f.size(*r), px(*color), *alpha),
             Layer::Circles { soft, rim, circles } => {
-                for &(cx, cy, r, color, alpha) in *circles {
-                    disc(&mut buf, cx * 16, cy * 16, r * 16, soft_edge(r, *soft), px(color), alpha, *rim);
+                for &circle in *circles {
+                    let (cx, cy, r) = f.circle(circle);
+                    disc(&mut buf, f, cx, cy, r, soft_edge(r, *soft), px(circle.3), circle.4, *rim);
                 }
             }
             Layer::Bubbles { seed, count, r, alpha, soft, rim, colors } => {
-                for (cx, cy, rad, color, a) in bubbles(*seed, *count, *r, *alpha, colors) {
-                    disc(&mut buf, cx * 16, cy * 16, rad * 16, soft_edge(rad, *soft), px(color), a, *rim);
+                for circle in bubbles(*seed, *count, *r, *alpha, colors) {
+                    let (cx, cy, r) = f.circle(circle);
+                    disc(&mut buf, f, cx, cy, r, soft_edge(r, *soft), px(circle.3), circle.4, *rim);
                 }
             }
             Layer::Waves(waves) => {
-                for w in *waves {
-                    wave(&mut buf, w);
+                for wv in *waves {
+                    wave(&mut buf, f, wv);
                 }
             }
             Layer::Contours { seed, scale, levels, color, alpha, major, major_alpha } => {
-                contours(&mut buf, *seed, *scale, *levels, px(*color), *alpha, *major, *major_alpha)
+                contours(&mut buf, f, *seed, f.grain(*scale), *levels, px(*color), *alpha, *major, *major_alpha)
             }
             Layer::Dots { px: step_x, py: step_y, r, stagger, color, alpha } => {
+                let (step_x, step_y, r) = (f.grain(*step_x), f.grain(*step_y), f.grain(*r));
                 let mut row = 0;
-                while row * step_y < HEIGHT + step_y {
+                while row * step_y < h + step_y {
                     let shift = if *stagger && row % 2 == 1 { step_x / 2 } else { 0 };
                     let mut col = -1;
-                    while col * step_x < WIDTH + step_x {
+                    while col * step_x < w + step_x {
                         let (cx, cy) = (col * step_x + step_x / 2 + shift, row * step_y + step_y / 2);
-                        disc(&mut buf, cx * 16, cy * 16, *r, 20, px(*color), *alpha, 0);
+                        disc(&mut buf, f, cx * 16, cy * 16, r, 20, px(*color), *alpha, 0);
                         col += 1;
                     }
                     row += 1;
                 }
             }
             Layer::Stripes { vertical, repeat, stripes } => {
-                for y in 0..HEIGHT {
-                    for x in 0..WIDTH {
+                let repeat = f.grain(*repeat);
+                for y in 0..h {
+                    for x in 0..w {
                         let v = if *vertical { x } else { y } % repeat;
                         for &(off, width, color, alpha) in *stripes {
-                            if (off..off + width).contains(&v) {
-                                over(&mut buf[(y * WIDTH + x) as usize], px(color), alpha * 16);
+                            if (f.grain(off)..f.grain(off + width)).contains(&v) {
+                                over(&mut buf[(y * w + x) as usize], px(color), alpha * 16);
                             }
                         }
                     }
                 }
             }
             Layer::Weave { kind, color, alpha, color2, alpha2 } => {
-                for y in 0..HEIGHT {
-                    for x in 0..WIDTH {
+                let kind = kind.grained(f);
+                for y in 0..h {
+                    for x in 0..w {
                         // Four samples a pixel smooth the slanted edges.
                         let mut n = [0, 0, 0];
                         for (dx, dy) in [(1, 1), (3, 1), (1, 3), (3, 3)] {
-                            n[weave(kind, x * 4 + dx, y * 4 + dy)] += 1;
+                            n[weave(&kind, x * 4 + dx, y * 4 + dy)] += 1;
                         }
-                        let p = &mut buf[(y * WIDTH + x) as usize];
+                        let p = &mut buf[(y * w + x) as usize];
                         over(p, px(*color), alpha * 4 * n[1]);
                         over(p, px(*color2), alpha2 * 4 * n[2]);
                     }
@@ -849,18 +1037,19 @@ fn render(spec: &Spec) -> Vec<u32> {
         }
     }
     // To the frame buffer's eight bits.
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            let p = &mut buf[(y * WIDTH + x) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let p = &mut buf[(y * w + x) as usize];
             *p = to_frame(*p, x, y, spec.dither);
         }
     }
     buf
 }
 
-/// The width of a circle's edge in sixteenths of a pixel.
+/// The width of the edge of a circle of radius `r`, both in sixteenths of
+/// a pixel, when the edge is `percent` of the radius.
 fn soft_edge(r: i32, percent: i32) -> i32 {
-    (r * 16 * percent / 100).max(20)
+    (r * percent / 100).max(20)
 }
 
 /// A circle at (`cx`, `cy`) with radius `r`, all in sixteenths of a pixel;
@@ -883,24 +1072,24 @@ fn disc_opacity(d: i32, r: i32, soft: i32, alpha: i32, rim: i32) -> i32 {
     t
 }
 
-fn disc(buf: &mut [u32], cx: i32, cy: i32, r: i32, soft: i32, color: Px, alpha: i32, rim: i32) {
+fn disc(buf: &mut [u32], f: &Fit, cx: i32, cy: i32, r: i32, soft: i32, color: Px, alpha: i32, rim: i32) {
     let reach = r + soft / 2 + 16;
-    let (x0, x1) = (((cx - reach) >> 4).max(0), ((cx + reach) >> 4).min(WIDTH - 1));
-    let (y0, y1) = (((cy - reach) >> 4).max(0), ((cy + reach) >> 4).min(HEIGHT - 1));
+    let (x0, x1) = (((cx - reach) >> 4).max(0), ((cx + reach) >> 4).min(f.w - 1));
+    let (y0, y1) = (((cy - reach) >> 4).max(0), ((cy + reach) >> 4).min(f.h - 1));
     for y in y0..=y1 {
         let dy = y * 16 + 8 - cy;
         for x in x0..=x1 {
             let dx = x * 16 + 8 - cx;
             let d = ((dx * dx + dy * dy) as u32).isqrt() as i32;
-            over(&mut buf[(y * WIDTH + x) as usize], color, disc_opacity(d, r, soft, alpha, rim));
+            over(&mut buf[(y * f.w + x) as usize], color, disc_opacity(d, r, soft, alpha, rim));
         }
     }
 }
 
-fn glow(buf: &mut [u32], cx: i32, cy: i32, r: i32, color: Px, alpha: i32) {
+fn glow(buf: &mut [u32], f: &Fit, cx: i32, cy: i32, r: i32, color: Px, alpha: i32) {
     let r2 = ((r * 16) * (r * 16)) >> 8;
-    let (x0, x1) = ((cx - r).max(0), (cx + r).min(WIDTH - 1));
-    let (y0, y1) = ((cy - r).max(0), (cy + r).min(HEIGHT - 1));
+    let (x0, x1) = ((cx - r).max(0), (cx + r).min(f.w - 1));
+    let (y0, y1) = ((cy - r).max(0), (cy + r).min(f.h - 1));
     for y in y0..=y1 {
         let dy = y * 16 + 8 - cy * 16;
         for x in x0..=x1 {
@@ -908,27 +1097,34 @@ fn glow(buf: &mut [u32], cx: i32, cy: i32, r: i32, color: Px, alpha: i32) {
             let d2 = (dx * dx + dy * dy) >> 8;
             if d2 < r2 {
                 // (1 - (d / r)^2)^2: level at the center, and at the edge.
-                let q = ONE - d2 * ONE / r2;
-                over(&mut buf[(y * WIDTH + x) as usize], color, (((q * q) >> 12) * alpha) >> 8);
+                let q = ONE - (i64::from(d2) * i64::from(ONE) / i64::from(r2)) as i32;
+                over(&mut buf[(y * f.w + x) as usize], color, (((q * q) >> 12) * alpha) >> 8);
             }
         }
     }
 }
 
-fn draw_bands(buf: &mut [u32], num: i32, den: i32, additive: bool, color: Px, bands: &[Band]) {
-    for y in 0..HEIGHT {
+fn draw_bands(buf: &mut [u32], f: &Fit, num: i32, den: i32, additive: bool, color: Px, bands: &[Band]) {
+    // Where each band is, and how wide, in sixteenths of a pixel.
+    let placed: Vec<(i32, i32, i32, i32)> = bands
+        .iter()
+        .map(|&(start, width, a0, a1)| {
+            let (s, w) = f.band(num, den, start, width);
+            (s, w, a0, a1)
+        })
+        .collect();
+    for y in 0..f.h {
         let shift = (y * 16 + 8) * num / den;
-        for x in 0..WIDTH {
+        for x in 0..f.w {
             let u = x * 16 + 8 + shift;
-            for &(start, width, a0, a1) in bands {
-                let (s, w) = (start * 16, width * 16);
+            for &(s, w, a0, a1) in &placed {
                 if u <= s - 8 || u >= s + w + 8 {
                     continue;
                 }
                 // How much of the pixel is inside, in sixteenths.
                 let cov = (u - s + 8).min(s + w + 8 - u).min(16);
                 let a = a0 + (a1 - a0) * (u - s).clamp(0, w) / w;
-                let p = &mut buf[(y * WIDTH + x) as usize];
+                let p = &mut buf[(y * f.w + x) as usize];
                 if additive {
                     add(p, color, a * cov);
                 } else {
@@ -939,24 +1135,33 @@ fn draw_bands(buf: &mut [u32], num: i32, den: i32, additive: bool, color: Px, ba
     }
 }
 
-fn wave(buf: &mut [u32], w: &Wave) {
+/// The crest of wave `w` in column `x`, in sixteenths of a pixel from the
+/// top of the picture, where the wave rests.
+#[inline]
+fn crest(w: &Wave, f: &Fit, x: i32) -> i32 {
+    let mut edge = f.y(w.y * 16) + ((f.size(w.amp * 16) * sin(x * 65536 / f.size(w.period) + w.phase * 256)) >> 12);
+    if w.period2 > 0 {
+        edge += (f.size(w.amp2 * 16) * sin(x * 65536 / f.size(w.period2) + w.phase * 613)) >> 12;
+    }
+    edge
+}
+
+fn wave(buf: &mut [u32], f: &Fit, w: &Wave) {
     let color = px(w.color);
-    for x in 0..WIDTH {
-        let mut edge = w.y * 16 + ((w.amp * 16 * sin(x * 65536 / w.period + w.phase * 256)) >> 12);
-        if w.period2 > 0 {
-            edge += (w.amp2 * 16 * sin(x * 65536 / w.period2 + w.phase * 613)) >> 12;
-        }
-        for y in ((edge - 8) >> 4).max(0)..HEIGHT {
+    let fade = f.size(w.fade * 16);
+    for x in 0..f.w {
+        let edge = crest(w, f, x);
+        for y in ((edge - 8) >> 4).max(0)..f.h {
             let depth = y * 16 + 8 - edge;
             let cov = (depth + 8).clamp(0, 16);
             let mut a = w.alpha;
-            if w.fade > 0 {
-                a = a * (w.fade * 16 - depth).max(0) / (w.fade * 16);
+            if fade > 0 {
+                a = a * (fade - depth).max(0) / fade;
                 if a == 0 && depth > 0 {
                     break;
                 }
             }
-            over(&mut buf[(y * WIDTH + x) as usize], color, a * cov);
+            over(&mut buf[(y * f.w + x) as usize], color, a * cov);
         }
     }
 }
@@ -978,30 +1183,45 @@ fn terrain(seed: u32, sx: i32, sy: i32, scale: i32) -> i32 {
     (octave(seed, scale * 16) * 3 + octave(seed ^ 0x5bd1, scale * 7)) / 4
 }
 
-fn contours(buf: &mut [u32], seed: u32, scale: i32, levels: i32, color: Px, alpha: i32, major: i32, major_alpha: i32) {
+fn contours(buf: &mut [u32], f: &Fit, seed: u32, scale: i32, levels: i32, color: Px, alpha: i32, major: i32, major_alpha: i32) {
     // The terrain's height in levels (65536 to a level) at the centers of
     // this row's pixels and the next row's, one more than the width.
-    let row = |y: i32| -> Vec<i32> { (0..=WIDTH).map(|x| terrain(seed, x * 16 + 8, y * 16 + 8, scale) * levels).collect() };
+    let row = |y: i32| -> Vec<i32> { (0..=f.w).map(|x| terrain(seed, x * 16 + 8, y * 16 + 8, scale) * levels).collect() };
+    // The lines are as wide as the pattern's pixels.
+    let grain = f.grain(1);
     let mut here = row(0);
-    for y in 0..HEIGHT {
+    for y in 0..f.h {
         let below = row(y + 1);
-        for x in 0..WIDTH as usize {
+        for x in 0..f.w as usize {
             let v = here[x];
             // How far the nearest level is, in height and then (by the
-            // slope) in sixteenths of a pixel.
-            let f = v & 0xFFFF;
-            let off = f.min(65536 - f);
+            // slope) in sixteenths of a pixel of the pattern.
+            let frac = v & 0xFFFF;
+            let off = frac.min(65536 - frac);
             let (gx, gy) = (here[x + 1] - v, below[x] - v);
             let slope = (((gx >> 2) * (gx >> 2) + (gy >> 2) * (gy >> 2)) as u32).isqrt() as i32 * 4;
-            let dist = off * 16 / slope.max(1);
+            let dist = off * 16 / (slope.max(1) * grain);
             let cov = (16 - dist).clamp(0, 16);
             if cov > 0 {
                 let line = (v + 32768) >> 16;
                 let a = if major > 0 && line % major == 0 { major_alpha } else { alpha };
-                over(&mut buf[y as usize * WIDTH as usize + x], color, a * cov);
+                over(&mut buf[y as usize * f.w as usize + x], color, a * cov);
             }
         }
         here = below;
+    }
+}
+
+impl Weave {
+    /// The weave with each of its sizes in pixels of the picture
+    /// ([`Fit::grain`]).
+    fn grained(&self, f: &Fit) -> Weave {
+        match *self {
+            Weave::Houndstooth { unit } => Weave::Houndstooth { unit: f.grain(unit) },
+            Weave::Herringbone { col, period } => Weave::Herringbone { col: f.grain(col), period: f.grain(period) },
+            Weave::Chevron { px, py } => Weave::Chevron { px: f.grain(px), py: f.grain(py) },
+            Weave::Argyle { w, h, line } => Weave::Argyle { w: f.grain(w), h: f.grain(h), line: f.grain(line) },
+        }
     }
 }
 
@@ -1039,7 +1259,7 @@ fn weave(kind: &Weave, x: i32, y: i32) -> usize {
 }
 
 /// The triangle field ([`Base::Poly`]).
-fn poly(buf: &mut [u32], grad: &Grad, cell: i32, jitter: i32, seed: u32, amp: i32) {
+fn poly(buf: &mut [u32], f: &Fit, grad: &Grad, cell: i32, jitter: i32, seed: u32, amp: i32) {
     // Everything here is in quarter pixels.  Grid point (i, j) is moved
     // from its place by up to `jitter` pixels each way.
     let vertex = |i: i32, j: i32| {
@@ -1065,7 +1285,7 @@ fn poly(buf: &mut [u32], grad: &Grad, cell: i32, jitter: i32, seed: u32, amp: i3
     let color = |i: i32, j: i32, k: i32, t: &[(i32, i32); 3]| {
         let (cx, cy) = ((t[0].0 + t[1].0 + t[2].0) * 4 / 3, (t[0].1 + t[1].1 + t[2].1) * 4 / 3);
         let shade = ((hash(i * 2 + k, j, seed ^ 0x1b3) % (2 * amp as u32 + 1)) as i32 - amp) * 4;
-        grad.at(cx, cy).map(|v| (v + shade).clamp(0, 1020))
+        grad.at(f, cx, cy).map(|v| (v + shade).clamp(0, 1020))
     };
     // The triangle the last sample was in: most samples are in it too.
     let mut last: Option<((i32, i32, i32), [(i32, i32); 3], Px)> = None;
@@ -1088,10 +1308,10 @@ fn poly(buf: &mut [u32], grad: &Grad, cell: i32, jitter: i32, seed: u32, amp: i3
                 }
             }
         }
-        ((i32::MIN, 0, 0), grad.at(x * 4, y * 4))
+        ((i32::MIN, 0, 0), grad.at(f, x * 4, y * 4))
     };
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
+    for y in 0..f.h {
+        for x in 0..f.w {
             // Four samples a pixel smooth the edges between triangles.
             let s = [(1, 1), (3, 1), (1, 3), (3, 3)].map(|(dx, dy)| sample(x * 4 + dx, y * 4 + dy));
             let c = if s.iter().all(|t| t.0 == s[0].0) {
@@ -1099,7 +1319,7 @@ fn poly(buf: &mut [u32], grad: &Grad, cell: i32, jitter: i32, seed: u32, amp: i3
             } else {
                 [0, 1, 2].map(|i| (s[0].1[i] + s[1].1[i] + s[2].1[i] + s[3].1[i] + 2) / 4)
             };
-            buf[(y * WIDTH + x) as usize] = pack(c);
+            buf[(y * f.w + x) as usize] = pack(c);
         }
     }
 }
