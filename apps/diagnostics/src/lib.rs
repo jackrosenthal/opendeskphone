@@ -388,7 +388,7 @@ impl Diagnostics {
             blank(),
             Softkey::new(SK_BACK, "Back"),
         ]);
-        ui::set_focus(list);
+        opendeskphone_app_sdk::nav::focus_list(list);
         self.page = Page::Menu { list };
     }
 
@@ -540,9 +540,15 @@ impl Diagnostics {
 
     /// The lamp test: every lamp shows the color of `step`.
     fn show_lamps(&mut self, step: usize) {
+        let m = ui::get_metrics();
+        if !m.keys {
+            // Touch: the title of every screen, and the line under it.
+            let area = screen("Lamp test");
+            opendeskphone_app_sdk::nav::note(area, "Cycling all lamps");
+            return self.cycle_lamps(step);
+        }
         ui::clear(ROOT);
         ui::claim_keys(ROOT, &[Key::Cancel, Key::Select]);
-        let m = ui::get_metrics();
         let inset = inset(&m);
         let width = m.width.saturating_sub(2 * inset);
         let top = (m.height.saturating_sub(3 * m.line_height) / 2) as i16;
@@ -562,6 +568,11 @@ impl Diagnostics {
         ui::set_align(text, Align::Center);
         ui::set_text(text, "Cycling all lamps");
         page_softkeys(&[blank(), blank(), blank(), Softkey::new(SK_BACK, "Back")]);
+        self.cycle_lamps(step);
+    }
+
+    /// Lights the lamps in the color of `step`, and goes on cycling.
+    fn cycle_lamps(&mut self, step: usize) {
         self.light(step);
         if self.timer.is_none() {
             self.timer = timers::set(LAMP_STEP_MS, true).ok();

@@ -49,7 +49,13 @@ impl Parking {
     fn draw(&mut self) {
         let r = screen("Parked Calls");
         if self.calls.is_empty() {
-            opendeskphone_app_sdk::nav::note(r, "No calls are parked.");
+            // (Touch: with what to do, in the upper part of the screen.)
+            let text = if has_keys() {
+                "No calls are parked."
+            } else {
+                "No calls are parked.  A call parked in your lots shows here."
+            };
+            opendeskphone_app_sdk::nav::note(r, text);
             set_keys(&[
                 Softkey::new(SK_REFRESH, "Refresh"),
                 Softkey::new(SK_EXIT, "Exit"),
@@ -78,7 +84,7 @@ impl Parking {
             Softkey::new(SK_REFRESH, "Refresh"),
             Softkey::new(SK_EXIT, "Exit"),
         ]);
-        ui::set_focus(list);
+        opendeskphone_app_sdk::nav::focus_list(list);
         self.list = Some(list);
     }
 

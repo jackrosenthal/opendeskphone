@@ -411,7 +411,12 @@ impl BoxPusher {
     fn show_play(&mut self) {
         self.screen = Screen::Play;
         self.list = None;
-        ui::clear(ROOT);
+        // Touch: the level is the title, as screen() draws titles.
+        if has_keys() {
+            ui::clear(ROOT);
+        } else {
+            screen(&format!("Level {}", self.level + 1));
+        }
         ui::claim_keys(
             ROOT,
             &[
@@ -446,7 +451,6 @@ impl BoxPusher {
             let width = l.panel_width.saturating_sub(m.back_width);
             let (level, count) = (width * 3 / 8, width * 5 / 16);
             let part = |x: i16, width: u16| Rect::new(x, 0, width, m.title_height);
-            text(part(x, level), Font::Title, Align::Left, &format!("Level {number}"));
             let board = Board {
                 pieces,
                 moves: text(part(x + level as i16, count), Font::Normal, Align::Left, ""),

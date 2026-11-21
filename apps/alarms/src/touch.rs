@@ -112,7 +112,10 @@ impl Alarms {
         let list = ui::create(WidgetKind::TextList, ROOT, Rect::new(0, area.y, area.width, 2 * h));
         ui::set_items(
             list,
-            &[ListItem::with_detail("Time", time_text(d.hour, d.minute)), ListItem::with_detail("Tone", d.tone.clone())],
+            &[
+                ListItem::with_detail("Time", time_text(d.hour, d.minute)),
+                ListItem::with_detail("Tone", d.tone.clone()),
+            ],
         );
         self.widget = list;
 
@@ -178,7 +181,9 @@ impl Alarms {
             let row = Rect::new(GAP as i16, top + (r as u16 * (key_h + GAP)) as i16, area.width - 2 * GAP, key_h);
             for (place, key) in controls::columns(row, 3).into_iter().zip(keys) {
                 let b = match key {
-                    Some(Act::Digit(d)) => Button::new(ROOT, place, &d.to_string(), Look::Secondary).with_font(Font::Large),
+                    Some(Act::Digit(d)) => {
+                        Button::new(ROOT, place, &d.to_string(), Look::Secondary).with_font(Font::Large)
+                    }
                     Some(Act::Erase) => Button::with_icon(ROOT, place, Icon::Backspace, Look::Secondary),
                     _ => continue,
                 };

@@ -266,7 +266,12 @@ impl Calendar {
         ui::set_bounds(disc, at);
         let d = at.width.min(at.height) * 4 / 5;
         let ops = [
-            controls::disc(((at.width - d) / 2) as i16, ((at.height - d) / 2) as i16, d, canvas::theme_color(Role::Highlight)),
+            controls::disc(
+                ((at.width - d) / 2) as i16,
+                ((at.height - d) / 2) as i16,
+                d,
+                canvas::theme_color(Role::Highlight),
+            ),
             Op::Text(Text {
                 box_: Rect::new(0, 0, at.width, at.height),
                 font: Font::Normal,

@@ -81,7 +81,11 @@ impl Voicemail {
         let above = ui::create(WidgetKind::TextList, scroll, Rect::new(0, 0, m.width, m.row_height));
         let below = ui::create(WidgetKind::TextList, scroll, Rect::new(0, 0, m.width, m.row_height));
         let strip = Rect::new(GAP as i16, 0, m.width - 2 * GAP, m.row_height);
-        let looks = [("Play", Look::Primary, SK_PLAY), ("Call back", Look::Call, SK_CALL), ("Delete", Look::Destructive, SK_DELETE)];
+        let looks = [
+            ("Play", Look::Primary, SK_PLAY),
+            ("Call back", Look::Call, SK_CALL),
+            ("Delete", Look::Destructive, SK_DELETE),
+        ];
         for (place, (label, look, id)) in controls::columns(strip, 3).into_iter().zip(looks) {
             self.touch.buttons.push((Button::new(scroll, place, label, look), id));
         }
