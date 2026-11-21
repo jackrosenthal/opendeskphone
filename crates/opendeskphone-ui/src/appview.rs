@@ -73,8 +73,9 @@
 //! widget, walking up from the focused one, that has softkeys set
 //! ([`AppView::set_softkeys`] with `Some(widget)`), falling back to the
 //! window's set (`None`).  A set may have any number of actions: with more
-//! than four, the toolkit shows three and a "More" key that pages.  A press
-//! sends [`AppEvent::Softkey`] with the action's `id`.
+//! than four, the toolkit shows three and a "More" key that pages (on the
+//! touch skin: that opens a menu of the others).  A press sends
+//! [`AppEvent::Softkey`] with the action's `id`.
 //!
 //! **Full screen.**  [`AppView::set_full_screen`] gives the view the whole
 //! main screen: no softkey bar is drawn, [`AppView::metrics`] reports the
@@ -88,22 +89,36 @@
 //! or a `Scroll`; a tap on an `Input` focuses it.  While an `Input` has
 //! the focus, the on-screen keyboard is up in the layout of the input's
 //! mode, over the softkey buttons and the lower part of the view (drawn
-//! farther up, if the input would be under it); its done key is `Select`
-//! (the input is submitted), and the back button, or a tap beside the
-//! input, puts it away for the softkeys.  A widget (or the
+//! farther up, if the input would be under it); its action key gives the
+//! focus to the view's next input ("Next": [`AppEvent::Focused`]), and
+//! from the last input ("Done") it is `Select` (the input is submitted:
+//! an app takes [`AppEvent::InputSubmitted`] from its last input as the
+//! word to do what the form is for); the back button, or a tap beside the
+//! input, puts the keyboard away for the softkeys.  An input has no
+//! "Delete" softkey on the touch skin: the keyboard has a backspace key.
+//! A widget (or the
 //! window) that *takes touches* ([`AppView::set_touch_claim`]) gets
 //! [`AppEvent::Touch`] instead, with places relative to itself: the
 //! finger coming down ([`Touch::Down`], at once), and then the tap, or
 //! the drag and its end, that the touch becomes.  A touch
 //! goes to the topmost widget under the finger that takes touches or is a
 //! `List`, an `Input`, or a `Scroll`; the window is under them all.  The
-//! softkeys are buttons below the content area, and the toolkit draws a
-//! back button over the top-left corner of the view
-//! ([`Metrics::back_width`] wide, the title's height), which is the
-//! `Cancel` key: claimed, it is the app's; unclaimed, it sends
-//! [`AppEvent::CloseRequested`].  Lists have rows of the height a finger
-//! needs, and a list scrolls to its selection only when the host selects
-//! a row ([`AppView::list_select`]).
+//! softkeys are buttons below the content area, side by side with no
+//! place left empty.  The top of the view ([`Metrics::title_height`]
+//! pixels) is the title bar every screen of the phone has: the toolkit
+//! paints its ground in the title's colors, under the app's widgets, and
+//! draws two buttons over its ends, each [`Metrics::back_width`] wide.
+//! The back button, at the left, is the `Cancel` key: claimed, it is the
+//! app's; unclaimed, it sends [`AppEvent::CloseRequested`].  The home
+//! button, at the right, leaves the app for the home screen, as `Line(1)`
+//! does.  The app puts its title between the two, left-aligned in the
+//! title font; a widget of the window's own that is wholly within the
+//! bar is drawn in the title's text color unless it sets one.  (A
+//! full-screen view has no bar, and only the back button, on a round
+//! button of its own over the top-left corner.)  Lists have rows of the
+//! height a finger needs, and a list scrolls to its selection only when
+//! the host selects a row ([`AppView::list_select`]).  The row of a list
+//! under a finger looks pressed until the finger is lifted.
 //!
 //! **Lifecycle.**  [`AppEvent::Foreground`] / [`AppEvent::Background`]
 //! report when the view becomes or stops being the top screen.  Changes to
@@ -188,8 +203,9 @@ pub struct Metrics {
     /// touch alone.
     pub keys: bool,
     /// The width of the back button the toolkit draws over the top-left
-    /// corner of the view on the touch skin (`title_height` high); 0 on
-    /// the skins of phones with keys.
+    /// corner of the view on the touch skin (`title_height` high), and of
+    /// the home button it draws over the top-right corner of a view that
+    /// is not full-screen; 0 on the skins of phones with keys.
     pub back_width: u16,
 }
 
@@ -394,6 +410,9 @@ pub enum InputMode {
     Password,
     /// As `Numeric`, shown as dots.
     Pin,
+    /// A whole number: digits only, and no decimal point (a number of
+    /// seconds, an extension).
+    Digits,
 }
 
 /// One softkey action.

@@ -845,8 +845,6 @@ fn d80_touch() {
     r.shot("t02-osk-shift");
     touch(&mut r, Cap::Symbols.hit());
     r.shot("t03-osk-symbols");
-    touch(&mut r, Cap::More.hit());
-    r.shot("t04-osk-more");
     touch(&mut r, Hit::Key(Key::Cancel));
     r.store.update::<Provisioning, _>(|p| p.phase = ProvisionPhase::Provisioned);
 

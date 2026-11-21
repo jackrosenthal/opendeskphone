@@ -8,6 +8,10 @@ pub const MORE: &str = "More...";
 pub const DELETE: &str = "Delete";
 pub const BACK: &str = "Back";
 pub const CANCEL: &str = "Cancel";
+/// The action key of the on-screen keyboard: the text is done, or there
+/// is another field to go on to.
+pub const DONE: &str = "Done";
+pub const NEXT: &str = "Next";
 pub const OK: &str = "OK";
 pub const SELECT: &str = "Select";
 pub const SAVE: &str = "Save";

@@ -26,8 +26,8 @@
 //! ```
 //!
 //! The widgets every screen shares register themselves on the touch skin:
-//! the softkey buttons, the rows of [`crate::widgets::list`], the back
-//! button of [`crate::widgets::title_bar`], the line tabs, and the
+//! the softkey buttons, the rows of [`crate::widgets::list`], the back and
+//! home buttons of [`crate::widgets::title_bar`], the line tabs, and the
 //! notices and the volume popup.  Only the touch skin's screens need
 //! register anything ([`crate::skin::Theme::touch`]); on the other skins
 //! nothing looks the regions up.
@@ -41,6 +41,16 @@
 //! top screen is told of a finger that came down on a region of its own
 //! ([`crate::screens`]' `Screen::touch_down`), for what cannot wait for
 //! the finger to be lifted (an app's game).
+//!
+//! # A finger on a control
+//!
+//! From when a finger comes down until it is lifted, or begins to drag,
+//! the UI shows the region it came down on as pressed
+//! ([`crate::gfx::Canvas::show_press`]): every button, key, and row, of
+//! every screen, with nothing for the screen to do.  A region that is not
+//! a control is registered with [`crate::gfx::Canvas::hit_quiet`] and shows
+//! nothing; a screen that shows the finger in its own way asks where it
+//! is ([`crate::gfx::Canvas::pressed_in`]).
 
 use opendeskphone_state::{Key, TouchPhase};
 
@@ -62,6 +72,11 @@ pub enum Hit {
     /// Something of the screen's own: goes to the screen's `tap` (and
     /// `long_press`) with this id.
     Custom(u32),
+    /// Goes back to the first screen (the home screen), past every screen
+    /// between, as the Line 1 key does for an app on a phone that has it;
+    /// a call that is up stays on the screen.  The home button of
+    /// [`crate::widgets::title_bar`].
+    Home,
     /// Takes down the notice, or else the volume popup, that is shown, and
     /// does nothing else (the area around a dialog).
     Dismiss,

@@ -392,10 +392,12 @@ impl Screen for Menu {
 
 /// A one-field form.
 ///
-/// Touch: the field at the top, under the title bar (whose back button
-/// cancels), with Cancel and OK buttons below it, and the on-screen
-/// keyboard ([`crate::osk`]) at the bottom of the screen, whose done key
-/// is OK too.  A tap in the field puts the cursor there.
+/// Touch: the on-screen keyboard ([`crate::osk`]) at the bottom of the
+/// screen, and the field right above it.  The keyboard's action key is
+/// the one control that takes the text, labeled with what it does on
+/// this screen ([`EditScreen::action`]; "Done" otherwise); the title
+/// bar's back button is the way out without it.  A tap in the field puts
+/// the cursor there.
 pub(crate) struct EditScreen {
     name: &'static str,
     title: String,
@@ -421,7 +423,7 @@ impl EditScreen {
         initial: &str,
         mode: InputMode,
         done: impl Fn(&Cx, &str) -> Nav + Send + 'static,
-    ) -> Box<dyn Screen> {
+    ) -> Box<EditScreen> {
         Box::new(EditScreen {
             name,
             title: title.into(),
@@ -436,21 +438,24 @@ impl EditScreen {
         })
     }
 
-    /// Touch: the field, its buttons, and the keyboard.
+    /// Touch: what the keyboard's action key says: what taking the text
+    /// does on this screen, in a word ("Next", "Connect").
+    #[allow(dead_code)]
+    pub fn action(mut self: Box<Self>, label: &'static str) -> Box<EditScreen> {
+        self.kb.set_action(label);
+        self
+    }
+
+    /// Touch: the keyboard, and the field right above it.
     fn draw_touch(&mut self, cx: &Cx, c: &mut Canvas, body: IRect) {
         let th = cx.th;
         let (top, keys) = body.split_bottom(crate::osk::Keyboard::height(th));
         let inset = th.pad * 2;
-        self.field = IRect::new(top.x + inset, top.y + inset, top.w - 2 * inset, th.touch_min);
+        self.field = IRect::new(top.x + inset, top.bottom() - inset - th.touch_min, top.w - 2 * inset, th.touch_min);
         let pending = self.tap.pending(cx.now_ms);
         widgets::text_field(c, th, self.field, &self.text, self.cursor as usize, self.mode, true, pending, "", Font::Normal);
-        c.hit(self.field, Hit::Custom(EDIT_FIELD));
-        // OK at the right, Cancel beside it: the softkeys' actions.
-        let y = self.field.bottom() + inset;
-        let ok = IRect::new(self.field.right() - th.soft_w, y, th.soft_w, th.touch_min);
-        let cancel = IRect { x: ok.x - th.soft_pitch, ..ok };
-        widgets::button(c, th, cancel, tr::CANCEL, th.sk_bg, Some(th.sk_edge), th.sk_fg, Hit::Soft(4));
-        widgets::button(c, th, ok, tr::OK, th.sel_bg, None, th.sel_fg, Hit::Soft(1));
+        // (A touch in the field moves the cursor: nothing is pressed.)
+        c.hit_quiet(self.field, Hit::Custom(EDIT_FIELD));
         self.kb.draw(c, th, keys);
     }
 }
@@ -460,7 +465,8 @@ impl Screen for EditScreen {
         self.name.into()
     }
     fn softkeys(&self, cx: &Cx) -> Vec<Soft> {
-        // Touch: the buttons are by the field, and the keyboard deletes.
+        // Touch: the keyboard has the key that takes the text and the one
+        // that deletes, and the title bar the way out.
         if cx.th.touch() {
             return Vec::new();
         }
@@ -828,7 +834,8 @@ impl Level {
         c.fill_round_aa(IRect { w: at - bar.x, ..bar }, bar_h / 2, th.sel_bg);
         let k = IRect::new(at - knob / 2, slider.y + (slider.h - knob) / 2, knob, knob);
         c.fill_round_aa(k, knob / 2, th.accent);
-        c.hit(rest, Hit::Custom(LEVEL_TRACK));
+        // (The slider follows the finger: that is what it shows of it.)
+        c.hit_quiet(rest, Hit::Custom(LEVEL_TRACK));
         // The level, large, above it.
         let text = IRect::new(body.x, row.y - th.pad * 2 - th.px(40), body.w, th.px(40));
         c.text_in(th.font(Font::Large), text, &level.to_string(), th.fg, HAlign::Center);
@@ -946,5 +953,158 @@ pub(crate) fn splash(c: &mut Canvas, th: &Theme, area: IRect, title: &str, text:
         if y + h <= area.bottom() {
             widgets::progress(c, th, IRect::new(area.x + area.w / 6, y, area.w * 2 / 3, h), p);
         }
+    }
+}
+
+#[cfg(all(test, feature = "touch"))]
+mod tests {
+    use super::*;
+    use crate::osk::{Cap, Keyboard};
+    use std::sync::{Arc, Mutex};
+
+    /// Runs `f` with what a screen sees on a D80, and a canvas that says
+    /// there is a screen to go back to.
+    fn with_cx(f: impl FnOnce(&Cx, &mut Canvas, IRect)) {
+        let store = Store::new(Model::D80);
+        let st = store.snapshot();
+        let cfg = UiConfig::default();
+        let th = Theme::for_model(Model::D80);
+        let cx = Cx { store: &store, st: &st, th, model: Model::D80, cfg: &cfg, now_ms: 0, unix: 0, off_hook: false, idle_view: None };
+        let mut c = Canvas::new(th.width as u16, th.height as u16, false);
+        c.set_nav(crate::gfx::NavCx { back: true });
+        let area = c.bounds();
+        f(&cx, &mut c, area);
+    }
+
+    fn redraw(s: &mut dyn Screen, cx: &Cx, c: &mut Canvas, area: IRect) {
+        c.clear_hits();
+        s.draw(cx, c, area);
+    }
+
+    #[test]
+    fn text_entry_has_one_control_that_takes_the_text() {
+        with_cx(|cx, c, area| {
+            let th = cx.th;
+            let got = Arc::new(Mutex::new(None));
+            let sink = got.clone();
+            let mut s = EditScreen::boxed("edit", "Server address", "ab", InputMode::Text, move |_, text| {
+                *sink.lock().unwrap() = Some(text.to_string());
+                Nav::Pop
+            })
+            .action("Connect");
+            // No softkeys, and no buttons of its own: the keyboard's
+            // action key is the one control, and says what it does.
+            assert!(s.softkeys(cx).is_empty());
+            redraw(&mut *s, cx, c, area);
+            assert!(c.hits().iter().all(|(_, h)| !matches!(h, Hit::Soft(_))));
+            assert_eq!(s.kb.action(), "Connect");
+            // The field is right above the keyboard: no farther from it
+            // than from the sides of the screen.
+            let keys_y = area.bottom() - Keyboard::height(th);
+            let field = c.hit_rect(Hit::Custom(EDIT_FIELD)).unwrap();
+            assert!(field.bottom() <= keys_y && keys_y - field.bottom() <= field.x, "{field:?}");
+            assert!(field.h >= th.touch_min);
+            // The title bar's back button is the way out without the text.
+            assert_eq!(c.hit_rect(Hit::Key(Key::Cancel)), Some(IRect::new(0, 0, th.back_w, th.title_h)));
+            assert!(matches!(s.key(cx, Key::Cancel), Nav::Pop));
+            assert_eq!(*got.lock().unwrap(), None);
+            // Typed, and taken by the action key.
+            assert!(matches!(s.tap(cx, Cap::Char('c').hit(), 0, 0), Nav::Stay));
+            assert!(matches!(s.tap(cx, Cap::Done.hit(), 0, 0), Nav::Pop));
+            assert_eq!(got.lock().unwrap().as_deref(), Some("abc"));
+        });
+    }
+
+    #[test]
+    fn a_whole_number_has_a_pad_without_a_point_and_is_shown() {
+        with_cx(|cx, c, area| {
+            let mut s = EditScreen::boxed("edit", "Timeout", "60", InputMode::Digits, |_, _| Nav::Pop);
+            redraw(&mut *s, cx, c, area);
+            assert!(c.hit_rect(Cap::Char('5').hit()).is_some());
+            assert!(c.hit_rect(Cap::Char('.').hit()).is_none());
+            // The keys of a phone that has them: digits, and nothing for
+            // the star (a decimal point in a `Numeric` field).
+            assert!(matches!(s.key(cx, Key::Star), Nav::Stay));
+            assert!(matches!(s.key(cx, Key::Digit(5)), Nav::Stay));
+            assert_eq!(s.text, "605");
+        });
+        // It is shown as it is, where a PIN is dots.
+        let th = Theme::for_model(Model::D80);
+        let field = IRect::new(0, 0, 400, 96);
+        let draw = |mode: InputMode| {
+            let mut c = Canvas::new(400, 96, false);
+            widgets::text_field(&mut c, th, field, "60", 2, mode, true, false, "", Font::Normal);
+            c.pixels().to_vec()
+        };
+        assert!(draw(InputMode::Digits) == draw(InputMode::Numeric));
+        assert!(draw(InputMode::Digits) != draw(InputMode::Pin));
+    }
+
+    #[test]
+    fn a_question_says_what_it_does_and_red_is_for_what_destroys() {
+        with_cx(|cx, c, area| {
+            let th = cx.th;
+            let mut plain = Confirm::boxed("Restart the phone?", |_| Nav::Home);
+            redraw(&mut *plain, cx, c, area);
+            let action = c.hit_rect(Hit::Soft(1)).unwrap();
+            assert_eq!(c.pixel(action.x + 12, action.y + 12), th.sel_bg);
+            let without_title = c.pixels().to_vec();
+            let mut s = Confirm::boxed("This erases every setting, and the phone starts again.", |_| Nav::Home)
+                .title("Factory reset")
+                .action("Erase and restart")
+                .destructive();
+            redraw(&mut *s, cx, c, area);
+            let (action, cancel) = (c.hit_rect(Hit::Soft(1)).unwrap(), c.hit_rect(Hit::Soft(4)).unwrap());
+            // The action is red, at the right; Cancel is not.
+            assert_eq!(c.pixel(action.x + 12, action.y + 12), th.sk_stop);
+            assert_eq!(c.pixel(cancel.x + 12, cancel.y + 12), th.sk_bg);
+            assert!(cancel.right() < action.x);
+            assert!(c.pixels() != &without_title[..]);
+            // The buttons do what the softkeys do on the other phones.
+            assert!(matches!(s.softkey(cx, 4), Nav::Pop));
+            assert!(matches!(s.softkey(cx, 1), Nav::Home));
+        });
+    }
+
+    #[test]
+    fn a_menu_item_can_be_a_switch_and_can_be_red() {
+        with_cx(|cx, c, area| {
+            let th = cx.th;
+            let on = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let state = on.clone();
+            let mut m = Menu::new("m", "Settings", move |_| {
+                let flip = state.clone();
+                vec![
+                    Item::new("Dim when idle", move |_| {
+                        flip.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                        Nav::Stay
+                    })
+                    .switch(state.load(std::sync::atomic::Ordering::Relaxed)),
+                    Item::new("Plain", |_| Nav::Stay),
+                    Item::new("Factory reset", |_| Nav::Stay).destructive(),
+                ]
+            });
+            redraw(&mut m, cx, c, area);
+            let row = |i: u32| Hit::Row { list: 0, row: i };
+            let r0 = c.hit_rect(row(0)).unwrap();
+            // The switch is at the right of its row; off, its knob is at
+            // the left.
+            let (w, h) = widgets::switch_size(th);
+            let track = IRect::new(r0.right() - 2 * th.pad - w, r0.y + (r0.h - h) / 2, w, h);
+            assert_eq!(c.pixel(track.x + h / 2, track.y + h / 2), th.secondary);
+            // A touch on the row does what the item does; the switch
+            // shows the state.
+            assert!(matches!(m.tap(cx, row(0), 0, 0), Nav::Stay));
+            redraw(&mut m, cx, c, area);
+            assert_eq!(c.pixel(track.x + h / 2, track.y + h / 2), th.fg);
+            assert_eq!(c.pixel(track.right() - h / 2, track.y + h / 2), th.bg);
+            // A plain row has nothing there, and the row that destroys
+            // has its label in the error color.
+            let r1 = c.hit_rect(row(1)).unwrap();
+            assert_eq!(c.pixel(track.x + h / 2, r1.y + r1.h / 2), th.bg);
+            let r2 = c.hit_rect(row(2)).unwrap();
+            let has = |r: IRect, color| (r.y..r.bottom()).any(|y| (r.x..r.x + 300).any(|x| c.pixel(x, y) == color));
+            assert!(has(r2, th.error) && !has(r1, th.error));
+        });
     }
 }

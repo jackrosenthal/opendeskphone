@@ -410,6 +410,11 @@ struct Stack {
     cover_until: Option<u64>,
 }
 
+/// Touch: how often the keyboard's backspace key deletes while a finger
+/// stays on it, in milliseconds, after the long press that begins it
+/// ([`crate::touch::LONG_PRESS_MS`]).
+const REPEAT_MS: u64 = 80;
+
 /// The four softkey positions of a native screen: action id (0: none) and
 /// label.  More than four actions page three at a time behind "More".
 fn soft_slots(keys: &[Soft], page: u8) -> [(u32, String); 4] {
@@ -813,6 +818,13 @@ pub struct Ui {
     /// The finger went down on a dark screen: it lights the screen, and
     /// does nothing else until it is lifted.
     touch_wakes: bool,
+    /// Where the finger is down, while what it came down on is shown as
+    /// pressed: from when it comes down until it is lifted or begins to
+    /// drag.
+    press: Option<(i32, i32)>,
+    /// The finger is held on the keyboard's backspace key, which repeats:
+    /// when it next deletes (monotonic milliseconds).
+    repeat: Option<u64>,
     popup: Option<Popup>,
     notice_deadlines: Vec<(u64, u64)>,
     blinker: Blinker,
@@ -923,6 +935,8 @@ impl Ui {
             finger: Recognizer::new(),
             touched: None,
             touch_wakes: false,
+            press: None,
+            repeat: None,
             popup: None,
             notice_deadlines: Vec::new(),
             blinker: Blinker::new(),
@@ -1220,6 +1234,19 @@ impl Ui {
             self.touch_wakes = dark;
             self.touched = self.main.hit_at(x, y);
         }
+        // What the finger is on looks pressed until the finger is lifted
+        // (or drags: `gesture`).
+        let press = (phase != TouchPhase::Up && phase != TouchPhase::Cancel)
+            .then_some(if phase == TouchPhase::Down { Some((x, y)) } else { self.press })
+            .flatten()
+            .filter(|_| !self.touch_wakes && self.nav.kind != BaseKind::Update);
+        if press != self.press {
+            self.press = press;
+            self.needs_draw = true;
+        }
+        if press.is_none() {
+            self.repeat = None;
+        }
         let gesture = self.finger.touch(phase, x, y, self.now().0);
         // The top screen hears of a finger that came down on a region of
         // its own, before the gesture the touch becomes.
@@ -1241,9 +1268,21 @@ impl Ui {
             return;
         }
         let hit = self.touched;
+        if matches!(gesture, Gesture::Drag { .. }) && self.press.take().is_some() {
+            // A finger that drags presses nothing.
+            self.repeat = None;
+            self.needs_draw = true;
+        }
         match gesture {
             Gesture::Tap { x, y } => self.tapped(hit, x, y, false, source),
-            Gesture::LongPress { x, y } => self.tapped(hit, x, y, true, source),
+            Gesture::LongPress { x, y } => {
+                self.tapped(hit, x, y, true, source);
+                // The keyboard's backspace key goes on deleting while the
+                // finger stays on it.
+                if hit == Some(crate::osk::Cap::Backspace.hit()) && self.press.is_some() {
+                    self.repeat = Some(self.now().0 + REPEAT_MS);
+                }
+            }
             // A drag is the top screen's, unless the finger came down on
             // something that is not the screen's (a softkey, a dialog).
             Gesture::Drag { x, y, dx, dy } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
@@ -1284,6 +1323,7 @@ impl Ui {
                 self.key(key, true, source);
                 self.key(key, false, source);
             }
+            Some(Hit::Home) => self.with_cx(|nav, cx| nav.apply(cx, Nav::Home)),
             Some(Hit::Soft(id)) => self.with_cx(|nav, cx| {
                 let r = nav.top().softkey(cx, id);
                 nav.apply(cx, r);
@@ -1485,6 +1525,12 @@ impl Ui {
         };
         let c = &mut self.main;
         let bounds = c.bounds();
+        // What the screen is told as it draws: whether there is a screen
+        // to go back to, and where a finger is down.
+        c.set_nav(crate::gfx::NavCx { back: !self.nav.stack.is_empty() });
+        c.set_press(self.press);
+        let pressed = self.touched.filter(|_| self.press.is_some());
+        let mut press_to_white = None;
         let top = self.nav.stack.last_mut().unwrap_or(&mut self.nav.base);
         // The configured wallpaper and palette, unless the screen is shown
         // with a wallpaper of its own (the boot screen, and the theme
@@ -1649,6 +1695,11 @@ impl Ui {
                 }
                 c.text_in(th.font(crate::appview::Font::Bold), text, &n.title, th.fg, HAlign::Left);
                 c.text_wrapped(f, rest, &n.text, th.fg, HAlign::Left, th.line_h);
+            }
+            // What the finger is on is shown as pressed (the same way in
+            // every drawing of the picture).
+            if let Some(hit) = pressed {
+                press_to_white = c.show_press(hit, press_to_white);
             }
             match pass {
                 Pass::OverBlack => self.over.over_black(c),
@@ -1873,6 +1924,15 @@ impl Ui {
         if let Some(g) = self.finger.tick(now_ms) {
             self.gesture(g, InputSource::Physical);
         }
+        // And one that stays on the keyboard's backspace key: again.
+        if self.repeat.is_some_and(|t| now_ms >= t) {
+            self.repeat = Some(now_ms + REPEAT_MS);
+            if self.finger.touching() && self.main.hit_at(self.press.map_or(-1, |p| p.0), self.press.map_or(-1, |p| p.1)) == self.touched {
+                self.tapped(self.touched, 0, 0, false, InputSource::Physical);
+            } else {
+                self.repeat = None;
+            }
+        }
         self.check_light();
     }
 
@@ -1896,6 +1956,7 @@ impl Ui {
         }
         if self.fixed_time.is_none() {
             add(self.finger.deadline());
+            add(self.repeat);
             add(self.screen_deadline);
             if self.nav.kind == BaseKind::Finishing {
                 add(self.nav.cover_until);

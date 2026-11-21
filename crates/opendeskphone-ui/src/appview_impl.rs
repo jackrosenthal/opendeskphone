@@ -33,7 +33,13 @@ fn focused_input(tree: &Tree) -> Option<WidgetId> {
 }
 
 /// The four softkey positions for the current focus and page.
+///
+/// Touch: there are no pages.  The first three of more than four actions
+/// are shown with "More", which opens a menu of the others
+/// ([`softkey_overflow`]); and an input has no "Delete" (its keyboard has
+/// a backspace key).
 pub(crate) fn softkey_slots(tree: &Tree) -> [Slot; 4] {
+    let touch = crate::skin::is_touch(tree.model);
     let set = softkey_set(tree);
     let mut slots = [Slot::Empty, Slot::Empty, Slot::Empty, Slot::Empty];
     if set.len() <= 4 {
@@ -42,17 +48,64 @@ pub(crate) fn softkey_slots(tree: &Tree) -> [Slot; 4] {
         }
     } else {
         let pages = set.len().div_ceil(3);
-        let page = tree.softkey_page as usize % pages;
+        let page = if touch { 0 } else { tree.softkey_page as usize % pages };
         for (i, k) in set.iter().skip(page * 3).take(3).enumerate() {
             slots[i] = Slot::Action(k.id, k.label.clone());
         }
         slots[3] = Slot::More;
     }
     // Stock: an Input uses softkey 3 to delete.
-    if focused_input(tree).is_some() && slots[2] == Slot::Empty {
+    if !touch && focused_input(tree).is_some() && slots[2] == Slot::Empty {
         slots[2] = Slot::Delete;
     }
     slots
+}
+
+/// Touch: the actions "More" stands for, in a view with more than four:
+/// all but the first three (id and label).  Empty when the softkeys have
+/// room for every action.
+pub(crate) fn softkey_overflow(tree: &Tree) -> Vec<(u32, String)> {
+    let set = softkey_set(tree);
+    if !crate::skin::is_touch(tree.model) || set.len() <= 4 {
+        return Vec::new();
+    }
+    set.iter().skip(3).map(|k| (k.id, k.label.clone())).collect()
+}
+
+/// The input after the focused one, among the inputs in the order of the
+/// focus: where the keyboard's action key goes on to.
+pub(crate) fn next_input(tree: &Tree) -> Option<WidgetId> {
+    let id = focused_input(tree)?;
+    let inputs: Vec<WidgetId> =
+        focusable(tree).into_iter().filter(|w| tree.node(*w).is_some_and(|n| n.kind == WidgetKind::Input)).collect();
+    let pos = inputs.iter().position(|w| *w == id)?;
+    inputs.get(pos + 1).copied()
+}
+
+/// Gives the focus to the input after the focused one ([`next_input`]).
+/// Returns whether there was one.
+pub(crate) fn focus_next_input(view: &AppView) -> bool {
+    with_tree(view, |tree, events| {
+        let Some(next) = next_input(tree) else { return false };
+        tree.multitap.reset();
+        tree.focus(Some(next));
+        events.push(AppEvent::Focused { widget: next });
+        true
+    })
+}
+
+/// Touch: what looks pressed under a finger at (`x`, `y`) of the view:
+/// the row of a list that a tap there would activate, where it is in the
+/// view.  (A widget that takes touches is told of the finger, and shows
+/// it as it likes.)
+pub(crate) fn press_rect(tree: &Tree, x: i32, y: i32) -> Option<IRect> {
+    let Some(Target::Row { list, row }) = locate(tree, x, y) else { return None };
+    let n = tree.node(list)?;
+    let r = widget_rect(tree, list)?;
+    let row_h = n.row_height.max(1) as i32;
+    let bar = n.rows.len() as i32 * row_h > r.h;
+    let w = r.w - if bar { tree.metrics.scroll_bar_width as i32 } else { 0 };
+    Some(IRect::new(r.x, r.y + (row as i32 - n.top_row as i32) * row_h, w, row_h).intersect(&r))
 }
 
 pub(crate) fn softkey_labels(tree: &Tree) -> [String; 4] {
@@ -309,6 +362,25 @@ pub(crate) fn render(tree: &mut Tree, c: &mut Canvas, th: &Theme, area: IRect, n
     render_over(tree, c, th, area, now_ms, th.fg);
 }
 
+/// Touch: [`render`] for a view that is not full-screen, whose top is the
+/// title bar every screen has: the first `title_h` pixels of the view are
+/// on the title bar's ground, under the app's widgets, and a widget of
+/// the window's own that is wholly within them (the app's title) has the
+/// title's color where it sets none.  The bar's buttons are the caller's
+/// ([`crate::widgets::title_buttons`]).
+pub(crate) fn render_titled(tree: &mut Tree, c: &mut Canvas, th: &Theme, area: IRect, now_ms: u64) {
+    let bg = th.resolve(tree.background, Some(th.bg)).unwrap_or(th.bg);
+    c.fill(area, bg);
+    c.fill(IRect { h: th.title_h, ..area }, th.title_bg);
+    let old = c.push_clip(area);
+    for id in tree.roots.clone() {
+        let in_bar = tree.node(id).is_some_and(|n| n.rect.y >= 0 && n.rect.y as i32 + n.rect.h as i32 <= th.title_h);
+        draw_node(tree, c, th, id, area.x, area.y, now_ms, if in_bar { th.title_fg } else { th.fg });
+    }
+    tree.follow_focus = false;
+    c.restore_clip(old);
+}
+
 /// Paints the tree's widgets into `area` over whatever is there (the idle
 /// view over the wallpaper).  `ink` is the text color of a widget that
 /// sets none.
@@ -402,7 +474,7 @@ fn mode_takes(mode: InputMode, ch: char) -> bool {
     match mode {
         InputMode::Text | InputMode::Password => !ch.is_control(),
         InputMode::Numeric => ch.is_ascii_digit() || ch == '.',
-        InputMode::Pin => ch.is_ascii_digit(),
+        InputMode::Pin | InputMode::Digits => ch.is_ascii_digit(),
         InputMode::Dial => ch.is_ascii_digit() || ch == '*' || ch == '#',
     }
 }

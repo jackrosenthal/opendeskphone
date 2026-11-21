@@ -161,32 +161,55 @@ pub fn list_as(
     visible
 }
 
-/// A title bar across `r`.  On the touch skin it begins with the back
-/// button ([`back_button`]), which does what the X key does on a phone
-/// that has it.
+/// A title bar across `r`: the title, left-aligned.
+///
+/// On the touch skin the bar is the same on every screen
+/// ([`title_buttons`]): the back button at its left, the title after it,
+/// and the home button at its right.
 pub fn title_bar(c: &mut Canvas, th: &Theme, r: IRect, title: &str) {
     c.fill(r, th.title_bg);
-    let r = if th.touch() {
-        let (back, rest) = r.split_left(th.back_w);
-        back_button(c, th, back, th.title_fg);
-        // The title begins where the other skins' does, after the button.
-        IRect { x: rest.x - th.title_pad, w: rest.w + th.title_pad, ..rest }
-    } else {
-        r
-    };
+    let r = if th.touch() { title_buttons(c, th, r, th.title_fg) } else { r };
     let f = th.font(Font::Title);
     // Stock: left-aligned on every skin (x 15 on color, 3 on gray).
     c.text_in(f, IRect { x: r.x + th.title_pad, w: r.w - 2 * th.title_pad, ..r }, title, th.title_fg, HAlign::Left);
+}
+
+/// The touch skin's buttons of a title bar across `r`, in the color `fg`,
+/// for a screen that draws its own title: the back button
+/// ([`back_button`]) at the left and the home button ([`home_button`]) at
+/// the right, each [`Theme::back_w`] wide.  The first screen (the home
+/// screen, or what is in its place) has neither: there is nowhere to go.
+/// Returns where the title goes, inset by [`Theme::title_pad`] as
+/// [`title_bar`] insets it: a title begins right after the back button.
+pub fn title_buttons(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) -> IRect {
+    if !c.nav().back {
+        return r;
+    }
+    let (back, rest) = r.split_left(th.back_w);
+    let (rest, home) = rest.split_right(th.back_w);
+    back_button(c, th, back, fg);
+    home_button(c, th, home, fg);
+    IRect { x: rest.x - th.title_pad, w: rest.w + 2 * th.title_pad, ..rest }
 }
 
 /// The touch skin's back button, in `r`: an arrow, and a region that is
 /// [`Key::Cancel`] (which leaves a screen, as the X key does).  For a
 /// screen that draws its own title.
 pub fn back_button(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) {
-    if let Some(icon) = th.icon("left") {
+    if let Some(icon) = th.icon("back").or_else(|| th.icon("left")) {
         c.icon_in(icon, r, fg);
     }
     c.hit(r, Hit::Key(Key::Cancel));
+}
+
+/// The touch skin's home button, in `r`: a house, and a region that is
+/// [`Hit::Home`] (back to the home screen, past every screen between; a
+/// call that is up stays on the screen).
+pub fn home_button(c: &mut Canvas, th: &Theme, r: IRect, fg: Rgb) {
+    if let Some(icon) = th.icon("home") {
+        c.icon_in(icon, r, fg);
+    }
+    c.hit(r, Hit::Home);
 }
 
 /// A button of the touch skin in `r`: a rounded shape in `fill` (with an
@@ -479,7 +502,7 @@ pub fn edit_key(
             let action = match mode {
                 InputMode::Text | InputMode::Password => tap.tap(key, now_ms),
                 InputMode::Dial => key.dial_char().map(Tap::Insert),
-                InputMode::Numeric | InputMode::Pin => match key {
+                InputMode::Numeric | InputMode::Pin | InputMode::Digits => match key {
                     Key::Digit(d) => Some(Tap::Insert((b'0' + d) as char)),
                     Key::Star if mode == InputMode::Numeric => Some(Tap::Insert('.')),
                     _ => None,

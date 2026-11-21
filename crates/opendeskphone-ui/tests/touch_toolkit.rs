@@ -230,3 +230,177 @@ fn the_button_styles_and_the_switch() {
     std::fs::create_dir_all(&dir).unwrap();
     save_png(&c, &dir.join("buttons-and-switch.png"));
 }
+
+/// Whether any pixel of `r` differs between the two pictures.
+fn differ(a: &[u32], b: &[u32], r: IRect) -> bool {
+    (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| a[(y * 800 + x) as usize] != b[(y * 800 + x) as usize]))
+}
+
+#[test]
+fn what_a_finger_is_on_looks_pressed_until_it_is_lifted() {
+    let mut r = Rig::new(Model::D80);
+    r.show("menu");
+    let rest = r.ui.canvas().pixels().to_vec();
+    let (row1, row2) = (r.region(Hit::Row { list: 0, row: 1 }), r.region(Hit::Row { list: 0, row: 2 }));
+    // A finger down on a row: the row looks pressed, and nothing else
+    // does.  Nothing has been done yet.
+    r.sim.touch(TouchPhase::Down, 400, (row1.y + 40) as u16);
+    r.ui.pump();
+    let down = r.ui.canvas().pixels().to_vec();
+    assert_eq!(r.screen(), "menu");
+    assert!(differ(&rest, &down, row1));
+    assert_ne!(down[(row1.y * 800 + 790) as usize], rest[(row1.y * 800 + 790) as usize], "the whole row");
+    assert!(!differ(&rest, &down, row2));
+    assert!(!differ(&rest, &down, IRect::new(0, 0, 800, row1.y)));
+    // It stays so while the finger stays (and moves no farther than a
+    // tap may).
+    r.sim.touch(TouchPhase::Move, 404, (row1.y + 44) as u16);
+    r.ui.pump();
+    assert!(r.ui.canvas().pixels() == &down[..]);
+    // A touch that is canceled: as before, and nothing done.
+    r.sim.touch(TouchPhase::Cancel, 404, (row1.y + 44) as u16);
+    r.ui.pump();
+    assert!(r.ui.canvas().pixels() == &rest[..]);
+    assert_eq!(r.screen(), "menu");
+    // A finger that drags presses nothing.
+    r.sim.touch(TouchPhase::Down, 400, (row1.y + 40) as u16);
+    r.ui.pump();
+    assert!(differ(&rest, r.ui.canvas().pixels(), row1));
+    r.sim.touch(TouchPhase::Move, 400, (row1.y + 90) as u16);
+    r.ui.pump();
+    assert!(!differ(&rest, r.ui.canvas().pixels(), row1));
+    r.sim.touch(TouchPhase::Up, 400, (row1.y + 90) as u16);
+    r.ui.pump();
+    assert_eq!(r.screen(), "menu");
+    // The buttons of the title bar are pressed like anything else.
+    let back = r.region(Hit::Key(Key::Cancel));
+    r.sim.touch(TouchPhase::Down, (back.x + 48) as u16, (back.y + 48) as u16);
+    r.ui.pump();
+    assert!(differ(&rest, r.ui.canvas().pixels(), back));
+    // Lifted, the finger has tapped: the back button goes back.
+    r.sim.touch(TouchPhase::Up, (back.x + 48) as u16, (back.y + 48) as u16);
+    r.ui.pump();
+    assert_eq!(r.screen(), "idle");
+    // A finger where there is nothing to touch shows nothing.
+    r.show("menu");
+    assert_eq!(r.ui.canvas().hit_at(400, 1250), None);
+    r.sim.touch(TouchPhase::Down, 400, 1250);
+    r.ui.pump();
+    assert!(r.ui.canvas().pixels() == &rest[..]);
+    r.sim.touch(TouchPhase::Up, 400, 1250);
+    r.ui.pump();
+}
+
+#[test]
+fn a_pressed_button_has_its_own_shape() {
+    let mut r = Rig::new(Model::D80);
+    // The volume popup's buttons (the volume keys of a phone that has
+    // them open it).
+    let _ = r.store.send(Command::InjectKey { key: Key::VolumeUp, down: true });
+    r.ui.pump();
+    let plus = r.region(Hit::Key(Key::VolumeUp));
+    let rest = r.ui.canvas().pixels().to_vec();
+    r.sim.touch(TouchPhase::Down, (plus.x + 10) as u16, (plus.y + 40) as u16);
+    r.ui.pump();
+    r.save("pressed-button");
+    let c = r.ui.canvas();
+    let at = |x: i32, y: i32| (y * 800 + x) as usize;
+    // The button's fill is lighter (the theme is a dark one), all of it;
+    // the corner of its rectangle, outside its round shape, is as it was.
+    let lum = |p: u32| ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255);
+    for (x, y) in [(plus.x + 10, plus.y + 40), (plus.right() - 6, plus.bottom() - 20), (plus.x + plus.w / 2, plus.y + 4)] {
+        assert!(lum(c.pixels()[at(x, y)]) > lum(rest[at(x, y)]), "({x}, {y})");
+    }
+    assert_eq!(c.pixels()[at(plus.x, plus.y)], rest[at(plus.x, plus.y)]);
+    assert_eq!(c.pixels()[at(plus.right() - 1, plus.bottom() - 1)], rest[at(plus.right() - 1, plus.bottom() - 1)]);
+    // The other button is as it was.
+    let minus = r.region(Hit::Key(Key::VolumeDown));
+    assert!(!differ(&rest, c.pixels(), minus));
+    r.sim.touch(TouchPhase::Cancel, 0, 0);
+    r.ui.pump();
+    assert!(r.ui.canvas().pixels() == &rest[..]);
+}
+
+#[test]
+fn the_pressed_look_is_for_controls() {
+    let th = th();
+    let button = IRect::new(100, 100, 300, 96);
+    let draw = |c: &mut Canvas| {
+        c.clear_hits();
+        c.clear(th.bg);
+        // A surface under everything, a control, a region that shows
+        // nothing, and a region that does nothing.
+        c.hit(IRect::new(0, 0, 800, 1280), Hit::Custom(1));
+        widgets::button_styled(c, th, button, "Go", ButtonStyle::On, Hit::Custom(2));
+        c.hit_quiet(IRect::new(100, 300, 300, 96), Hit::Custom(3));
+        c.hit(IRect::new(100, 500, 300, 96), Hit::Nothing);
+    };
+    let mut c = Canvas::new(800, 1280, false);
+    draw(&mut c);
+    let rest = c.pixels().to_vec();
+    // A light control is mixed toward black, a dark one toward white; the
+    // way taken is returned, and can be given.
+    c.set_press(Some((150, 150)));
+    assert!(c.pressed_in(button) && !c.pressed_in(IRect::new(0, 0, 100, 100)));
+    assert_eq!(c.show_press(Hit::Custom(2), None), Some(false));
+    assert!(differ(&rest, c.pixels(), button));
+    assert!(!differ(&rest, c.pixels(), IRect::new(0, 200, 800, 1080)));
+    draw(&mut c);
+    assert_eq!(c.show_press(Hit::Custom(2), Some(true)), Some(true));
+    // Not when the picture has something else there now.
+    draw(&mut c);
+    assert_eq!(c.show_press(Hit::Custom(7), None), None);
+    // Not a surface, a region that shows nothing, or one that does
+    // nothing; and nothing without a finger.
+    for (at, hit) in [((600, 900), Hit::Custom(1)), ((150, 350), Hit::Custom(3)), ((150, 550), Hit::Nothing)] {
+        c.set_press(Some(at));
+        assert_eq!(c.show_press(hit, None), None, "{hit:?}");
+    }
+    c.set_press(None);
+    assert_eq!(c.show_press(Hit::Custom(2), None), None);
+    assert!(c.pixels() == &rest[..]);
+}
+
+#[test]
+fn every_title_bar_has_back_at_the_left_and_home_at_the_right() {
+    let mut r = Rig::new(Model::D80);
+    let th = th();
+    for screen in ["menu", "about", "call_log"] {
+        r.show(screen);
+        let (back, home) = (r.region(Hit::Key(Key::Cancel)), r.region(Hit::Home));
+        assert_eq!(back, IRect::new(0, 0, th.back_w, th.title_h), "{screen}");
+        assert_eq!(home, IRect::new(th.width - th.back_w, 0, th.back_w, th.title_h), "{screen}");
+        assert!(back.w >= th.touch_min && back.h >= th.touch_min);
+        // Both are on the title bar's ground.
+        assert_eq!(r.ui.canvas().pixel(2, 2), th.title_bg, "{screen}");
+        assert_eq!(r.ui.canvas().pixel(th.width - 3, 2), th.title_bg, "{screen}");
+    }
+    r.save("title-bar");
+    // Home, from however deep: the home screen, in one touch.
+    r.show("menu");
+    r.tap(Hit::Row { list: 0, row: 1 });
+    assert_ne!(r.screen(), "menu");
+    assert_ne!(r.screen(), "idle");
+    r.tap(Hit::Home);
+    assert_eq!(r.screen(), "idle");
+    // The home screen has no title bar's buttons: there is nowhere to go.
+    assert!(!r.has(Hit::Home));
+    // A call that is up stays on the screen: home is the call.
+    let id = r.store.next_call_id();
+    r.store.update::<Calls, _>(|c| {
+        let mut call = Call::new(id, AccountId(0), Direction::Incoming, Party { number: "200".into(), ..Default::default() });
+        call.state = CallState::Active;
+        c.calls.push(call);
+        c.focused = Some(id);
+    });
+    r.ui.pump();
+    assert_eq!(r.screen(), "call");
+    r.show("menu");
+    assert_eq!(r.screen(), "menu");
+    r.tap(Hit::Home);
+    assert_eq!(r.screen(), "call");
+    // The phones with keys have no such buttons.
+    let mut k = Rig::new(Model::D65);
+    k.show("menu");
+    assert!(k.ui.canvas().hits().is_empty());
+}

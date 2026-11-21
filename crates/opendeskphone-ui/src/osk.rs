@@ -12,19 +12,29 @@
 //!
 //! The layout follows the [`InputMode`] of the text:
 //!
-//! - `Text` and `Password`: the letters in QWERTY rows.  Shift makes the
-//!   next letter a capital; a second touch keeps the capitals on, and a
-//!   third turns them off.  `?123` turns to a page of digits and symbols,
-//!   and `=\<` from there to a second one; between them they have every
-//!   printable ASCII character.  `ABC` turns back to the letters.
+//! - `Text` and `Password`: a row of digits over the letters in QWERTY
+//!   rows.  Shift makes the next letter a capital; a second touch keeps
+//!   the capitals on, and a third turns them off.  `?123` turns to a page
+//!   with the digits and every symbol; between them the two pages have
+//!   every printable ASCII character.  `ABC` turns back to the letters.
 //! - `Numeric`: a number pad with a decimal point.
-//! - `Pin`: a number pad with digits only.
+//! - `Digits` and `Pin`: a number pad with digits only.
 //! - `Dial`: a number pad with `*` and `#`.
 //!
-//! Every layout has a backspace key and a done key (a check mark).  Each
-//! key is at least [`Theme::touch_min`] tall in a rectangle of the height
+//! Every layout has a backspace key and an action key.  Each key is at
+//! least [`Theme::touch_min`] tall in a rectangle of the height
 //! [`Keyboard::height`] gives; the letters are as wide as ten in a row
 //! allow, about 70 pixels on the D80.
+//!
+//! The action key is the one control that says the text is done
+//! ([`Press::Done`]); a screen with the keyboard has no button of its own
+//! for that, and its back button is the way out without the text.  The
+//! key is labeled with what it does, "Done" unless the screen says
+//! otherwise ([`Keyboard::set_action`]: "Next", "Connect").
+//!
+//! While a finger is on a key that types a character, the character is
+//! shown above the finger; and the backspace key goes on deleting while a
+//! finger stays on it (the UI taps it again and again).
 //!
 //! # Embedding
 //!
@@ -35,7 +45,8 @@
 //!     fn draw(&mut self, cx: &Cx, c: &mut Canvas, area: IRect) {
 //!         let th = cx.th;
 //!         let (top, keys) = area.split_bottom(osk::Keyboard::height(th));
-//!         let field = IRect::new(top.x + th.pad, top.y + th.pad, top.w - 2 * th.pad, th.touch_min);
+//!         // The field is right above the keyboard.
+//!         let field = IRect::new(top.x + th.pad, top.bottom() - th.pad - th.touch_min, top.w - 2 * th.pad, th.touch_min);
 //!         let mode = self.kb.mode();
 //!         widgets::text_field(c, th, field, &self.text, self.cursor as usize, mode, true, false, "", Font::Normal);
 //!         self.kb.draw(c, th, keys);
@@ -82,7 +93,7 @@ pub enum Press {
     Char(char),
     /// The character before the cursor is to go.
     Backspace,
-    /// The text is done (the check mark).
+    /// The text is done (the action key).
     Done,
     /// The keyboard changed itself (shift, or another page of symbols),
     /// and nothing was typed: it is to be drawn again.
@@ -93,10 +104,8 @@ pub enum Press {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
     Letters,
-    /// Digits and the commonest symbols (`?123`).
+    /// The digits and the symbols (`?123`).
     Symbols,
-    /// The other symbols (`=\<`).
-    More,
 }
 
 /// The shift key's state.
@@ -121,10 +130,8 @@ pub enum Cap {
     Done,
     /// Turns to the letters (`ABC`).
     Letters,
-    /// Turns to the digits and the commonest symbols (`?123`).
+    /// Turns to the digits and the symbols (`?123`).
     Symbols,
-    /// Turns to the other symbols (`=\<`).
-    More,
 }
 
 impl Cap {
@@ -142,7 +149,6 @@ impl Cap {
                 Cap::Done => SPECIAL + 2,
                 Cap::Letters => SPECIAL + 3,
                 Cap::Symbols => SPECIAL + 4,
-                Cap::More => SPECIAL + 5,
             }
     }
 
@@ -157,7 +163,6 @@ impl Cap {
             n if n == SPECIAL + 2 => Some(Cap::Done),
             n if n == SPECIAL + 3 => Some(Cap::Letters),
             n if n == SPECIAL + 4 => Some(Cap::Symbols),
-            n if n == SPECIAL + 5 => Some(Cap::More),
             _ => None,
         }
     }
@@ -177,29 +182,30 @@ const fn ch(c: char) -> (Cap, i32) {
 
 const SPACE: (Cap, i32) = (Cap::Char(' '), 24);
 
-const LETTERS: [Row; 4] = [
+const DIGITS: Row = &[ch('1'), ch('2'), ch('3'), ch('4'), ch('5'), ch('6'), ch('7'), ch('8'), ch('9'), ch('0')];
+
+const LETTERS: [Row; 5] = [
+    DIGITS,
     &[ch('q'), ch('w'), ch('e'), ch('r'), ch('t'), ch('y'), ch('u'), ch('i'), ch('o'), ch('p')],
     &[ch('a'), ch('s'), ch('d'), ch('f'), ch('g'), ch('h'), ch('j'), ch('k'), ch('l')],
     &[(Cap::Shift, 9), ch('z'), ch('x'), ch('c'), ch('v'), ch('b'), ch('n'), ch('m'), (Cap::Backspace, 9)],
     &[(Cap::Symbols, 12), ch(','), SPACE, ch('.'), (Cap::Done, 12)],
 ];
 
-const SYMBOLS: [Row; 4] = [
-    &[ch('1'), ch('2'), ch('3'), ch('4'), ch('5'), ch('6'), ch('7'), ch('8'), ch('9'), ch('0')],
+/// Every symbol of ASCII: thirty here, and the comma and the period that
+/// the letters have too.
+const SYMBOLS: [Row; 5] = [
+    DIGITS,
     &[ch('@'), ch('#'), ch('$'), ch('%'), ch('&'), ch('*'), ch('-'), ch('+'), ch('('), ch(')')],
-    &[(Cap::More, 9), ch('!'), ch('"'), ch('\''), ch(':'), ch(';'), ch('/'), ch('?'), (Cap::Backspace, 9)],
-    &[(Cap::Letters, 12), ch(','), SPACE, ch('.'), (Cap::Done, 12)],
+    &[ch('!'), ch('"'), ch('\''), ch(':'), ch(';'), ch('/'), ch('?'), ch('='), ch('_'), ch('~')],
+    &[ch('['), ch(']'), ch('{'), ch('}'), ch('<'), ch('>'), ch('^'), ch('|'), (Cap::Backspace, 12)],
+    &[(Cap::Letters, 12), ch(','), ch('\\'), (Cap::Char(' '), 12), ch('`'), ch('.'), (Cap::Done, 12)],
 ];
 
-const MORE: [Row; 4] = [
-    &[ch('1'), ch('2'), ch('3'), ch('4'), ch('5'), ch('6'), ch('7'), ch('8'), ch('9'), ch('0')],
-    &[ch('['), ch(']'), ch('{'), ch('}'), ch('<'), ch('>'), ch('='), ch('^'), ch('_'), ch('~')],
-    &[(Cap::Symbols, 9), ch('`'), ch('|'), ch('\\'), ch('\''), ch('"'), ch('?'), ch('!'), (Cap::Backspace, 9)],
-    &[(Cap::Letters, 12), ch(','), SPACE, ch('.'), (Cap::Done, 12)],
-];
-
-/// The rows of every layout.
-const ROWS: i32 = 4;
+/// The rows of the QWERTY layout, whose height every layout has.
+const ROWS: i32 = 5;
+/// The rows of a number pad, in the same height.
+const PAD_ROWS: i32 = 4;
 
 /// The on-screen keyboard of one text field (see the module's docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,12 +213,32 @@ pub struct Keyboard {
     mode: InputMode,
     page: Page,
     shift: Shift,
+    /// What the action key says.
+    action: &'static str,
 }
 
 impl Keyboard {
     /// A keyboard for text of `mode`, on its first page, lower case.
     pub fn new(mode: InputMode) -> Keyboard {
-        Keyboard { mode, page: Page::Letters, shift: Shift::Off }
+        Keyboard { mode, page: Page::Letters, shift: Shift::Off, action: crate::strings::DONE }
+    }
+
+    /// Labels the action key with what it does on this screen, in a word:
+    /// "Next" where it goes on to another field, "Connect" where it
+    /// connects.  ("Done" until this is called.)
+    pub fn set_action(&mut self, label: &'static str) {
+        self.action = label;
+    }
+
+    /// [`Keyboard::set_action`], for a keyboard as it is made.
+    pub fn with_action(mut self, label: &'static str) -> Keyboard {
+        self.action = label;
+        self
+    }
+
+    /// What the action key says.
+    pub fn action(&self) -> &'static str {
+        self.action
     }
 
     /// The mode of the text the keyboard is for.
@@ -224,12 +250,13 @@ impl Keyboard {
     /// focus); a new mode starts on the first page, lower case.
     pub fn set_mode(&mut self, mode: InputMode) {
         if mode != self.mode {
-            *self = Keyboard::new(mode);
+            *self = Keyboard::new(mode).with_action(self.action);
         }
     }
 
     /// The height of the keyboard on the skin of `th`, the same for every
-    /// layout: four rows of keys [`Theme::touch_min`] tall at least.
+    /// layout: five rows of keys [`Theme::touch_min`] tall at least (a
+    /// number pad has four rows of taller keys in it).
     pub fn height(th: &Theme) -> i32 {
         ROWS * Self::pitch(th) + Self::gap(th)
     }
@@ -276,7 +303,6 @@ impl Keyboard {
             Cap::Done => Press::Done,
             Cap::Letters => self.turn(Page::Letters),
             Cap::Symbols => self.turn(Page::Symbols),
-            Cap::More => self.turn(Page::More),
         })
     }
 
@@ -312,7 +338,7 @@ impl Keyboard {
         match self.mode {
             InputMode::Text | InputMode::Password => true,
             InputMode::Numeric => c.is_ascii_digit() || c == '.',
-            InputMode::Pin => c.is_ascii_digit(),
+            InputMode::Digits | InputMode::Pin => c.is_ascii_digit(),
             InputMode::Dial => c.is_ascii_digit() || c == '*' || c == '#',
         }
     }
@@ -325,15 +351,14 @@ impl Keyboard {
         c.fill(r, th.input_bg());
         match self.mode {
             InputMode::Text | InputMode::Password => self.draw_qwerty(c, th, r),
-            InputMode::Numeric | InputMode::Pin | InputMode::Dial => self.draw_pad(c, th, r),
+            InputMode::Numeric | InputMode::Digits | InputMode::Pin | InputMode::Dial => self.draw_pad(c, th, r),
         }
     }
 
-    fn rows(&self) -> &'static [Row; 4] {
+    fn rows(&self) -> &'static [Row; 5] {
         match self.page {
             Page::Letters => &LETTERS,
             Page::Symbols => &SYMBOLS,
-            Page::More => &MORE,
         }
     }
 
@@ -343,6 +368,9 @@ impl Keyboard {
         // The left edge of the cell at `u` sixtieths along.
         let x = |u: i32| r.x + gap / 2 + u * (r.w - gap) / UNITS;
         let upper = self.page == Page::Letters && self.shift != Shift::Off;
+        // The key under a finger that types a character, to be shown
+        // above the finger.
+        let mut under = None;
         for (i, row) in self.rows().iter().enumerate() {
             let y = r.y + gap + i as i32 * pitch;
             let mut u = (UNITS - row.iter().map(|(_, w)| w).sum::<i32>()) / 2;
@@ -353,8 +381,23 @@ impl Keyboard {
                 };
                 let key = IRect::new(x(u) + gap / 2, y, x(u + w) - x(u) - gap, pitch - gap);
                 self.key(c, th, key, cap, Font::Title);
+                if let (Cap::Char(l), true) = (cap, c.pressed_in(key))
+                    && l != ' '
+                {
+                    under = Some((key, l));
+                }
                 u += w;
             }
+        }
+        // The character, large, on a shape of its own over the key above
+        // (over what is above the keyboard, for the first row), in the
+        // colors of a button that is on.
+        if let Some((key, l)) = under {
+            let w = key.w.max(th.touch_min) + 2 * gap;
+            let x = (key.x + (key.w - w) / 2).clamp(r.x, (r.right() - w).max(r.x));
+            let shown = IRect::new(x, key.y - gap - pitch, w, pitch);
+            c.fill_round_aa(shown, th.px(5), th.fg);
+            c.text_in(th.font(Font::Large), shown, l.encode_utf8(&mut [0; 4]), th.bg, HAlign::Center);
         }
     }
 
@@ -362,7 +405,7 @@ impl Keyboard {
     /// backspace and done, each two rows tall.
     fn draw_pad(&self, c: &mut Canvas, th: &Theme, r: IRect) {
         let gap = Self::gap(th);
-        let pitch = (r.h - gap) / ROWS;
+        let pitch = (r.h - gap) / PAD_ROWS;
         let x = |col: i32| r.x + gap / 2 + col * (r.w - gap) / 4;
         let cell = |col: i32, row: i32, rows: i32| {
             IRect::new(x(col) + gap / 2, r.y + gap + row * pitch, x(col + 1) - x(col) - gap, rows * pitch - gap)
@@ -400,7 +443,7 @@ impl Keyboard {
             Cap::Char(_) => (th.sk_bg, Some(th.sk_edge), th.sk_fg),
             Cap::Done => (th.sel_bg, None, th.sel_fg),
             Cap::Shift if self.shift != Shift::Off => (th.sel_bg, None, th.sel_fg),
-            Cap::Shift | Cap::Backspace | Cap::Letters | Cap::Symbols | Cap::More => {
+            Cap::Shift | Cap::Backspace | Cap::Letters | Cap::Symbols => {
                 (th.tab_bg, Some(th.sk_edge), th.tab_fg)
             }
         };
@@ -414,7 +457,6 @@ impl Keyboard {
         let icon = match cap {
             Cap::Shift => Some("up"),
             Cap::Backspace => Some("backspace"),
-            Cap::Done => Some("ok"),
             _ => None,
         };
         if let Some(icon) = icon.and_then(|n| th.icon(n)) {
@@ -431,14 +473,17 @@ impl Keyboard {
                 Cap::Char(l) => l.to_string(),
                 Cap::Letters => "ABC".into(),
                 Cap::Symbols => "?123".into(),
-                Cap::More => "=\\<".into(),
+                Cap::Done => self.action.to_string(),
                 _ => String::new(),
             };
             let f = match cap {
-                Cap::Letters | Cap::Symbols | Cap::More => th.font(Font::Bold),
+                Cap::Letters | Cap::Symbols => th.font(Font::Bold),
+                // (The smaller font for a word the key has no room for.)
+                Cap::Done if th.font(Font::Bold).width(&label) > r.w - 2 * th.scale => th.font(Font::Small),
+                Cap::Done => th.font(Font::Bold),
                 _ => th.font(font),
             };
-            c.text_in(f, r, &label, fg, HAlign::Center);
+            c.text_in(f, r.inset_xy(th.scale, 0), &label, fg, HAlign::Center);
         }
         c.hit(r, Hit::Custom(cap.id()));
     }
@@ -491,8 +536,7 @@ mod tests {
                 } else {
                     match kb.page {
                         Page::Letters => Cap::Symbols,
-                        Page::Symbols => Cap::More,
-                        Page::More => Cap::Letters,
+                        Page::Symbols => Cap::Letters,
                     }
                 };
                 assert_eq!(kb.tap(special(&c, next)), Some(Press::Layout));
@@ -561,6 +605,7 @@ mod tests {
     fn the_pads_have_what_their_mode_takes() {
         for (mode, extra, not) in [
             (InputMode::Numeric, ".", "*#"),
+            (InputMode::Digits, "", ".*#"),
             (InputMode::Pin, "", ".*#"),
             (InputMode::Dial, "*#", "."),
         ] {
@@ -589,8 +634,8 @@ mod tests {
     fn keys_are_tall_enough_apart_and_within_the_keyboard() {
         let th = th();
         for mode in [InputMode::Text, InputMode::Numeric] {
-            for page in [Page::Letters, Page::Symbols, Page::More] {
-                let kb = Keyboard { mode, page, shift: Shift::Off };
+            for page in [Page::Letters, Page::Symbols] {
+                let kb = Keyboard { mode, page, shift: Shift::Off, action: crate::strings::DONE };
                 let c = drawn(&kb);
                 let area = IRect::new(0, th.height - Keyboard::height(th), th.width, Keyboard::height(th));
                 let hits = c.hits();
@@ -616,5 +661,63 @@ mod tests {
         assert_eq!(kb.page, Page::Symbols);
         kb.set_mode(InputMode::Dial);
         assert_eq!(kb, Keyboard::new(InputMode::Dial));
+    }
+
+    #[test]
+    fn the_letters_have_a_row_of_digits_and_one_page_has_every_symbol() {
+        let c = drawn(&Keyboard::new(InputMode::Text));
+        let th = th();
+        let top = th.height - Keyboard::height(th);
+        for d in "1234567890".chars() {
+            let r = c.hit_rect(Hit::Custom(Cap::Char(d).id())).unwrap_or_else(|| panic!("no {d}"));
+            // The first row.
+            assert!(r.y < top + th.row_h, "{r:?}");
+        }
+        assert!(key_of(&c, 'q').is_some());
+        let mut kb = Keyboard::new(InputMode::Text);
+        kb.tap(special(&c, Cap::Symbols));
+        let c = drawn(&kb);
+        for ch in ('!'..='~').filter(|ch| ch.is_ascii_punctuation()) {
+            assert!(key_of(&c, ch).is_some(), "no {ch}");
+        }
+    }
+
+    #[test]
+    fn the_action_key_says_what_it_does() {
+        let mut kb = Keyboard::new(InputMode::Text);
+        assert_eq!(kb.action(), "Done");
+        kb.set_action("Connect");
+        // Another mode's keyboard is for the same screen.
+        kb.set_mode(InputMode::Pin);
+        assert_eq!(kb.action(), "Connect");
+        assert_eq!(Keyboard::new(InputMode::Dial).with_action("Next").action(), "Next");
+        // The label is drawn: the key's picture changes with it.
+        let (a, b) = (drawn(&Keyboard::new(InputMode::Text)), drawn(&Keyboard::new(InputMode::Text).with_action("Next")));
+        let r = a.hit_rect(Hit::Custom(Cap::Done.id())).unwrap();
+        let differ = (r.y..r.bottom()).any(|y| (r.x..r.right()).any(|x| a.pixel(x, y) != b.pixel(x, y)));
+        assert!(differ);
+    }
+
+    #[test]
+    fn a_character_shows_above_the_finger_on_its_key() {
+        let th = th();
+        let kb = Keyboard::new(InputMode::Text);
+        let plain = drawn(&kb);
+        let g = plain.hit_rect(Hit::Custom(Cap::Char('g').id())).unwrap();
+        let mut c = Canvas::new(th.width as u16, th.height as u16, false);
+        c.set_press(Some((g.x + g.w / 2, g.y + g.h / 2)));
+        let r = IRect::new(0, th.height - Keyboard::height(th), th.width, Keyboard::height(th));
+        kb.draw(&mut c, th, r);
+        // Over the key above it, in the text's color.
+        assert_eq!(c.pixel(g.x + 4, g.y - g.h / 2), th.fg);
+        assert_ne!(plain.pixel(g.x + 4, g.y - g.h / 2), th.fg);
+        // Not for the space bar, or a key that types nothing.
+        for cap in [Cap::Char(' '), Cap::Shift, Cap::Done] {
+            let k = plain.hit_rect(Hit::Custom(cap.id())).unwrap();
+            let mut c = Canvas::new(th.width as u16, th.height as u16, false);
+            c.set_press(Some((k.x + k.w / 2, k.y + k.h / 2)));
+            kb.draw(&mut c, th, r);
+            assert!(c.pixels() == plain.pixels(), "{cap:?}");
+        }
     }
 }
