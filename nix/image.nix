@@ -5,9 +5,10 @@
 # The D40 thru D70 share one root file system, a JFFS2 image for their NAND
 # flash, and an EFF with an OTA container of the kernel and that image.  The
 # D80 has its own (`d80` below): a SquashFS image for its eMMC, an Android
-# boot image, a recovery image (the same kernel with the recovery for its
-# ramdisk), and an Android OTA package of the three, which is also what its
-# EFF carries.
+# boot image (the kernel, with a ramdisk that offers a rescue shell and then
+# mounts the root), a recovery image (the same kernel with the recovery for
+# its ramdisk), and an Android OTA package of the three, which is also what
+# its EFF carries.
 {
   lib,
   runCommand,
@@ -20,7 +21,7 @@
   opendeskphone,
   opendeskphone-d80,
   opendeskphone-recovery,
-  recoveryUserland, # brush and a coreutils of few applets, for the D80's recovery
+  recoveryUserland, # brush and a coreutils of few applets, for the D80's ramdisks
   d80Firmware,
   userlandD80, # brush, coreutils, and sed built for the D80
   brush,
@@ -263,43 +264,42 @@ let
         -comp xz -b 131072 -mkfs-time 0 -all-time 0
     '';
 
-    # The Android boot image for mmcblk0p1: the kernel with its
-    # devicetree after it, and an empty ramdisk.  The tool fails when the
-    # result does not fit the 8 MiB partition.
-    bootImage = runCommand "boot-d80-${version}.img" { nativeBuildInputs = [ opendeskphone-image ]; } ''
-      opendeskphone-image d80 boot-image \
-        --kernel ${kernelD80}/zImage-dtb \
-        --cmdline "$(sed -n 's/^CONFIG_CMDLINE="\(.*\)"$/\1/p' ${kernelD80}/config)" \
-        --out $out
-    '';
-
-    # The recovery's ramdisk: the recovery program as `/init`
-    # (crates/opendeskphone-recovery), and for its root shell on the serial
-    # console the shell and a few utilities.  The program mounts `/dev`
-    # itself, so the archive needs no device nodes.  Every file is owned by
-    # root and dated zero, and the archive is compressed as the kernel
-    # unpacks it (XZ with a CRC-32).
-    recoveryTree = runCommand "opendeskphone-d80-recovery-tree-${version}" { } ''
-      mkdir -p $out/{bin,dev,proc,sys,tmp,cache,etc}
-      install -m 0755 ${opendeskphone-recovery}/bin/recovery $out/init
-      # The program restarts the phone under this name.
-      ln -s ../init $out/bin/reboot
-      install -m 0755 ${recoveryUserland.brush}/bin/brush $out/bin/brush
-      ln -s brush $out/bin/sh
-      install -m 0755 ${recoveryUserland.coreutils}/bin/coreutils $out/bin/coreutils
-      for a in ${lib.escapeShellArgs recoveryUserland.applets}; do
-        ln -s coreutils $out/bin/$a
-      done
-      printf 'root:x:0:0:root:/tmp:/bin/sh\n' > $out/etc/passwd
-      printf 'root:x:0:\n' > $out/etc/group
-      # Programs for the D80's processor, as in its root file system.
-      for program in init bin/brush bin/coreutils; do
-        test "$(od -An -tx1 -N6 $out/$program | tr -d ' \n')" = 7f454c460101
-        test "$(od -An -tx4 -j36 -N4 $out/$program | tr -d ' \n')" = 05000400
-      done
-    '';
-    recoveryRamdisk =
-      runCommand "opendeskphone-d80-recovery-${version}.cpio.xz"
+    # A ramdisk for the D80's kernel: `init` as `/init`, and for its root
+    # shell on a serial port the shell and a few utilities.  `/init` is
+    # also each of `links` in /bin, which it runs as when started so.  The
+    # program mounts `/dev` itself, so the archive needs no device nodes.
+    # Every file is owned by root and dated zero, and the archive is
+    # compressed as the kernel unpacks it (XZ with a CRC-32).
+    ramdiskTree =
+      {
+        name,
+        init,
+        links,
+        dirs,
+      }:
+      runCommand "opendeskphone-d80-${name}-tree-${version}" { } ''
+        mkdir -p $out/{bin,dev,proc,sys,tmp,etc,${lib.concatStringsSep "," dirs}}
+        install -m 0755 ${init} $out/init
+        for a in ${lib.escapeShellArgs links}; do
+          ln -s ../init $out/bin/$a
+        done
+        install -m 0755 ${recoveryUserland.brush}/bin/brush $out/bin/brush
+        ln -s brush $out/bin/sh
+        install -m 0755 ${recoveryUserland.coreutils}/bin/coreutils $out/bin/coreutils
+        for a in ${lib.escapeShellArgs recoveryUserland.applets}; do
+          ln -s coreutils $out/bin/$a
+        done
+        printf 'root:x:0:0:root:/tmp:/bin/sh\n' > $out/etc/passwd
+        printf 'root:x:0:\n' > $out/etc/group
+        # Programs for the D80's processor, as in its root file system.
+        for program in init bin/brush bin/coreutils; do
+          test "$(od -An -tx1 -N6 $out/$program | tr -d ' \n')" = 7f454c460101
+          test "$(od -An -tx4 -j36 -N4 $out/$program | tr -d ' \n')" = 05000400
+        done
+      '';
+    ramdisk =
+      name: tree:
+      runCommand "opendeskphone-d80-${name}-${version}.cpio.xz"
         {
           nativeBuildInputs = [
             cpio
@@ -307,7 +307,7 @@ let
           ];
         }
         ''
-          cp -r ${recoveryTree} tree
+          cp -r ${tree} tree
           chmod -R u+w tree
           cd tree
           find . -exec touch -h -d @0 {} +
@@ -315,6 +315,45 @@ let
             | cpio --null --create --format=newc --owner=0:0 --reproducible --quiet \
             | xz --check=crc32 --lzma2=dict=1MiB -9e --threads=1 > $out
         '';
+
+    # The boot image's ramdisk (`boot-init` of crates/opendeskphone-recovery):
+    # for one second it listens on the debug console and the EHS port for
+    # Ctrl-R, and runs a root shell on the port that sent it; then it mounts
+    # the root file system named by `root=` on /root and runs its init.
+    bootTree = ramdiskTree {
+      name = "boot";
+      init = "${opendeskphone-recovery}/bin/boot-init";
+      links = [
+        "reboot"
+        "mount"
+        "umount"
+      ];
+      dirs = [ "root" ];
+    };
+    bootRamdisk = ramdisk "boot" bootTree;
+
+    # The Android boot image for mmcblk0p1: the kernel with its devicetree
+    # after it, and the boot ramdisk, whose `/init` the kernel runs in place
+    # of mounting the root file system.  The tool fails when the result does
+    # not fit the 8 MiB partition.
+    bootImage = runCommand "boot-d80-${version}.img" { nativeBuildInputs = [ opendeskphone-image ]; } ''
+      opendeskphone-image d80 boot-image \
+        --kernel ${kernelD80}/zImage-dtb \
+        --ramdisk ${bootRamdisk} \
+        --cmdline "$(sed -n 's/^CONFIG_CMDLINE="\(.*\)"$/\1/p' ${kernelD80}/config)" \
+        --out $out
+    '';
+
+    # The recovery's ramdisk: the recovery program as `/init`
+    # (crates/opendeskphone-recovery), which restarts the phone under the
+    # name `reboot`.
+    recoveryTree = ramdiskTree {
+      name = "recovery";
+      init = "${opendeskphone-recovery}/bin/recovery";
+      links = [ "reboot" ];
+      dirs = [ "cache" ];
+    };
+    recoveryRamdisk = ramdisk "recovery" recoveryTree;
 
     # The recovery image for mmcblk0p2: the same kernel, with the recovery
     # for its ramdisk.  The kernel runs a ramdisk's `/init` before it looks

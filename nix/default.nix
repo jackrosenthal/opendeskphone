@@ -6,10 +6,13 @@
 #   kernel-<model>         boot image for the k0/k1 slot, D40 thru D70
 #   kernel-d80             the D80's kernel: zImage, DTB, the two as one
 #                          file, and modules
-#   boot-d80               the D80's Android boot image, for mmcblk0p1
+#   boot-d80               the D80's Android boot image, for mmcblk0p1: the
+#                          kernel, with a ramdisk that offers a rescue shell
+#                          on the serial ports and then mounts the root
 #   recovery-d80           the D80's recovery image, for mmcblk0p2: the same
 #                          kernel, with the recovery for its ramdisk
-#   opendeskphone-recovery the recovery program (ARMv7, static)
+#   opendeskphone-recovery the recovery program and the boot ramdisk's init
+#                          (ARMv7, static)
 #   opendeskphone          the firmware binary of the D40 thru D70 (ARMv6,
 #                          static)
 #   opendeskphone-d80      the D80's firmware binary (ARMv7, static), with
@@ -74,8 +77,8 @@ let
   };
   # The D80's kernel is built from the same source with its own
   # configuration.  It has no early-boot stage: the D80 has one kernel and
-  # one root file system, so there is no bank to choose, and the kernel
-  # mounts the root file system itself.
+  # one root file system, so there is no bank to choose.  The boot image's
+  # ramdisk mounts the root file system (nix/image.nix).
   kernelD80 = pkgs.callPackage ./kernel.nix {
     kernelSrc = root + "/kernel";
     pname = "linux-d80";

@@ -1,6 +1,6 @@
 [package]
 name = "opendeskphone-recovery"
-description = "Open Desk Phone: the D80's recovery (the program that installs an OTA package), and what `dphone` and the image tool share with it"
+description = "Open Desk Phone: the D80's recovery (the program that installs an OTA package), the init of its boot image's ramdisk (a rescue shell, then the system), and what `dphone` and the image tool share with it"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

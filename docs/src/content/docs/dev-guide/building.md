@@ -43,7 +43,7 @@ Each component of an image is a separate flake output.
 | `kernel` | The kernel of the D40, D45, D50, D60, D62, D65, and D70 (`zImage`), a device tree for each of those models, and the loadable modules. |
 | `kernel-<model>` | `kernel.bin`: the kernel and the model's device tree, as written to a kernel partition.  `<model>` is `d40`, `d45`, `d50`, `d60`, `d62`, `d65`, or `d70`. |
 | `kernel-d80` | The D80's kernel (`zImage`), its device tree, the two as one file (`zImage-dtb`), and the loadable modules.  See `kernel/README.md`. |
-| `boot-d80` | The D80's Android boot image: `zImage-dtb` and an empty ramdisk. |
+| `boot-d80` | The D80's Android boot image: `zImage-dtb` with a ramdisk that offers a [rescue shell](#d80-rescue-shell) and then mounts the root file system. |
 | `recovery-d80` | The D80's recovery image: `zImage-dtb` with the recovery as its ramdisk.  See [The D80's recovery](#the-d80s-recovery). |
 | `opendeskphone-recovery` | The recovery program: static, for ARMv7 with hardware floating point. |
 | `rootfs-tree-d80`, `rootfs-d80` | The D80's root file system as a directory, and as the SquashFS image in its OTA package. |
@@ -140,6 +140,27 @@ To keep the recovery running for the shell on the serial console, create `/tmp/s
 ```
 
 The recovery sets `bootcmd` back before it waits, so a power cycle starts the system.  `reboot` in that shell restarts the phone at once.
+
+### D80 rescue shell
+
+The boot image's ramdisk offers a root shell on a serial port before the system starts, for recovering a phone whose system does not boot or cannot be logged in to.  Its `/init` (`crates/opendeskphone-recovery/src/bin/boot-init.rs`) listens for one second on two ports, both at 115200 baud, 8N1:
+
+| Port | Device | Connector |
+| --- | --- | --- |
+| Debug console | `ttymxc0` | CN1 |
+| EHS port | `ttymxc1` | J508 |
+
+To get the shell, hold Ctrl-R (0x12) in a terminal on either port while the phone powers on.  Three consecutive Ctrl-R bytes within the window start the shell on that port.  The debug console announces the window; the EHS port is written to only after it asks for the shell, so a headset adapter there is unaffected.  Once the shell is asked for, the port says to release the key, and the shell starts when the port has been quiet for 0.3 seconds.
+
+The shell runs in the ramdisk, with `/proc`, `/sys`, `/dev`, and a RAM-backed `/tmp` mounted, the recovery's utilities, and `mount`, `umount`, and `reboot`.  No eMMC partition is mounted.  To mount nvdata:
+
+```sh
+mkdir -p /tmp/nvdata && mount -t ext4 /dev/mmcblk0p6 /tmp/nvdata
+```
+
+Exiting the shell starts the system; `reboot` restarts the phone.
+
+If the root file system does not appear within 30 seconds or fails to mount, the shell starts on the debug console, and the boot is retried when it exits.
 
 The D80's `dphone` differs from the other models' in these ways:
 

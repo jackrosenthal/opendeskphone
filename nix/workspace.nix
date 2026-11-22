@@ -216,7 +216,8 @@ in
   # kilobytes.
   opendeskphone-early = early.package;
 
-  # `/init` of the D80's recovery image: static, ARMv7 hard-float.
+  # `/init` of the D80's recovery image (`bin/recovery`), and of its boot
+  # image (`bin/boot-init`): static, ARMv7 hard-float.
   opendeskphone-recovery = recovery.package;
 
   # Host tools.  `opendeskphone-image`: EFF, OTA, kernel image, and JFFS2.

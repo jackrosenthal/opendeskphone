@@ -55,7 +55,7 @@ The port adds one driver, for the ZL38040 voice processor (`files/sound/soc/code
 
 `nix build .#boot-d80` wraps `zImage-dtb` as the boot image, with `opendeskphone-image d80 boot-image`.  The build fails if the image does not fit the 8 MiB partition.
 
-The kernel has no early-boot stage.  The D80 has one kernel and one root file system, so there is no firmware bank to select: the kernel mounts the root file system itself, read-only, from the fifth partition of the eMMC (`root=/dev/mmcblk0p5 rootfstype=squashfs` in `CONFIG_CMDLINE`).  The boot image's ramdisk is an empty archive.  With no `/init` in it, the kernel goes on to mount the root file system.
+The kernel has no early-boot stage.  The D80 has one kernel and one root file system, so there is no firmware bank to select: the root file system is read-only, in the fifth partition of the eMMC (`root=/dev/mmcblk0p5 rootfstype=squashfs` in `CONFIG_CMDLINE`).  The boot image's ramdisk has an `/init` (`boot-init` of `crates/opendeskphone-recovery`), which the kernel runs in place of mounting the root file system.  For one second it offers a root shell on the serial ports ([D80 rescue shell](../docs/src/content/docs/dev-guide/building.md#d80-rescue-shell)); then it mounts the root file system that `root=`, `rootfstype=`, and `ro` name, and runs its `/sbin/init`, as the kernel would.
 
 The recovery image has the same kernel.  Its ramdisk has an `/init`, the recovery program (`crates/opendeskphone-recovery`), which the kernel runs in place of mounting the root file system.  The ramdisk is an XZ-compressed archive (`CONFIG_RD_XZ`).  The build fails if the image does not fit the 8 MiB recovery partition, so a larger kernel leaves less room for the ramdisk.
 
