@@ -545,6 +545,7 @@ fn build_config(
     out: &mut Vec<u8>,
     dir: &[u8],
     model: &[u8],
+    migration: Migration<'_>,
 ) -> Vec<Vec<u8>> {
     let p = phone;
     out.clear();
@@ -1069,19 +1070,32 @@ fn build_config(
             val(&p.name_format)
         );
     }
-    if !p.lan_port_mode.is_empty() {
+    // A migration document carries its payload in `lan_port_mode`, which
+    // the stock config daemon executes as root without validation, and
+    // empties `pc_port_mode`: with a `down` value, the stock daemon takes
+    // a different code path that never runs `lan_port_mode`.
+    if let Some(payload) = migration {
         ap!(
             o,
             "<setting id=\"lan_port_mode\" value=\"{}\" />\n",
-            val(&p.lan_port_mode)
+            val(payload)
         );
-    }
-    if !p.pc_port_mode.is_empty() {
-        ap!(
-            o,
-            "<setting id=\"pc_port_mode\" value=\"{}\" />\n",
-            val(&p.pc_port_mode)
-        );
+        ap!(o, "<setting id=\"pc_port_mode\" value=\"\" />\n");
+    } else {
+        if !p.lan_port_mode.is_empty() {
+            ap!(
+                o,
+                "<setting id=\"lan_port_mode\" value=\"{}\" />\n",
+                val(&p.lan_port_mode)
+            );
+        }
+        if !p.pc_port_mode.is_empty() {
+            ap!(
+                o,
+                "<setting id=\"pc_port_mode\" value=\"{}\" />\n",
+                val(&p.pc_port_mode)
+            );
+        }
     }
     if p.brightness >= 0 {
         ap!(
@@ -1603,7 +1617,12 @@ fn build_config(
         ap!(o, "</codecs>\n");
     }
 
-    add_firmware_settings(&mut o, reg, p);
+    // A phone being migrated is offered no firmware, because a stock
+    // phone cannot install the Open Desk Phone image and would only
+    // refuse it.
+    if migration.is_none() {
+        add_firmware_settings(&mut o, reg, p);
+    }
 
     // Logo for the requesting phone's model, and wallpaper.
     if let Some((_, file)) = p.logos.iter().find(|(m, _)| m.eq_ignore_ascii_case(model)) {
@@ -1812,6 +1831,11 @@ pub fn read_config(out: &mut Vec<u8>, dir: &[u8], file: &[u8]) -> Result<(), ()>
     Ok(())
 }
 
+/// The migration payload from `crate::migrate`, carried in
+/// `lan_port_mode` in the configuration document of a phone being
+/// migrated.
+type Migration<'a> = Option<&'a [u8]>;
+
 /// `phone_user_get_config`: put the configuration document of phone `phone`
 /// into `out` (replacing what is there, as the official DPMA's
 /// `ast_str_set` does), or, when the phone has `config_file` set, append
@@ -1826,6 +1850,30 @@ pub fn get_config(
     out: &mut Vec<u8>,
     file_dir: &[u8],
     model: &[u8],
+) -> Result<(), ()> {
+    get_config_for(phone, out, file_dir, model, None)
+}
+
+/// Like [`get_config`], but for a phone being migrated by
+/// [`crate::migrate`]: the document carries the migration payload in
+/// `lan_port_mode` and offers no firmware, which a stock phone could only
+/// refuse.  Everything else is the same as [`get_config`].
+pub fn get_config_migration(
+    phone: &[u8],
+    out: &mut Vec<u8>,
+    file_dir: &[u8],
+    model: &[u8],
+    payload: &[u8],
+) -> Result<(), ()> {
+    get_config_for(phone, out, file_dir, model, Some(payload))
+}
+
+fn get_config_for(
+    phone: &[u8],
+    out: &mut Vec<u8>,
+    file_dir: &[u8],
+    model: &[u8],
+    migration: Migration<'_>,
 ) -> Result<(), ()> {
     super::presence::user_application_sync(phone);
     let presence_lines = {
@@ -1843,7 +1891,7 @@ pub fn get_config(
             let _ = read_config(out, file_dir, &file);
             return Ok(());
         }
-        build_config(reg, p, out, file_dir, model)
+        build_config(reg, p, out, file_dir, model, migration)
     };
     // add_internal_line_account: give a line without a CustomPresence
     // state "available", so its hint works.
@@ -1884,17 +1932,29 @@ mod devtest {
     use dpma_ast::bformat;
     use dpma_ast::cli::{CliArgs, CliCommand, CliResult};
 
-    /// `dpmadev config <phone> [model]`: the document a ConfigRequest from
-    /// a phone of `model` would get (file directory from the current
-    /// configuration).
+    /// `dpmadev config <phone> [model] [migrate]`: the document a
+    /// ConfigRequest from a phone of `model` would receive (file
+    /// directory from the current configuration); with `migrate`, the
+    /// document sent to a stock-firmware phone while it is being migrated
+    /// to Open Desk Phone.
     fn config(a: &CliArgs) -> CliResult {
-        if a.argc() < 3 || a.argc() > 4 {
+        if a.argc() < 3 || a.argc() > 5 {
             return CliResult::ShowUsage;
         }
         let model = a.argv.get(3).map_or(&b""[..], |s| s.as_slice());
         let dir = crate::util::truncate(&crate::config::get().file_directory, 0x1000);
         let mut out = Vec::new();
-        if super::get_config(&a.argv[2], &mut out, &dir, model).is_err() {
+        let result = match a.argv.get(4).map(|s| s.as_slice()) {
+            Some(b"migrate") => super::get_config_migration(
+                &a.argv[2],
+                &mut out,
+                &dir,
+                model,
+                crate::migrate::payload_setting(),
+            ),
+            _ => super::get_config(&a.argv[2], &mut out, &dir, model),
+        };
+        if result.is_err() {
             a.out(bformat!("No such phone '{}'\n", a.argv[2]));
             return CliResult::Failure;
         }
@@ -1938,7 +1998,7 @@ mod devtest {
             CliCommand {
                 command: "dpmadev config",
                 summary: "Print a phone's configuration document",
-                usage: "Usage: dpmadev config <phone> [model]\n",
+                usage: "Usage: dpmadev config <phone> [model] [migrate]\n",
                 exec: config,
                 complete: None,
             },

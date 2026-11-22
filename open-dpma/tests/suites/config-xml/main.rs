@@ -143,6 +143,42 @@ fn config(ctx: &mut Ctx) -> Result<()> {
         doc == "<config>\n<setting id=\"x\" value=\"1\" />\n</config>\n",
         format!("{doc:?}"),
     );
+    migration(ctx)?;
+    Ok(())
+}
+
+/// The migration documents (`dpmadev config PHONE MODEL migrate`) contain
+/// the payload of `crate::migrate` in `lan_port_mode`, an emptied
+/// `pc_port_mode` (a `down` value would lead the stock daemon away from
+/// the setting), and no firmware offer, which a stock phone could only
+/// refuse.  The rest of the document is the ordinary one.
+fn migration(ctx: &mut Ctx) -> Result<()> {
+    for phone in ["fullphone", "altphone"] {
+        let raw = document(ctx, &format!("dpmadev config {phone} D80 migrate"))?;
+        let doc = plain(&raw);
+        ctx.c.check(
+            format!("{phone}: the migration payload in lan_port_mode"),
+            doc.contains_str("<setting id=\"lan_port_mode\" value=\"auto;sh /data/digium/tmp/odp-migrate.sh\"/>"),
+            find_all(&doc, "<setting id=\"lan_port_mode\"").join(" | "),
+        );
+        ctx.c.check(
+            format!("{phone}: pc_port_mode emptied"),
+            doc.contains_str("<setting id=\"pc_port_mode\" value=\"\"/>"),
+            find_all(&doc, "<setting id=\"pc_port_mode\"").join(" | "),
+        );
+        ctx.c.check(
+            format!("{phone}: no firmware offered"),
+            !doc.contains_str("<firmware ") && !doc.contains_str("<firmwares>"),
+            find_all(&doc, "<firmware").join(" | "),
+        );
+        let err = xml::well_formed(&doc);
+        ctx.c.check(format!("{phone}: well formed"), err.is_ok(), err.err().unwrap_or_default());
+        ctx.c.check(
+            format!("{phone}: the rest of the document"),
+            doc.contains_str("<setting id=\"server_environment\" value=\"DPMA\"/>"),
+            "",
+        );
+    }
     Ok(())
 }
 

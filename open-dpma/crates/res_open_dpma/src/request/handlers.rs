@@ -309,6 +309,22 @@ fn config_document(tx: &Transaction, phone: &[u8]) -> Vec<u8> {
     buf
 }
 
+/// The configuration document for a phone being migrated by
+/// [`crate::migrate`]: the ordinary document with the migration payload in
+/// `lan_port_mode` and no firmware offer.
+fn migration_document(tx: &Transaction, phone: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(crate::users::build_config::INITIAL_BUF);
+    let dir = config_file_dir(b"");
+    let _ = crate::users::build_config::get_config_migration(
+        phone,
+        &mut buf,
+        &dir,
+        &tx.model,
+        crate::migrate::payload_setting(),
+    );
+    buf
+}
+
 /// State the digest of configuration document `doc` in the reply's
 /// `X-Digium-AppServer-MD5`.  No document, no digest: a phone then
 /// downloads.
@@ -326,17 +342,49 @@ fn set_digest(tx: &Transaction, doc: &[u8]) {
 /// Deviation: the answer states the document's digest in
 /// `X-Digium-AppServer-MD5` (see `handle_verify`).  The official DPMA
 /// never sets the header.
+///
+/// Deviation (migration): when the firmware package contains an Open
+/// Desk Phone image, a phone running stock firmware receives the
+/// migration document; the server also stages the migration files on the
+/// phone and posts the image to it once the document has been applied
+/// (see [`crate::migrate`]).
 pub fn handle_config(tx: Arc<Transaction>) -> i32 {
+    let mut hand_off = None;
     match phone_for_token(&tx) {
         None => set_error(&tx, errors::msg::INVALID_TOKEN),
         Some(phone) => {
-            let doc = config_document(&tx, &phone);
+            let migrating = crate::migrate::plan(&tx);
+            let doc = match &migrating {
+                Some(_) => migration_document(&tx, &phone),
+                None => config_document(&tx, &phone),
+            };
+            // The files must be on the phone before the document that
+            // runs the payload arrives, so the staging (a few POSTs to
+            // the phone's web server) happens here, before the reply.
+            hand_off = migrating.and_then(|kit| match crate::migrate::phone_ip(&tx) {
+                Some(ip) => {
+                    crate::migrate::stage(&tx.mac, ip, &kit);
+                    Some((tx.mac.clone(), ip, kit))
+                }
+                None => {
+                    dpma_log!(
+                        "Migration of {:#?}: the address of the phone is not known, so nothing is staged",
+                        String::from_utf8_lossy(&tx.mac)
+                    );
+                    None
+                }
+            });
             append(&tx, &doc);
             set_digest(&tx, &doc);
             tx.configured.store(true, Ordering::SeqCst);
         }
     }
     crate::session::send_and_destroy(&tx);
+    // The reply is out; the phone applies the document within seconds and
+    // the payload runs.  The hand-off retries on its own from here.
+    if let Some((mac, ip, kit)) = hand_off {
+        crate::migrate::hand_off(mac, ip, kit);
+    }
     0
 }
 
@@ -363,7 +411,13 @@ pub fn handle_verify(tx: Arc<Transaction>) -> i32 {
     match phone_for_token(&tx) {
         None => set_error(&tx, errors::msg::INVALID_TOKEN),
         Some(phone) => {
-            let doc = config_document(&tx, &phone);
+            // Deviation (migration): answer with the digest of the
+            // document a phone being migrated would receive, so that it
+            // downloads it (VerifyRequest carries no staging).
+            let doc = match crate::migrate::plan(&tx) {
+                Some(_) => migration_document(&tx, &phone),
+                None => config_document(&tx, &phone),
+            };
             set_digest(&tx, &doc);
         }
     }

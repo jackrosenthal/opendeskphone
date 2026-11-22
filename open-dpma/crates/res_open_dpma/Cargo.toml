@@ -17,7 +17,13 @@ devtest = []
 [dependencies]
 dpma-ast.workspace = true
 dpma-proto.workspace = true
+eff = { path = "../../../crates/eff" }
 libc.workspace = true
 log.workspace = true
 mdns-sd = { version = "0.21.6", default-features = false }
+# The migration of a stock-firmware D80 (crate::migrate): the Open Desk
+# Phone package format and signing key (opendeskphone-recovery), and the
+# key's public half for the updater script (rsa).
+opendeskphone-recovery = { path = "../../../crates/opendeskphone-recovery" }
+rsa.workspace = true
 serde_json.workspace = true

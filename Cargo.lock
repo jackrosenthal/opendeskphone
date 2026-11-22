@@ -3511,9 +3511,12 @@ version = "3.1.0"
 dependencies = [
  "dpma-ast",
  "dpma-proto",
+ "eff",
  "libc",
  "log",
  "mdns-sd",
+ "opendeskphone-recovery",
+ "rsa",
  "serde_json",
 ]
 

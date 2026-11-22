@@ -83,6 +83,10 @@ pub struct General {
     /// verified against; empty (the default) uses the embedded
     /// [`DEFAULT_PHONE_CA`].
     pub phone_ca_file: Vec<u8>,
+    /// Not in the official DPMA: when the firmware package contains an
+    /// Open Desk Phone image, migrate phones that contact the server
+    /// running stock firmware (see `crate::migrate`).
+    pub d80_stock_firmware_migration: bool,
 }
 
 impl General {
@@ -111,6 +115,7 @@ impl General {
             firmware_url_prefix: Vec::new(),
             appserver_certificate: Vec::new(),
             phone_ca_file: Vec::new(),
+            d80_stock_firmware_migration: true,
         }
     }
 
@@ -326,6 +331,9 @@ pub fn load() -> Result<(Option<Arc<General>>, Arc<General>), ()> {
                 // Additions of this implementation.
                 b"appserver_certificate" => g.appserver_certificate = value.into(),
                 b"phone_ca_file" => g.phone_ca_file = value.into(),
+                b"d80_stock_firmware_migration" => {
+                    g.d80_stock_firmware_migration = dpma_ast::util::ast_true(value)
+                }
                 _ => dpma_log!("Unknown configuration parameter '{}'", v.name),
             }
         }
