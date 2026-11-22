@@ -196,30 +196,41 @@ fn build(image: &[u8]) -> Result<Kit, String> {
     let mut eff = EffReader::new(image).map_err(|e| e.to_string())?;
     let header = eff.header().clone();
     if !header.model.trim().eq_ignore_ascii_case("D80") {
-        return Err(format!("the image is for a {}, not for a D80", header.model.trim()));
+        return Err(format!(
+            "the image is for a {}, not for a D80",
+            header.model.trim()
+        ));
     }
     // Re-keying a phone for a stock image would hand it Digium firmware;
     // only an Open Desk Phone image (version 3 and up) may be migrated.
     if !is_open_version(&header.version) {
-        return Err(format!("{} is not an Open Desk Phone version", header.version));
+        return Err(format!(
+            "{} is not an Open Desk Phone version",
+            header.version
+        ));
     }
     let mut payload = Vec::new();
     eff.read_to_end(&mut payload).map_err(|e| e.to_string())?;
     // The image consists of the package followed by its signature: the
     // recovery gets the package, and the stock updater gets the whole
     // image.
-    let (package, _) =
-        sig::split_image(&payload).map_err(|e| format!("not a D80 image: {e}"))?;
+    let (package, _) = sig::split_image(&payload).map_err(|e| format!("not a D80 image: {e}"))?;
 
     let len = package.len() as u64;
     let mut archive = zip::Archive::open(std::io::Cursor::new(package), len)?;
-    if archive.entry(opendeskphone_recovery::install::UPDATE_BINARY).is_none() {
+    if archive
+        .entry(opendeskphone_recovery::install::UPDATE_BINARY)
+        .is_none()
+    {
         return Err(format!(
             "the package has no {}",
             opendeskphone_recovery::install::UPDATE_BINARY
         ));
     }
-    let recovery = archive.read(opendeskphone_recovery::RECOVERY_ENTRY, RECOVERY_PARTITION_SIZE)?;
+    let recovery = archive.read(
+        opendeskphone_recovery::RECOVERY_ENTRY,
+        RECOVERY_PARTITION_SIZE,
+    )?;
     if recovery.get(..8) != Some(b"ANDROID!") {
         return Err("the package's recovery image is not a boot image".into());
     }
@@ -262,7 +273,8 @@ fn is_open_version(version: &str) -> bool {
 /// KEY-----`), as embedded in the re-keyed updater script for
 /// `openssl dgst -verify` to read.
 fn public_key_pem() -> Result<String, String> {
-    let key = RsaPrivateKey::from_pkcs8_pem(OTA_KEY).map_err(|e| format!("the signing key: {e}"))?;
+    let key =
+        RsaPrivateKey::from_pkcs8_pem(OTA_KEY).map_err(|e| format!("the signing key: {e}"))?;
     RsaPublicKey::from(&key)
         .to_public_key_pem(LineEnding::LF)
         .map_err(|e| format!("the signing key's public half: {e}"))
@@ -331,8 +343,12 @@ pub fn phone_ip(tx: &crate::session::Transaction) -> Option<IpAddr> {
             }
             None => uri,
         };
-        let Some((host, _)) = dpma_proto::uri::to_host_port(uri) else { continue };
-        let Ok(text) = std::str::from_utf8(&host) else { continue };
+        let Some((host, _)) = dpma_proto::uri::to_host_port(uri) else {
+            continue;
+        };
+        let Ok(text) = std::str::from_utf8(&host) else {
+            continue;
+        };
         match text.trim().parse::<IpAddr>() {
             Ok(ip) => return Some(ip),
             Err(_) => continue,
@@ -469,7 +485,13 @@ pub fn hand_off(mac: Vec<u8>, ip: IpAddr, kit: Arc<Kit>) {
 // ---------------------------------------------------------------------------
 
 /// Sends one HTTP POST to the phone and returns the full reply body.
-fn post(ip: IpAddr, path: &str, content_type: &str, body: &[u8], timeout: Duration) -> Result<Vec<u8>, String> {
+fn post(
+    ip: IpAddr,
+    path: &str,
+    content_type: &str,
+    body: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let mut stream = TcpStream::connect_timeout(&SocketAddr::new(ip, HTTP_PORT), CONNECT_TIMEOUT)
         .map_err(|e| format!("{}:{}: {e}", ip, HTTP_PORT))?;
     stream
@@ -523,7 +545,10 @@ fn post(ip: IpAddr, path: &str, content_type: &str, body: &[u8], timeout: Durati
     let mut body = Vec::new();
     match length {
         Some(length) => {
-            stream.take(length as u64).read_to_end(&mut body).map_err(|e| e.to_string())?;
+            stream
+                .take(length as u64)
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
         }
         None => {
             stream.read_to_end(&mut body).map_err(|e| e.to_string())?;
@@ -571,7 +596,13 @@ fn upload(ip: IpAddr, name: &str, data: &[u8]) -> Result<(), String> {
 /// Posts the image to the stock updater's CGI and returns the `<status>`
 /// value from its reply.
 fn push_eff(ip: IpAddr, eff: &[u8]) -> Result<i32, String> {
-    let reply = post(ip, FIRMWARE_PATH, "application/octet-stream", eff, FIRMWARE_TIMEOUT)?;
+    let reply = post(
+        ip,
+        FIRMWARE_PATH,
+        "application/octet-stream",
+        eff,
+        FIRMWARE_TIMEOUT,
+    )?;
     // The reply looks like `<response>...<status>%d</status>...</response>`.
     let at = find(&reply, b"<status>").ok_or_else(|| {
         format!(
@@ -744,4 +775,3 @@ echo "=== Open Desk Phone migration: the recovery and the keys are in place ==="
     )
     .into_bytes()
 }
-

@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(decrypted.len(), eff::envelope::INNER_LEN + package.len() + 256);
         let (body, signature) = decrypted.split_at(decrypted.len() - 256);
         assert_eq!(&body[eff::envelope::INNER_LEN..], package);
-        assert_eq!(split_image(&payload).unwrap(), (&package[..], &signature[..]));
+        assert_eq!(split_image(&payload).unwrap(), (&package[..], signature));
 
         // openssl dgst -sha256 -verify, against the image and against one
         // byte of it changed.

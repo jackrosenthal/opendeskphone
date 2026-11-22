@@ -887,7 +887,7 @@ const FIELDS: u64 = 2;
 impl Stream {
     /// `None` for a screen whose width is not a whole number of knots.
     fn new(ax: i32, ay: i32, waves: &'static [(i32, i32, i32, i32)], turns: &'static [i32], stops: Stops, every: u64, fit: Fit) -> Option<Stream> {
-        if fit.w as usize % KNOT != 0 {
+        if !(fit.w as usize).is_multiple_of(KNOT) {
             return None;
         }
         let whole = fit.w * ax + fit.h * ay;

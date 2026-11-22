@@ -158,7 +158,9 @@ fn migration(ctx: &mut Ctx) -> Result<()> {
         let doc = plain(&raw);
         ctx.c.check(
             format!("{phone}: the migration payload in lan_port_mode"),
-            doc.contains_str("<setting id=\"lan_port_mode\" value=\"auto;sh /data/digium/tmp/odp-migrate.sh\"/>"),
+            doc.contains_str(
+                "<setting id=\"lan_port_mode\" value=\"auto;sh /data/digium/tmp/odp-migrate.sh\"/>",
+            ),
             find_all(&doc, "<setting id=\"lan_port_mode\"").join(" | "),
         );
         ctx.c.check(
@@ -172,7 +174,11 @@ fn migration(ctx: &mut Ctx) -> Result<()> {
             find_all(&doc, "<firmware").join(" | "),
         );
         let err = xml::well_formed(&doc);
-        ctx.c.check(format!("{phone}: well formed"), err.is_ok(), err.err().unwrap_or_default());
+        ctx.c.check(
+            format!("{phone}: well formed"),
+            err.is_ok(),
+            err.err().unwrap_or_default(),
+        );
         ctx.c.check(
             format!("{phone}: the rest of the document"),
             doc.contains_str("<setting id=\"server_environment\" value=\"DPMA\"/>"),

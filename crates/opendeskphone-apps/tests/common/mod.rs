@@ -314,7 +314,7 @@ pub fn buttons(r: &Rig, app: &str) -> Vec<Drawn> {
                 _ => None,
             })?;
             let fill = ops.iter().rev().find_map(|op| match op {
-                DrawOp::Fill((_, c)) => Some(c.clone()),
+                DrawOp::Fill((_, c)) => Some(*c),
                 _ => None,
             })?;
             Some(Drawn { label, at, fill })
