@@ -29,7 +29,7 @@ A flake in a git repository sees only the files that git tracks, including uncom
 
 The kernel, the root file system, and the `dphone` binary are the same for these seven models.  The images differ only in the device tree attached to the kernel and in the model name in the image header.
 
-The D80's image is built differently and has not run on a phone: see [The D80's image](#the-d80s-image).
+The D80's image is built differently: see [The D80's image](#the-d80s-image).
 
 ### Image components
 
@@ -75,10 +75,6 @@ nix build .#eff-d80
 | --- | --- |
 | `ota-d80` | `<version>_D80_firmware.zip`: the OTA package, signed with the key in the repository. |
 | `eff-d80` | `<version>_D80_firmware.eff`: the same package in the vendor's EFF envelope. |
-
-:::caution[Not yet run on a phone]
-No D80 has started this image or its recovery.  The kernel in it has run on a D80, from a test ramdisk.  The recovery has installed the package in QEMU, on a disk laid out as the D80's eMMC.  The `dphone` binary's D80 hardware support (the display, the touchscreen, the hookswitch, the lamp, and the audio) is written from the kernel's interfaces and has run only in the tests on the workstation.
-:::
 
 The package's script writes two partitions, and `dphone` writes the recovery's before it restarts the phone into the recovery.  The rest of the eMMC stays as stock made it:
 
