@@ -13,7 +13,7 @@
 //! | --- | --- |
 //! | 1. The update lock; the envelope's model; an earlier command removed | the system starts |
 //! | 2. The package stored in nvdata (the stock `/cache`), as `recovery/update.zip` | the system starts; the file is replaced by the next update |
-//! | 3. The package checked: its signature, for one of ours; its recovery image | the same |
+//! | 3. The package checked: its layout; its recovery image | the same |
 //! | 4. The recovery image written to the second partition, if it is not there already, and read back | the system starts (a recovery half written is not started) |
 //! | 5. `recovery/command` names the package | the system starts; the command is replaced by the next update |
 //! | 6. `bootcmd` set to start the recovery | the recovery starts and installs the package |
@@ -23,13 +23,15 @@
 //!
 //! - One of our packages has the recovery image in it (`recovery.img`),
 //!   so an update that changes the recovery is installed by the new one.
-//!   The package must be signed with the key that this firmware's recovery
-//!   accepts, or it is refused here, where that can still be said.
+//!   A package that brings no recovery image is refused here, where that
+//!   can still be reported.
 //! - A stock package has the stock recovery as a patch of its boot image,
-//!   which is applied here (`opendeskphone_recovery::imgdiff`).  The stock
-//!   recovery then checks the vendor's signature and installs the stock
-//!   firmware, so this is the way back to stock.  The package's signature
-//!   is not checked here: the vendor's key is not in this firmware.
+//!   which is applied here (`opendeskphone_recovery::imgdiff`).  The
+//!   stock recovery then verifies the package with the vendor's key and
+//!   installs the stock firmware, so this is the way back to stock.
+//!   Neither kind of package is verified here: the vendor's key is not in
+//!   this firmware, and Open Desk Phone does not gate installs on
+//!   signatures.
 //!
 //! The recovery restarts into the system when it is done, whether or not
 //! the package was installed, and leaves the result in
@@ -49,9 +51,6 @@ use crate::error::{Result, UpdateError};
 use crate::install::is_stock_version;
 use crate::lock;
 
-/// The vendor's signature of a stock image, after the package in the
-/// envelope: 256 bytes that are not the package's.
-const VENDOR_SIGNATURE: u64 = 256;
 /// The files of a stock package that its recovery image is made of.
 const STOCK_BOOT: &str = "boot.img";
 const STOCK_PATCH: &str = "recovery/recovery-from-boot.p";
@@ -186,20 +185,17 @@ pub fn leave_for_recovery<R: Read>(reader: R, places: &Places, own_dir: &Path, m
             progress(&UpdatePhase::Receiving { percent: ((len >> 20) % 100) as u8 });
         }
         progress(&UpdatePhase::Checking);
-        // A stock image has the vendor's signature after the package.
-        if !sig::has_footer(&mut file, len) {
-            if len > VENDOR_SIGNATURE && sig::has_footer(&mut file, len - VENDOR_SIGNATURE) {
-                len -= VENDOR_SIGNATURE;
-                file.set_len(len).map_err(at(&part))?;
-            } else {
-                return Err(image("the image holds no signed OTA package"));
-            }
-        }
-        if !is_stock {
-            sig::verify(&mut file, len, &sig::keys(), |_| {}).map_err(|e| {
-                image(format!("{e}: the package is not signed with the key that this firmware's recovery accepts"))
-            })?;
-        }
+        // Every image consists of the package followed by its signature.
+        // The signature exists for the stock updater's benefit; this
+        // reader only strips it, since the package's end sits just before
+        // it.
+        let end = len
+            .checked_sub(sig::IMAGE_SIGNATURE)
+            .filter(|end| sig::has_footer(&mut file, *end));
+        let Some(len) = end else {
+            return Err(image("the image does not contain a signed package followed by its signature"));
+        };
+        file.set_len(len).map_err(at(&part))?;
         let limit = size_of(&places.recovery)?;
         let limit = usize::try_from(limit).unwrap_or(usize::MAX);
         let mut archive = zip::Archive::open(&mut file, len).map_err(image)?;
@@ -297,7 +293,7 @@ pub fn status(places: &Places) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eff::envelope::{EffHeader, pack};
+    use eff::envelope::EffHeader;
     use zip::FileEntry;
 
     const KEY: &str = include_str!("../../opendeskphone-image/keys/d80-ota.key.pem");
@@ -340,8 +336,10 @@ mod tests {
         ])
     }
 
-    fn eff(model: &str, version: &str, payload: &[u8]) -> Vec<u8> {
-        pack(&EffHeader::new(model, version).unwrap(), payload, [9; 8]).unwrap()
+    /// Builds a D80 image: the package in the envelope, followed by its
+    /// signature.
+    fn eff(model: &str, version: &str, package: &[u8]) -> Vec<u8> {
+        sig::sign_eff(&EffHeader::new(model, version).unwrap(), package, KEY, [9; 8]).unwrap()
     }
 
     fn leave(image: &[u8], places: &Places, own: &Path) -> Result<Left> {
@@ -395,17 +393,15 @@ mod tests {
     #[test]
     fn what_the_recovery_would_not_install_is_refused() {
         let (_dir, places, own) = phone();
-        // For another model.
+        // An image for another model is refused before anything else is
+        // checked.
         let container = [&eff::OTA_MAGIC.to_be_bytes()[..], &[0; 200]].concat();
-        assert!(matches!(leave(&eff("D60", "3_1_0", &container), &places, &own), Err(UpdateError::WrongModel { .. })));
+        let other = eff::envelope::pack(&EffHeader::new("D60", "3_1_0").unwrap(), &container, [9; 8]).unwrap();
+        assert!(matches!(leave(&other, &places, &own), Err(UpdateError::WrongModel { .. })));
         untouched(&places);
-        // Not signed, and changed after it was signed.
+        // Not laid out as a signed package.
         let unsigned = zip::write(&[FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true }]).unwrap();
-        assert!(leave(&eff("D80", "3_1_0", &unsigned), &places, &own).unwrap_err().to_string().contains("no signed OTA package"));
-        untouched(&places);
-        let mut changed = ours();
-        changed[200] ^= 1;
-        assert!(leave(&eff("D80", "3_1_0", &changed), &places, &own).unwrap_err().to_string().contains("key"));
+        assert!(leave(&eff("D80", "3_1_0", &unsigned), &places, &own).unwrap_err().to_string().contains("signed package"));
         untouched(&places);
         // No recovery image, one that is none, and one too large for the
         // partition.
@@ -444,20 +440,20 @@ mod tests {
         const PATCH: &[u8] = include_bytes!("../../opendeskphone-recovery/testdata/recovery-from-boot.p");
         const RESOURCES: &[u8] = include_bytes!("../../opendeskphone-recovery/testdata/recovery-resource.dat");
         let (_dir, places, own) = phone();
-        // Signed with a key the stock recovery would know; here, any.  The
-        // vendor's signature of the image follows the package.
+        // Signed with a key the stock recovery would accept; any key
+        // stands in here.  No signature is verified on this path: the
+        // vendor's key is not in this firmware, and the image signature
+        // is the stock updater's concern.
         let package = signed(&[
             FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true },
             FileEntry { name: STOCK_BOOT, data: BOOT, executable: false },
             FileEntry { name: STOCK_PATCH, data: PATCH, executable: false },
             FileEntry { name: STOCK_RESOURCES, data: RESOURCES, executable: false },
         ]);
-        let mut payload = package.clone();
-        payload.extend_from_slice(&[0xee; 256]);
-        let left = leave(&eff("D80", "1_12_14", &payload), &places, &own).unwrap();
+        let left = leave(&eff("D80", "1_12_14", &package), &places, &own).unwrap();
         assert_eq!(left, Left { version: "1_12_14".into(), is_stock: true, recovery_written: true, package_len: package.len() as u64 });
-        // The package without the vendor's signature, and the recovery
-        // that the package's patch makes.
+        // The stored package is the image minus its signature, and the
+        // recovery written is the one the package's patch produces.
         assert_eq!(std::fs::read(places.nvdata.join("recovery/update.zip")).unwrap(), package);
         let want = imgdiff::stock_recovery(BOOT, PATCH, RESOURCES, PARTITION).unwrap();
         assert_eq!(std::fs::read(&places.recovery).unwrap()[..want.len()], want[..]);

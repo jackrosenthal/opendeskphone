@@ -329,10 +329,10 @@ let
     '';
 
     # The Android OTA package that writes the boot image and the root file
-    # system: what a recovery installs.  It also carries the recovery
-    # image, which `dphone` writes before it restarts into the recovery.
-    # It is signed with the key in the tool's `keys` directory, which is in
-    # the repository and so is not a secret.
+    # system; this is what a recovery installs.  It also carries the
+    # recovery image, which `dphone` writes before restarting into the
+    # recovery.  It is signed with the tool's default key from `keys` in
+    # this repository, which is not a secret.
     package = runCommand "${wireVersion}_D80_firmware.zip" { nativeBuildInputs = [ opendeskphone-image ]; } ''
       opendeskphone-image d80 package \
         --boot ${bootImage} \
@@ -340,13 +340,13 @@ let
         --rootfs ${rootfs} \
         --update-binary ${d80Firmware.updateBinary} \
         --version ${wireVersion} \
-        --key ${../crates/opendeskphone-image/keys/d80-ota.key.pem} \
-        --cert ${../crates/opendeskphone-image/keys/d80-ota.x509.pem} \
         --out $out
     '';
 
-    # The package in the vendor's envelope.  A stock image has the vendor's
-    # signature of the image after the package, which this has not.
+    # The package in the stock envelope, followed by the image's
+    # signature, which the stock updater verifies before handing the
+    # package to the recovery.  Signed with the same default key as the
+    # package.
     eff = runCommand "${wireVersion}_D80_firmware.eff" { nativeBuildInputs = [ opendeskphone-image ]; } ''
       opendeskphone-image eff pack ${package} $out --model D80 --version ${wireVersion}
     '';

@@ -173,23 +173,56 @@ fn build_a_whole_image() {
 #[test]
 fn d80_images_carry_a_zip() {
     let s = Scratch::new("d80");
+    // A zip ending the way a signed package does: an end record with no
+    // comment, followed by the six-byte signature footer.
     let mut zip = b"PK\x03\x04".to_vec();
     zip.extend((0..10_000).map(|i| (i * 13) as u8));
+    zip.extend(b"PK\x05\x06");
+    zip.extend([0u8; 18]);
+    zip.extend([6, 0, 0xff, 0xff, 6, 0]);
     std::fs::write(s.path("update.zip"), &zip).unwrap();
+    let key = concat!(env!("CARGO_MANIFEST_DIR"), "/keys/d80-ota.key.pem");
+    // The default key is the one in the tree, so the image is signed
+    // without --key, and an explicit --key produces the same bytes.
+    ok(&["eff", "pack", &s.path("update.zip"), &s.path("d80.eff"), "--model", "d80", "--version", "1_12_14"]);
+    ok(&["eff", "pack", &s.path("update.zip"), &s.path("d80b.eff"), "--model", "D80", "--version", "1_12_14", "--key", key]);
+    assert_eq!(
+        std::fs::read(s.path("d80.eff")).unwrap(),
+        std::fs::read(s.path("d80b.eff")).unwrap()
+    );
+    // Reproducible: with a fixed salt, nothing in the output is random.
     ok(&[
         "eff",
         "pack",
         &s.path("update.zip"),
-        &s.path("d80.eff"),
+        &s.path("d80c.eff"),
         "--model",
-        "d80",
+        "D80",
         "--version",
         "1_12_14",
+        "--salt",
+        "0102030405060708",
     ]);
+    ok(&[
+        "eff",
+        "pack",
+        &s.path("update.zip"),
+        &s.path("d80d.eff"),
+        "--model",
+        "D80",
+        "--version",
+        "1_12_14",
+        "--salt",
+        "0102030405060708",
+    ]);
+    assert_eq!(
+        std::fs::read(s.path("d80c.eff")).unwrap(),
+        std::fs::read(s.path("d80d.eff")).unwrap()
+    );
     let info = ok(&["eff", "info", &s.path("d80.eff")]);
     assert!(info.contains("model D80 version 1_12_14"), "{info}");
     assert!(
-        info.contains("Android OTA package (zip): 10004 bytes"),
+        info.contains(&format!("Android OTA package (zip): {} bytes", zip.len())),
         "{info}"
     );
     ok(&["eff", "unpack", &s.path("d80.eff"), &s.path("back.zip")]);
@@ -198,16 +231,7 @@ fn d80_images_carry_a_zip() {
     let mut ota = 0x7d9f_8001u32.to_be_bytes().to_vec();
     ota.extend(&zip[4..]);
     std::fs::write(s.path("x.ota"), &ota).unwrap();
-    let (success, text) = tool(&[
-        "eff",
-        "pack",
-        &s.path("x.ota"),
-        &s.path("x.eff"),
-        "--model",
-        "D80",
-        "--version",
-        "1_12_14",
-    ]);
+    let (success, text) = tool(&["eff", "pack", &s.path("x.ota"), &s.path("x.eff"), "--model", "D80", "--version", "1_12_14"]);
     assert!(!success && text.contains("Android OTA package"), "{text}");
 }
 

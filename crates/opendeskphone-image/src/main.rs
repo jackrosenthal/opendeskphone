@@ -26,16 +26,18 @@
 //!
 //! The stock web page (firmware upload) accepts the same file.
 //!
-//! The D80's image is an Android OTA package, made of an Android boot image
-//! and a SquashFS image of the root file system (`mksquashfs` makes that);
-//! see `d80.rs`:
+//! The D80's image is an Android OTA package built from an Android boot
+//! image and a SquashFS image of the root file system (`mksquashfs` makes
+//! that); see `d80.rs`.  The EFF wraps the package and ends, inside the
+//! envelope, with a signature of the image, which the stock updater
+//! verifies; every D80 EFF therefore carries one.  Both steps sign with
+//! the default keys in `keys/`; pass `--key` (and `--cert` for the
+//! package) to sign with other keys:
 //!
 //! ```text
 //! opendeskphone-image d80 boot-image --kernel zImage-dtb --out boot.img
 //! opendeskphone-image d80 boot-image --kernel zImage-dtb --ramdisk recovery.cpio.xz --out recovery.img
-//! opendeskphone-image d80 package --boot boot.img --recovery recovery.img --rootfs rootfs.squashfs \
-//!     --update-binary update-binary --version 3_1_0 \\
-//!     --key keys/d80-ota.key.pem --cert keys/d80-ota.x509.pem --out 3_1_0_D80_firmware.zip
+//! opendeskphone-image d80 package --boot boot.img --recovery recovery.img --rootfs rootfs.squashfs --update-binary update-binary --version 3_1_0 --out 3_1_0_D80_firmware.zip
 //! opendeskphone-image eff pack 3_1_0_D80_firmware.zip 3_1_0_D80_firmware.eff --model D80 --version 3_1_0
 //! ```
 
@@ -48,6 +50,7 @@ use eff::envelope::{self, EffHeader};
 use eff::ota::{self, Ota};
 use jffs2_image::{Compression, Entry, Kind, Options, Tree, read_image, write_image};
 use md5::{Digest, Md5};
+use opendeskphone_recovery::sig;
 use std::path::{Path, PathBuf};
 
 type Res<T> = Result<T, String>;
@@ -55,6 +58,11 @@ type Res<T> = Result<T, String>;
 /// Size of the root0/root1 partitions on every model.
 const ROOT_PARTITION: usize = 0x2d0_0000;
 const ERASE_BLOCK: usize = 0x20000;
+
+/// The signing keys in `keys/`: the defaults for the signing commands.
+/// They are not a secret (see `keys/README.md`).
+const DEFAULT_KEY: &str = include_str!("../keys/d80-ota.key.pem");
+const DEFAULT_CERT: &str = include_str!("../keys/d80-ota.x509.pem");
 
 #[derive(Parser)]
 #[command(
@@ -122,12 +130,12 @@ enum D80Cmd {
         /// Version text, e.g., 3_1_0
         #[arg(long)]
         version: String,
-        /// RSA private key to sign the package with (PKCS #8, PEM)
+        /// RSA private key used to sign the package (PKCS #8, PEM); defaults to the key in the tree
         #[arg(long)]
-        key: PathBuf,
-        /// The key's X.509 certificate (PEM)
+        key: Option<PathBuf>,
+        /// The key's X.509 certificate (PEM); defaults to the certificate in the tree
         #[arg(long)]
-        cert: PathBuf,
+        cert: Option<PathBuf>,
         #[arg(long)]
         out: PathBuf,
     },
@@ -158,6 +166,9 @@ enum EffCmd {
         /// Eight-byte salt in hex; default: derived from the OTA, so the output is reproducible
         #[arg(long)]
         salt: Option<String>,
+        /// RSA private key used to sign the image (PKCS #8, PEM); defaults to the key in the tree.  Only D80 images are signed; passing this for any other model is an error
+        #[arg(long)]
+        key: Option<PathBuf>,
     },
     /// Print model, version, and the OTA header of an EFF (for the D80, the package size)
     Info { eff: PathBuf },
@@ -390,16 +401,23 @@ fn eff_cmd(cmd: EffCmd) -> Res<()> {
     match cmd {
         EffCmd::Unpack { eff, ota } => {
             let (h, payload) = envelope::unpack(&read(&eff)?).map_err(s)?;
-            if !envelope::is_d80(&h.model) {
+            let mut signed = false;
+            let payload = if envelope::is_d80(&h.model) {
+                let (package, _) = sig::split_image(&payload).map_err(s)?;
+                signed = true;
+                package
+            } else {
                 Ota::parse(&payload).map_err(s)?;
-            }
-            write(&ota, &payload)?;
+                &payload[..]
+            };
+            write(&ota, payload)?;
             println!(
-                "Extracted {} {}: {} {} bytes",
+                "Extracted {} {}: {} {} bytes{}",
                 h.model,
                 h.version,
                 payload.len(),
-                payload_kind(&h.model)
+                payload_kind(&h.model),
+                if signed { " (the image's 256-byte signature followed it)" } else { "" }
             );
         }
         EffCmd::Pack {
@@ -408,11 +426,15 @@ fn eff_cmd(cmd: EffCmd) -> Res<()> {
             model,
             version,
             salt,
+            key,
         } => {
             let payload = read(&ota)?;
             let model = eff_model(&model)?;
             if !envelope::is_d80(model) {
                 Ota::parse(&payload).map_err(s)?;
+                if key.is_some() {
+                    return Err("--key signs a D80 image; an EFF for another model carries no signature".into());
+                }
             }
             let header = EffHeader::new(model, &version).map_err(s)?;
             let salt = match salt {
@@ -429,7 +451,15 @@ fn eff_cmd(cmd: EffCmd) -> Res<()> {
                     out
                 }
             };
-            let file = envelope::pack(&header, &payload, salt).map_err(s)?;
+            let file = if envelope::is_d80(model) {
+                let key = match &key {
+                    Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?,
+                    None => DEFAULT_KEY.to_owned(),
+                };
+                sig::sign_eff(&header, &payload, &key, salt).map_err(s)?
+            } else {
+                envelope::pack(&header, &payload, salt).map_err(s)?
+            };
             write(&eff, &file)?;
             println!(
                 "Created {} {}: {} ({} bytes)",
@@ -443,7 +473,12 @@ fn eff_cmd(cmd: EffCmd) -> Res<()> {
             let (h, payload) = envelope::unpack(&read(&eff)?).map_err(s)?;
             println!("EFF: model {} version {}", h.model, h.version);
             if envelope::is_d80(&h.model) {
-                println!("{} (zip): {} bytes", payload_kind(&h.model), payload.len());
+                let (package, _) = sig::split_image(&payload).map_err(s)?;
+                println!(
+                    "{} (zip): {} bytes, followed by the image's 256-byte signature",
+                    payload_kind(&h.model),
+                    package.len()
+                );
             } else {
                 describe_ota(&Ota::parse(&payload).map_err(s)?);
             }
@@ -660,8 +695,19 @@ fn d80_cmd(cmd: D80Cmd) -> Res<()> {
         }
         D80Cmd::Package { boot, recovery, rootfs, update_binary, version, key, cert, out } => {
             let (boot, recovery, rootfs) = (read(&boot)?, read(&recovery)?, read(&rootfs)?);
-            let text = |path: &Path| std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()));
-            let data = d80::package(&boot, &recovery, &rootfs, &read(&update_binary)?, &version, &text(&key)?, &text(&cert)?)?;
+            let pem = |path: &Option<PathBuf>, default: &str| match path {
+                Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display())),
+                None => Ok(default.to_owned()),
+            };
+            let data = d80::package(
+                &boot,
+                &recovery,
+                &rootfs,
+                &read(&update_binary)?,
+                &version,
+                &pem(&key, DEFAULT_KEY)?,
+                &pem(&cert, DEFAULT_CERT)?,
+            )?;
             write(&out, &data)?;
             println!(
                 "{}: D80 {version} ({} bytes, signed): boot image {} bytes, recovery image {} bytes, root file system {} bytes",

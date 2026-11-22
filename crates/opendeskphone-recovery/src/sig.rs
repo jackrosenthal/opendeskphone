@@ -1,19 +1,27 @@
-//! The whole-file signature of an OTA package, checked the way the stock
-//! recovery (Android 4.4's) checks it.
+//! The signatures of an OTA package and of a D80 image.
 //!
-//! A signed package is a zip archive whose comment ends with the signature
-//! and six bytes: the distance from the end of the file back to the start
-//! of the signature block, `ff ff`, and the comment's length.  What is
-//! signed is the file up to the comment's length field.  The signature is
-//! RSA, PKCS #1 v1.5, over the SHA-1 of that, and it is the last bytes of
-//! the block: the recovery takes as many bytes before the last six as the
-//! key is long, and does not read the rest of the block.
+//! A package carries a whole-file signature, laid out the way Android's
+//! recoveries expect it: a signed package is a zip archive whose comment
+//! ends with the signature and six bytes, the distance from the end of
+//! the file back to the start of the signature block, `ff ff`, and the
+//! comment's length.  What is signed is the file up to the comment's
+//! length field.  The signature is RSA, PKCS #1 v1.5, over the SHA-1 of
+//! that, and it is the last bytes of the block: a recovery takes as many
+//! bytes before the last six as the key is long, and does not read the
+//! rest of the block.  The signature identifies the key a package was
+//! built with and detects corruption; Android's recoveries verify it,
+//! and this repository's recovery does not.
+//!
+//! A D80 image carries a second signature: the last 256 bytes of the
+//! decrypted payload, after the package.  The stock updater verifies it;
+//! [`sign_eff`] produces it and [`split_image`] removes it.
 
+use eff::{EffHeader, EffWriter};
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
-use rsa::traits::PublicKeyParts;
 use rsa::{Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey};
 use sha1::{Digest, Sha1};
-use std::io::{Read, Seek, SeekFrom};
+use sha2::Sha256;
+use std::io::{Read, Seek, Write, SeekFrom};
 
 /// The certificate of the key that the image build signs a package with.
 /// The key is in the repository, so the signature does not show who made a
@@ -25,21 +33,6 @@ pub const CERTIFICATE: &str = include_str!("../../opendeskphone-image/keys/d80-o
 const FOOTER: u64 = 6;
 const EOCD: u64 = 22;
 const EOCD_MARK: &[u8; 4] = b"PK\x05\x06";
-
-/// The public key of an X.509 certificate (PEM).
-pub fn certificate_key(pem: &str) -> Result<RsaPublicKey, String> {
-    let (label, der) = rsa::pkcs8::Document::from_pem(pem).map_err(|e| format!("the certificate: {e}"))?;
-    let cert = crate::der::Certificate::parse(der.as_bytes())
-        .filter(|_| label == "CERTIFICATE")
-        .ok_or("not an X.509 certificate")?;
-    RsaPublicKey::from_public_key_der(cert.key).map_err(|e| format!("the certificate's key: {e}"))
-}
-
-/// The keys this firmware's recovery installs packages of: the one key in
-/// the repository.
-pub fn keys() -> Vec<RsaPublicKey> {
-    vec![certificate_key(CERTIFICATE).expect("the certificate in the repository")]
-}
 
 /// Whether the `len` bytes of `file` end the way a signed package does:
 /// the mark in the last six bytes, and the directory's end record where
@@ -78,35 +71,6 @@ fn layout<R: Read + Seek>(file: &mut R, len: u64) -> Result<(u64, Vec<u8>), Stri
     }
     let comment = eocd.split_off(EOCD as usize);
     Ok((len - comment_len - 2, comment))
-}
-
-/// Checks the signature of the package in the first `len` bytes of `file`
-/// against `keys`, and returns the index of the key that made it.
-/// `progress` is called with the part of the package read so far, 0 to 1.
-pub fn verify<R: Read + Seek>(file: &mut R, len: u64, keys: &[RsaPublicKey], mut progress: impl FnMut(f32)) -> Result<usize, String> {
-    let io = |e: std::io::Error| format!("reading the package: {e}");
-    let (signed, comment) = layout(file, len)?;
-    let block = &comment[..comment.len() - FOOTER as usize];
-
-    let mut hash = Sha1::new();
-    let mut buf = vec![0u8; 64 * 1024];
-    let mut left = signed;
-    file.seek(SeekFrom::Start(0)).map_err(io)?;
-    while left > 0 {
-        let n = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
-        file.read_exact(&mut buf[..n]).map_err(io)?;
-        hash.update(&buf[..n]);
-        left -= n as u64;
-        progress((signed - left) as f32 / signed as f32);
-    }
-    let digest = hash.finalize();
-    for (i, key) in keys.iter().enumerate() {
-        let Some(signature) = block.len().checked_sub(key.size()).map(|at| &block[at..]) else { continue };
-        if key.verify(Pkcs1v15Sign::new::<Sha1>(), &digest, signature).is_ok() {
-            return Ok(i);
-        }
-    }
-    Err("the package's signature is not by a key this recovery accepts".into())
 }
 
 /// What Android's `signapk` starts the comment of a signed package with.
@@ -211,17 +175,76 @@ pub fn sign(zip: &[u8], key: &str, cert: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// The size of the signature that follows the package in every D80
+/// image.
+pub const IMAGE_SIGNATURE: u64 = 256;
+
+/// Builds a D80 image: the package in the stock envelope, encrypted with
+/// the stock passphrase, followed by a 256-byte signature of the image.
+/// The stock updater decrypts the image as a whole and verifies the
+/// signature the way `openssl dgst -sha256 -verify` does, over the
+/// decrypted bytes minus the last 256, before handing the package to the
+/// recovery.  Every D80 image ends this way, stock and Open Desk Phone
+/// alike, so the build signs ours with the same key that signs the
+/// package.
+///
+/// `key` is that RSA private key (PKCS #8, PEM).  A fixed `salt` makes
+/// the output reproducible: the same input produces the same image.
+pub fn sign_eff(header: &EffHeader, package: &[u8], key: &str, salt: [u8; 8]) -> Result<Vec<u8>, String> {
+    if !eff::envelope::is_d80(&header.model) {
+        return Err(format!("image signatures apply only to the D80, not to {}", header.model));
+    }
+    if package.len() < 4 || package[..4] != *b"PK\x03\x04" {
+        return Err("the payload of a D80 EFF must be an Android OTA package (zip)".into());
+    }
+    let key = RsaPrivateKey::from_pkcs8_pem(key).map_err(|e| format!("the signing key: {e}"))?;
+    // The signature covers the decrypted image minus the signature
+    // itself.
+    let mut signed = Vec::with_capacity(eff::envelope::INNER_LEN + package.len());
+    signed.extend_from_slice(&header.inner());
+    signed.extend_from_slice(package);
+    let signature = key
+        .sign(Pkcs1v15Sign::new::<Sha256>(), &Sha256::digest(&signed))
+        .map_err(|e| format!("signing the image: {e}"))?;
+    let mut out = Vec::with_capacity(eff::envelope::LABEL_LEN + 16 + signed.len() + 16 + signature.len() + 16);
+    let mut w = EffWriter::with_raw_headers(&mut out, &header.label(), &header.inner(), salt, eff::envelope::passphrase(&header.model))
+        .map_err(|e| e.to_string())?;
+    w.write_all(package).map_err(|e| e.to_string())?;
+    // The signature is part of the plaintext: the updater finds it at the
+    // end of the decrypted data.
+    w.write_all(&signature).map_err(|e| e.to_string())?;
+    w.finish().map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// Splits a D80 image's decrypted payload into the package and the
+/// signature that follows it.  Returns an error if the package does not
+/// end the way a signed package does, since such an image is not in the
+/// format.
+pub fn split_image(payload: &[u8]) -> Result<(&[u8], &[u8]), String> {
+    let at = payload
+        .len()
+        .checked_sub(IMAGE_SIGNATURE as usize)
+        .ok_or("the image is shorter than its signature")?;
+    let (package, signature) = payload.split_at(at);
+    if !has_footer(&mut std::io::Cursor::new(package), at as u64) {
+        return Err("the image does not contain a signed package followed by its signature".into());
+    }
+    Ok((package, signature))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eff::EffReader;
 
     const KEY: &str = include_str!("../../opendeskphone-image/keys/d80-ota.key.pem");
     const CERT: &str = CERTIFICATE;
 
-    /// A recovery's check of a package (Android's `verifier.cpp`), with
-    /// the key in the tree.
+    /// The signature that Android's recoveries verify (their
+    /// `verifier.cpp`), with the key in the tree.
     #[test]
-    fn a_signed_package_is_what_a_recovery_checks() {
+    fn a_signed_package_is_signed_as_android_verifies_it() {
         let unsigned = crate::zip::write(&[crate::zip::FileEntry { name: "a", data: b"123456789", executable: false }]).unwrap();
         let z = sign(&unsigned, KEY, CERT).unwrap();
         assert_eq!(z, sign(&unsigned, KEY, CERT).unwrap());
@@ -258,30 +281,68 @@ mod tests {
         assert!(sign(&unsigned, KEY, KEY).is_err());
     }
 
+    /// The layout that Android's recoveries expect, and that
+    /// `split_image` looks for: has_footer finds the package's end in a
+    /// signed package, but not past it.
     #[test]
-    fn a_signed_package_is_verified_and_a_changed_one_is_not() {
+    fn a_signed_package_has_the_expected_layout() {
         let unsigned = crate::zip::write(&[crate::zip::FileEntry { name: "a", data: &[7u8; 200_000], executable: false }]).unwrap();
         let z = sign(&unsigned, KEY, CERT).unwrap();
         let len = z.len() as u64;
-        let mut seen = Vec::new();
-        assert_eq!(verify(&mut std::io::Cursor::new(&z), len, &keys(), |p| seen.push(p)), Ok(0));
-        assert!(seen.len() > 2 && seen.windows(2).all(|w| w[0] <= w[1]) && seen.last() == Some(&1.0));
         assert!(has_footer(&mut std::io::Cursor::new(&z), len));
 
-        // Not signed, signed and then changed, cut short, and followed by
-        // other bytes.
-        assert!(verify(&mut std::io::Cursor::new(&unsigned), unsigned.len() as u64, &keys(), |_| {}).unwrap_err().contains("not signed"));
-        let mut changed = z.clone();
-        changed[100] ^= 1;
-        assert!(verify(&mut std::io::Cursor::new(&changed), len, &keys(), |_| {}).unwrap_err().contains("not by a key"));
-        assert!(verify(&mut std::io::Cursor::new(&z), len - 1, &keys(), |_| {}).is_err());
+        // Cut short, and followed by other bytes.
+        assert!(!has_footer(&mut std::io::Cursor::new(&z), len - 1));
         let mut longer = z.clone();
         longer.extend_from_slice(&[0; 256]);
         assert!(!has_footer(&mut std::io::Cursor::new(&longer), len + 256));
         assert!(has_footer(&mut std::io::Cursor::new(&longer), len));
-        // No key, and a key that is not the signer's.
-        assert!(verify(&mut std::io::Cursor::new(&z), len, &[], |_| {}).is_err());
-        let other = RsaPublicKey::new(rsa::BigUint::from(0xc5u32) << 2040 | rsa::BigUint::from(1u32), rsa::BigUint::from(65537u32)).unwrap();
-        assert!(verify(&mut std::io::Cursor::new(&z), len, &[other], |_| {}).is_err());
+    }
+
+    /// The stock updater's check of a D80 image, with the key in the
+    /// tree: the stock passphrase decrypts it, `openssl dgst -sha256
+    /// -verify` takes the decrypted bytes less the last 256, and the
+    /// package is the 401st byte on.
+    #[test]
+    fn an_eff_is_what_the_stock_updater_verifies() {
+        let header = EffHeader::new("D80", "3_1_0").unwrap();
+        let package = sign(
+            &crate::zip::write(&[crate::zip::FileEntry { name: "a", data: b"123456789", executable: false }]).unwrap(),
+            KEY,
+            CERT,
+        )
+        .unwrap();
+        let image = sign_eff(&header, &package, KEY, [7; 8]).unwrap();
+        // A fixed salt makes the image reproducible.
+        assert_eq!(image, sign_eff(&header, &package, KEY, [7; 8]).unwrap());
+        // The image is encrypted, so `split_image` takes the decrypted
+        // payload rather than the whole file.
+        assert!(split_image(&image).is_err());
+
+        // openssl enc -d -aes-256-cbc -pass file:/system/etc/otapassphrase:
+        // the reader consumes the four header fields for its own header,
+        // and yields what the updater would see after them.
+        let mut payload = Vec::new();
+        EffReader::new(&image[..]).expect("the stock passphrase opens it").read_to_end(&mut payload).unwrap();
+        let mut decrypted = header.inner().to_vec();
+        decrypted.extend_from_slice(&payload);
+        assert_eq!(decrypted.len(), eff::envelope::INNER_LEN + package.len() + 256);
+        let (body, signature) = decrypted.split_at(decrypted.len() - 256);
+        assert_eq!(&body[eff::envelope::INNER_LEN..], package);
+        assert_eq!(split_image(&payload).unwrap(), (&package[..], &signature[..]));
+
+        // openssl dgst -sha256 -verify, against the image and against one
+        // byte of it changed.
+        let key = RsaPrivateKey::from_pkcs8_pem(KEY).unwrap();
+        let public = RsaPublicKey::from(&key);
+        public.verify(Pkcs1v15Sign::new::<Sha256>(), &Sha256::digest(body), signature).unwrap();
+        let mut changed = body.to_vec();
+        changed[eff::envelope::INNER_LEN] ^= 1;
+        assert!(public.verify(Pkcs1v15Sign::new::<Sha256>(), &Sha256::digest(&changed), signature).is_err());
+
+        // Only a D80 image is signed, and the payload must be a package.
+        assert!(sign_eff(&EffHeader::new("D60", "3_0_0").unwrap(), &package, KEY, [7; 8]).is_err());
+        assert!(sign_eff(&header, b"not a zip", KEY, [7; 8]).is_err());
+        assert!(split_image(&package).is_err());
     }
 }

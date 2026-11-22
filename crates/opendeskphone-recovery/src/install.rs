@@ -1,6 +1,8 @@
-//! Installing a package, the way Android's recovery does (`install.cpp`):
-//! the signature is checked, and then the package's own program does the
-//! work.
+//! Installing a package, the way Android's recovery does (`install.cpp`),
+//! minus the signature check: the recovery installs whatever package is
+//! left for it.  Packages still carry a signature, which identifies the
+//! key they were built with and detects corruption, but nothing refuses a
+//! package over it.
 //!
 //! A package brings its installer, `META-INF/com/google/android/update-binary`.
 //! The recovery copies it out, and runs it with three arguments: the
@@ -20,7 +22,6 @@
 //! `wipe_cache` is not done here: `/cache` is `dphone`'s nvdata, and no
 //! package of ours asks for it.
 
-use rsa::RsaPublicKey;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -33,9 +34,6 @@ use std::time::Instant;
 
 /// The installer in a package.
 pub const UPDATE_BINARY: &str = "META-INF/com/google/android/update-binary";
-/// The part of the bar that checking the signature takes; the package's
-/// program has the rest.
-pub const VERIFICATION: f32 = 0.25;
 
 /// Where lines for the log go: the recovery's own, and the output of the
 /// package's program.
@@ -105,23 +103,15 @@ fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     }
 }
 
-/// Installs the package at `package` if its signature is by one of
-/// `keys`.  `tmp` is a directory in memory, for the package's program.
-pub fn install(package: &Path, keys: &[RsaPublicKey], tmp: &Path, ui: &mut dyn Ui, log: &Log) -> Result<(), String> {
+/// Installs the package at `package`.  `tmp` is a directory in memory,
+/// for the package's program.
+pub fn install(package: &Path, tmp: &Path, ui: &mut dyn Ui, log: &Log) -> Result<(), String> {
     let name = package.display();
     let mut bar = Bar::default();
     ui.print("Finding update package...");
-    let mut file = File::open(package).map_err(|e| format!("{name}: {e}"))?;
+    let file = File::open(package).map_err(|e| format!("{name}: {e}"))?;
     let len = file.metadata().map_err(|e| format!("{name}: {e}"))?.len();
     log(&format!("update package: {name}, {len} bytes"));
-
-    ui.print("Verifying update package...");
-    bar.show(VERIFICATION, 0.0, Instant::now());
-    let key = crate::sig::verify(&mut file, len, keys, |part| {
-        bar.set(part);
-        ui.progress(bar.position(Instant::now()));
-    })?;
-    log(&format!("the package's signature is by key {key} of {}", keys.len()));
 
     ui.print("Installing update...");
     let mut archive = crate::zip::Archive::open(file, len)?;
@@ -185,7 +175,7 @@ pub fn install(package: &Path, keys: &[RsaPublicKey], tmp: &Path, ui: &mut dyn U
                 match word {
                     "progress" => {
                         let (portion, seconds) = (numbers.next().unwrap_or(0.0), numbers.next().unwrap_or(0.0));
-                        bar.show(portion * (1.0 - VERIFICATION), seconds, Instant::now());
+                        bar.show(portion, seconds, Instant::now());
                     }
                     "set_progress" => bar.set(numbers.next().unwrap_or(0.0)),
                     "ui_print" => ui.print(rest),
@@ -223,8 +213,6 @@ mod tests {
     use crate::zip::FileEntry;
     use std::sync::Mutex;
 
-    const KEY: &str = include_str!("../../opendeskphone-image/keys/d80-ota.key.pem");
-
     #[derive(Default)]
     struct Seen {
         printed: Vec<String>,
@@ -240,30 +228,29 @@ mod tests {
         }
     }
 
-    /// A package whose installer is a shell script, signed or not.  The
-    /// scripts use nothing but the shell: a build sandbox has little else.
-    fn package(dir: &Path, script: &str, signed: bool) -> std::path::PathBuf {
+    /// A package whose installer is a shell script.  The scripts use
+    /// nothing but the shell: a build sandbox has little else.
+    fn package(dir: &Path, script: &str) -> std::path::PathBuf {
         let zip = crate::zip::write(&[
             FileEntry { name: UPDATE_BINARY, data: script.as_bytes(), executable: true },
             FileEntry { name: "payload", data: b"the payload\n", executable: false },
         ])
         .unwrap();
-        let zip = if signed { crate::sig::sign(&zip, KEY, crate::sig::CERTIFICATE).unwrap() } else { zip };
         let path = dir.join("update.zip");
         std::fs::write(&path, zip).unwrap();
         path
     }
 
-    fn run(script: &str, signed: bool) -> (Result<(), String>, Seen, Vec<String>, tempfile::TempDir) {
+    fn run(script: &str) -> (Result<(), String>, Seen, Vec<String>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let package = package(dir.path(), script, signed);
+        let package = package(dir.path(), script);
         let lines = Arc::new(Mutex::new(Vec::new()));
         let log: Log = {
             let lines = lines.clone();
             Arc::new(move |line: &str| lines.lock().unwrap().push(line.to_string()))
         };
         let mut seen = Seen::default();
-        let result = install(&package, &crate::sig::keys(), dir.path(), &mut seen, &log);
+        let result = install(&package, dir.path(), &mut seen, &log);
         let lines = lines.lock().unwrap().clone();
         (result, seen, lines, dir)
     }
@@ -280,34 +267,26 @@ mod tests {
             echo \"$3\" > \"${3%/*}/ran\"\n\
             echo \"progress 0.200000 0\" >&$2\n\
             echo \"set_progress 1.000000\" >&$2\n";
-        let (result, seen, log, dir) = run(script, true);
+        let (result, seen, log, dir) = run(script);
         assert_eq!(result, Ok(()));
         let package = dir.path().join("update.zip");
         assert_eq!(std::fs::read_to_string(dir.path().join("ran")).unwrap().trim(), package.to_str().unwrap());
         assert!(seen.printed.iter().any(|l| l == "Open Desk Phone"), "{:?}", seen.printed);
-        // The bar never goes back, and ends full: a quarter for the
-        // signature, then the program's parts of the rest.
+        // The bar never goes back, and ends full: the program's parts are
+        // shares of the whole.
         assert!(seen.positions.windows(2).all(|w| w[0] <= w[1]), "{:?}", seen.positions);
         assert_eq!(seen.positions.last(), Some(&1.0));
-        assert!(seen.positions.iter().any(|p| (p - 0.25).abs() < 1e-6));
-        assert!(seen.positions.iter().any(|p| (p - (0.25 + 0.75 * 0.8 * 0.5)).abs() < 1e-6), "{:?}", seen.positions);
+        assert!(seen.positions.iter().any(|p| (p - 0.8).abs() < 1e-6), "{:?}", seen.positions);
+        assert!(seen.positions.iter().any(|p| (p - 0.8 * 0.5).abs() < 1e-6), "{:?}", seen.positions);
         assert!(log.iter().any(|l| l == &format!("said on stdout: {}", package.display())), "{log:?}");
         assert!(log.iter().any(|l| l == "said on stderr"));
     }
 
     #[test]
     fn a_failing_program_fails_the_installation() {
-        let (result, _, log, _dir) = run("#!/bin/sh\necho no good\nexit 7\n", true);
+        let (result, _, log, _dir) = run("#!/bin/sh\necho no good\nexit 7\n");
         assert!(result.unwrap_err().contains("failed"));
         assert!(log.iter().any(|l| l == "no good"));
-    }
-
-    #[test]
-    fn an_unsigned_package_is_not_run() {
-        let (result, _, _, dir) = run("#!/bin/sh\necho ran > \"${3%/*}/ran\"\n", false);
-        assert!(result.unwrap_err().contains("not signed"));
-        assert!(!dir.path().join("ran").exists());
-        assert!(!dir.path().join("update_binary").exists());
     }
 
     #[test]

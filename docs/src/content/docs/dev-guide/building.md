@@ -92,13 +92,15 @@ The package's script writes two partitions, and `dphone` writes the recovery's b
 
 The package contains `boot.img`, `rootfs.img`, the script that writes them (`META-INF/com/google/android/updater-script`), and the program that runs the script (`update-binary`).  The program is the stock package's own, because a recovery runs whatever program a package brings.  The package also contains `recovery.img`, which the script does not write: a recovery does not replace itself while it runs.
 
-The package is signed the way Android's `signapk -w` signs a whole file: the signature (RSA with SHA-1, as in the stock package) and the certificate are in the zip file's comment.  The key and its certificate are `d80-ota.key.pem` and `d80-ota.x509.pem` in `crates/opendeskphone-image/keys`.  The private key is in the repository, so the signature does not show who built a package: anyone can make it.  The recovery built here installs only packages signed with this key, and `dphone update install` refuses any other Open Desk Phone package.  The stock recovery's key list has the vendor's key and one other key, and does not have this key.
+The package is signed the way Android's `signapk -w` signs a whole file: the signature (RSA with SHA-1, as in the stock package) and the certificate are in the zip file's comment.  The key and its certificate are `d80-ota.key.pem` and `d80-ota.x509.pem` in `crates/opendeskphone-image/keys`.  The private key is in the repository, so the signature does not show who built a package: anyone can make it.  The signature is provenance, not a gate: the recovery built here installs any package left for it, signed or not.  The stock recovery is different: it verifies the signature against its key list, which has the vendor's key and one other key, and does not have this key.
+
+The EFF that wraps the package ends with a second signature, stored inside the envelope: 256 bytes of RSA over SHA-256 of the decrypted image minus those bytes.  The stock updater verifies this signature before handing the package to a recovery.  Every D80 image carries it, stock and Open Desk Phone alike, so the build signs ours with the same key used for the package (`opendeskphone-image eff pack --model D80`).
 
 The image build takes four more files from the stock D80 image, which Nix downloads from the vendor (`nix/d80-firmware.nix`): the firmware of the voice processor, the firmware and the settings file of the Wi-Fi module, and the patch file of the Bluetooth module.
 
 Two things about installing the package are not settled:
 
-- **The first installation.**  A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither, so the stock recovery refuses it.  This repository provides no way to install the image on a phone that runs stock firmware.
+- **The first installation.**  A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither key, so the stock recovery refuses it.  This repository provides no way to install the image on a phone that runs stock firmware.
 - **Updates from the web interface and from provisioning.**  Only `dphone update install` leaves a package for the recovery.  The web interface and a DPMA server's firmware entries refuse on a D80.
 
 ### The D80's recovery

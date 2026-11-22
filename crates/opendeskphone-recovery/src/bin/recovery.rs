@@ -5,9 +5,10 @@
 //!
 //! 1. It mounts the stock `/cache` partition (`dphone`'s nvdata) and reads
 //!    `recovery/command` there.
-//! 2. With `--update_package=PATH` in it, it checks the package's signature
-//!    against its keys and runs the package's `update-binary`
-//!    (`opendeskphone_recovery::install`), with a bar on the screen.
+//! 2. With `--update_package=PATH` in it, it runs the package's
+//!    `update-binary` (`opendeskphone_recovery::install`), with a bar on
+//!    the screen.  It does not verify the package's signature: the
+//!    recovery installs whatever package is left for it.
 //! 3. It writes `recovery/last_install` and `recovery/last_log`, removes
 //!    the command (and the package, once installed), sets the boot
 //!    loader's `bootcmd` back to the system, and restarts.
@@ -26,7 +27,7 @@
 use opendeskphone_hal::phone::DrmDisplay;
 use opendeskphone_hal::{Display, FrameInfo, Model, Screen as Panel};
 use opendeskphone_recovery::install::{self, Log};
-use opendeskphone_recovery::{command, env, props, sig};
+use opendeskphone_recovery::{command, env, props};
 use std::ffi::CString;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
@@ -343,7 +344,7 @@ fn run(screen: &mut Option<Screen>, log: &Log) -> Outcome {
         screen.stage(Stage::Installing);
         screen.bar(0.0);
     }
-    let result = install::install(&package, &sig::keys(), Path::new("/tmp"), &mut Shown { screen: screen.as_mut(), log: log.clone() }, log);
+    let result = install::install(&package, Path::new("/tmp"), &mut Shown { screen: screen.as_mut(), log: log.clone() }, log);
     let _ = std::fs::write(dir.join(command::LAST_INSTALL), format!("{}\n{}\n", package.display(), u8::from(result.is_ok())));
     match result {
         Ok(()) => {

@@ -17,8 +17,10 @@
 //! file's first line, without its newline.
 //!
 //! The D80 differs from the other models in two ways: its passphrase is
-//! [`D80_OTA_PASSPHRASE`], and its payload is an Android OTA package (a zip
-//! file) instead of an OTA container.  See [`is_d80`].
+//! [`D80_OTA_PASSPHRASE`], and its payload is an Android OTA package (a
+//! zip file) instead of an OTA container, followed by a signature of the
+//! whole image (`opendeskphone-recovery::sig` builds such images and
+//! splits them apart).  See [`is_d80`].
 
 use crate::{Error, Result, bad};
 use aes::Aes256;
