@@ -173,6 +173,12 @@ struct Inner {
     preview_sound: Option<u32>,
     /// The ringtone that incoming calls ring with (`active_ringtone`).
     ringtone: String,
+    /// The configuration's `ringer_volume` had this value at the last merge
+    /// or save.
+    ringer_configured: Option<u8>,
+    /// Each change of the ringer's volume counts here, so that a save's
+    /// timer can tell whether its change is still the last.
+    ringer_changes: u64,
     /// The ringer is sounding for the alarm clock.
     alarm: bool,
     /// The sound file playing for an app.
@@ -255,6 +261,8 @@ impl AudioService {
                 preview_is_volume: false,
                 preview_sound: None,
                 ringtone: String::new(),
+                ringer_configured: None,
+                ringer_changes: 0,
                 alarm: false,
                 playback: None,
                 ended: Vec::new(),
@@ -597,15 +605,27 @@ impl AudioService {
     }
 
     /// Take the volume settings and the ringtone from the merged
-    /// configuration.
+    /// configuration.  The ringer's volume is taken only when the setting
+    /// has changed, so that the merge of a save does not take back a
+    /// volume set while the save was under way.
     pub fn apply_config(&self, cfg: &opendeskphone_config::Config) {
         let level = |id: &str, now: u8| cfg.setting_num::<u8>(id).map(|v| v.min(VOLUME_MAX)).unwrap_or(now);
-        self.inner.lock().unwrap().ringtone = cfg.ringtones().active;
+        let ringer = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.ringtone = cfg.ringtones().active;
+            let ringer = cfg.setting_num::<u8>("ringer_volume").map(|v| v.min(VOLUME_MAX)).filter(|v| inner.ringer_configured != Some(*v));
+            if ringer.is_some() {
+                inner.ringer_configured = ringer;
+            }
+            ringer
+        };
         self.store.update::<Audio, _>(|a| {
             a.handset_volume = level("handset_volume", a.handset_volume);
             a.headset_volume = level("headset_volume", a.headset_volume);
             a.speaker_volume = level("speaker_volume", a.speaker_volume);
-            a.ringer_volume = level("ringer_volume", a.ringer_volume);
+            if let Some(v) = ringer {
+                a.ringer_volume = v;
+            }
         });
     }
 
@@ -662,7 +682,8 @@ impl AudioService {
         });
     }
 
-    /// Sets a volume; returns which one `target` was (never `Current`).
+    /// The target returned is the one that `target` stood for, never
+    /// `Current`.
     fn set_volume(&self, target: VolumeTarget, level: u8) -> VolumeTarget {
         let level = level.min(VOLUME_MAX);
         let (path, ringing) = {
@@ -684,24 +705,63 @@ impl AudioService {
             VolumeTarget::Speaker => a.speaker_volume = level,
             VolumeTarget::Ringer | VolumeTarget::Current => a.ringer_volume = level,
         });
-        let inner = self.inner.lock().unwrap();
-        let apply = |mp: MPath| {
-            let _ = inner.send(Ec::SetRxGain { path: mp, gain_q8: rx_gain_q8(inner.default_gain(mp), level) });
-        };
-        match target {
-            VolumeTarget::Handset => apply(MPath::Handset),
-            VolumeTarget::Headset => apply(MPath::Headset),
-            VolumeTarget::Speaker => apply(MPath::Speaker),
-            VolumeTarget::Ringer | VolumeTarget::Current => {
-                // A ring that is sounding (for a call, or a preview) goes
-                // on at the new volume; an app's sound file, which plays
-                // in the ring's place, is not the ringer's to scale.
-                if inner.ringing && inner.playback.is_none() {
-                    let _ = inner.send(Ec::SetRingGain(ring_gain_q12(level)));
+        {
+            let inner = self.inner.lock().unwrap();
+            let apply = |mp: MPath| {
+                let _ = inner.send(Ec::SetRxGain { path: mp, gain_q8: rx_gain_q8(inner.default_gain(mp), level) });
+            };
+            match target {
+                VolumeTarget::Handset => apply(MPath::Handset),
+                VolumeTarget::Headset => apply(MPath::Headset),
+                VolumeTarget::Speaker => apply(MPath::Speaker),
+                VolumeTarget::Ringer | VolumeTarget::Current => {
+                    // A ring that is sounding (for a call, or a preview) goes
+                    // on at the new volume; an app's sound file, which plays
+                    // in the ring's place, is not the ringer's to scale.
+                    if inner.ringing && inner.playback.is_none() {
+                        let _ = inner.send(Ec::SetRingGain(ring_gain_q12(level)));
+                    }
                 }
             }
         }
+        if target == VolumeTarget::Ringer {
+            self.save_ringer_volume();
+        }
         target
+    }
+
+    /// The ringer's volume set on the phone is saved to the configuration as
+    /// `ringer_volume`, in the UI layer, as stock's menu saves it, because
+    /// otherwise the next merge would take the volume back.  The save comes
+    /// when the volume popup ends, [`VOLUME_PREVIEW`] after the last change,
+    /// so that a burst of volume keys or of the menu's steps is written
+    /// once.  The save makes a merge, and the volume saved counts as the
+    /// configured one before that merge, so the merge leaves the volume in
+    /// use alone.
+    fn save_ringer_volume(&self) {
+        let mine = {
+            let mut inner = self.inner.lock().unwrap();
+            inner.ringer_changes += 1;
+            inner.ringer_changes
+        };
+        let me = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(VOLUME_PREVIEW).await;
+            let level = me.store.read::<Audio, _>(|a| a.ringer_volume);
+            {
+                let mut inner = me.inner.lock().unwrap();
+                if inner.ringer_changes != mine || inner.ringer_configured == Some(level) {
+                    return;
+                }
+                inner.ringer_configured = Some(level);
+            }
+            let settings = vec![("ringer_volume".to_owned(), level.to_string())];
+            match me.store.send(Command::SetSettings { settings }).await {
+                Ok(_) => {}
+                Err(CommandError::Denied(why)) => info!("audio: the ringer's volume is not saved: {why}"),
+                Err(e) => warn!("audio: the ringer's volume was not saved: {e}"),
+            }
+        });
     }
 
     /// The volume keys adjusted the ringer's volume: on an idle phone the
@@ -1965,6 +2025,53 @@ mod volume_key_tests {
         assert_eq!(preview(&svc), None);
         svc.end_volume_preview(Some(mine));
         assert_eq!(sounding(&svc), (true, AudioPath::Speaker));
+    }
+
+    fn ringer_volume_setting(level: u8) -> opendeskphone_config::Config {
+        let xml = format!("<config><setting id=\"ringer_volume\" value=\"{level}\"/></config>");
+        opendeskphone_config::Config::from_merged(
+            opendeskphone_config::xml::Element::parse(&xml).unwrap(),
+            opendeskphone_config::Model::D60,
+            None,
+        )
+    }
+
+    fn saved(level: u8) -> Command {
+        Command::SetSettings { settings: vec![("ringer_volume".into(), level.to_string())] }
+    }
+
+    #[tokio::test]
+    async fn the_ringers_volume_is_saved_when_the_popup_ends() {
+        let svc = service();
+        let config = svc.store.handle(Domain::Config);
+        svc.apply_config(&ringer_volume_setting(5));
+        key(&svc, 1);
+        tokio::time::sleep(VOLUME_PREVIEW / 2).await;
+        key(&svc, 1);
+        tokio::time::sleep(VOLUME_PREVIEW * 3 / 4).await;
+        assert!(config.try_recv().is_none(), "the time runs from the last key");
+        tokio::time::sleep(VOLUME_PREVIEW / 2).await;
+        let save = config.try_recv().expect("saved");
+        assert_eq!(save.command, saved(7));
+        save.done();
+
+        // A key pressed during the save outlasts the save's merge, and a
+        // setting changed some other way, e.g., in the web UI, is taken.
+        key(&svc, 1);
+        svc.apply_config(&ringer_volume_setting(7));
+        assert_eq!(svc.store.get::<Audio>().ringer_volume, 8);
+        svc.apply_config(&ringer_volume_setting(3));
+        assert_eq!(svc.store.get::<Audio>().ringer_volume, 3);
+        // Nothing is saved now: the setting holds the volume in use, and
+        // the handset's volume is not the ringer's.
+        svc.command(Command::SetVolume { target: VolumeTarget::Handset, level: 2 }).unwrap();
+        tokio::time::sleep(VOLUME_PREVIEW + Duration::from_millis(200)).await;
+        assert!(config.try_recv().is_none());
+
+        // The Ringer volume screen sets the level, and that is saved too.
+        svc.command(Command::SetVolume { target: VolumeTarget::Ringer, level: 4 }).unwrap();
+        tokio::time::sleep(VOLUME_PREVIEW + Duration::from_millis(200)).await;
+        assert_eq!(config.try_recv().map(|e| e.command.clone()), Some(saved(4)));
     }
 
     #[tokio::test]
