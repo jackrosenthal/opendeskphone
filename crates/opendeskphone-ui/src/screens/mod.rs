@@ -125,10 +125,18 @@ pub(crate) trait Screen: Send {
     /// screen's, [`Hit::Custom`] or [`Hit::Row`], or none) moved `dx` and
     /// `dy` pixels (up is negative).  Called for every movement of the
     /// drag.  When this returns [`Nav::Ignored`], the screen's
-    /// [`Screen::list_state`], if it has one, is scrolled by rows of the
-    /// skin's height.
+    /// [`Screen::list_state`], if it has one, is scrolled
+    /// ([`ListState::drag`], in rows of the skin's height).
     fn drag(&mut self, _cx: &Cx, _from: Option<Hit>, _dx: i32, _dy: i32) -> Nav {
         Nav::Ignored
+    }
+    /// On the touch skin, a screen whose drags scroll a list and change
+    /// nothing else returns the rectangle the list was last drawn in.
+    /// After such a drag the UI draws only that part of the screen again
+    /// ([`Canvas::set_limit`]).  With `None`, which is the default, the
+    /// screen is drawn whole after a drag.
+    fn scrolled(&self) -> Option<IRect> {
+        None
     }
     /// Touch: [`Screen::drag`] with the place the finger went down, pixel
     /// (`x`, `y`) of the screen, for a screen that has to know where in a
@@ -538,14 +546,13 @@ pub(crate) struct Info {
     name: &'static str,
     title: String,
     build: Box<dyn Fn(&Cx) -> Vec<(String, String)> + Send>,
-    top: usize,
-    /// Touch: how far a finger has dragged the rows, short of a row.
-    drag: i32,
+    /// Only the scroll position is used, since nothing is selected.
+    st: ListState,
 }
 
 impl Info {
     pub fn boxed(name: &'static str, title: impl Into<String>, build: impl Fn(&Cx) -> Vec<(String, String)> + Send + 'static) -> Box<dyn Screen> {
-        Box::new(Info { name, title: title.into(), build: Box::new(build), top: 0, drag: 0 })
+        Box::new(Info { name, title: title.into(), build: Box::new(build), st: ListState::default() })
     }
 }
 
@@ -578,22 +585,18 @@ impl Screen for Info {
         Nav::Pop
     }
     fn drag(&mut self, cx: &Cx, _from: Option<Hit>, _dx: i32, dy: i32) -> Nav {
-        let row_h = Self::row_h(cx.th);
-        self.drag -= dy;
-        let rows = self.drag / row_h;
-        self.drag -= rows * row_h;
-        // (Drawing keeps it within the rows there are.)
-        self.top = (self.top as i32 + rows).max(0) as usize;
+        let len = (self.build)(cx).len();
+        self.st.drag(dy, Self::row_h(cx.th), len);
         Nav::Stay
     }
     fn key(&mut self, _cx: &Cx, key: Key) -> Nav {
         match key {
             Key::Up => {
-                self.top = self.top.saturating_sub(1);
+                self.st.top = self.st.top.saturating_sub(1);
                 Nav::Stay
             }
             Key::Down => {
-                self.top += 1;
+                self.st.top += 1;
                 Nav::Stay
             }
             Key::Cancel | Key::Left | Key::Select => Nav::Pop,
@@ -609,13 +612,18 @@ impl Screen for Info {
         // Stock (color): 32-pixel rows from y 42 with a hairline under
         // each, text inset 15 pixels.
         let (row_h, top, inset) = if th.gray { (th.line_h, 0, th.pad + 2) } else { (Self::row_h(th), 2, th.title_pad) };
-        let visible = ((body.h - top) / row_h).max(1) as usize;
-        self.top = self.top.min(rows.len().saturating_sub(visible));
+        let area = IRect { y: body.y + top, h: body.h - top, ..body };
+        let visible = (area.h / row_h).max(1) as usize;
+        self.st.scroll_within(rows.len(), visible);
         let bar = rows.len() > visible;
         let w = body.w - if bar { th.scroll_w } else { 0 } - 2 * inset;
         let f = th.font(Font::Normal);
-        for (i, (k, v)) in rows.iter().skip(self.top).take(visible).enumerate() {
-            let r = IRect::new(body.x + inset, body.y + top + i as i32 * row_h, w, row_h - if th.gray { 0 } else { 1 });
+        let old = c.push_clip(area);
+        // The rows are shown as `widgets::list` shows a list's.
+        let shown = if th.touch() { rows.len() } else { visible };
+        for (i, y) in widgets::rows_shown(area, &self.st, rows.len(), |_| row_h).take(shown) {
+            let (k, v) = &rows[i];
+            let r = IRect::new(body.x + inset, y, w, row_h - if th.gray { 0 } else { 1 });
             if v.is_empty() {
                 c.text_in(th.font(Font::Bold), r, k, th.fg, HAlign::Left);
             } else if k.is_empty() {
@@ -627,7 +635,9 @@ impl Screen for Info {
                 c.hline(r.x, r.bottom(), r.w + th.px(4), th.border);
             }
         }
-        widgets::scroll_bar(c, th, body, rows.len() as i32, visible as i32, self.top as i32);
+        c.restore_clip(old);
+        let at = self.st.top as i32 * row_h + self.st.drag;
+        widgets::scroll_bar(c, th, body, rows.len() as i32 * row_h, visible as i32 * row_h, at);
     }
     fn deadline(&self, cx: &Cx) -> Option<u64> {
         Some(cx.now_ms + 1000)

@@ -525,22 +525,27 @@ impl Launcher {
         let icon_h = cell_h - th.pad * 4 - th.line_h;
         let visible_rows = (body.h / cell_h).max(1) as usize;
         let total_rows = apps.len().div_ceil(cols);
-        self.st.top = self.st.top.min(total_rows.saturating_sub(visible_rows));
+        // The grid's rows are the rows of a list.
+        self.st.scroll_within(total_rows, visible_rows);
+        let st = self.st;
         let f = th.font(Font::Normal);
         let old = c.push_clip(body);
-        for (i, app) in apps.iter().enumerate().skip(self.st.top * cols).take(visible_rows * cols) {
-            let (col, row) = ((i % cols) as i32, (i / cols - self.st.top) as i32);
-            let cell = IRect::new(body.x + col * cell_w, body.y + row * cell_h, cell_w, cell_h);
-            if let Some(icon) = self.app_icon(th, app) {
-                let (iw, ih) = icon.size();
-                icon.draw(c, cell.x + (cell.w - iw) / 2, cell.y + th.pad * 2 + (icon_h - ih).max(0) / 2, th.fg);
+        for (row, y) in widgets::rows_shown(body, &st, total_rows, |_| cell_h) {
+            for (i, app) in apps.iter().enumerate().skip(row * cols).take(cols) {
+                let col = (i % cols) as i32;
+                let cell = IRect::new(body.x + col * cell_w, y, cell_w, cell_h);
+                if let Some(icon) = self.app_icon(th, app) {
+                    let (iw, ih) = icon.size();
+                    icon.draw(c, cell.x + (cell.w - iw) / 2, cell.y + th.pad * 2 + (icon_h - ih).max(0) / 2, th.fg);
+                }
+                let label = IRect::new(cell.x + th.pad, cell.y + th.pad * 3 + icon_h, cell.w - th.pad * 2, th.line_h);
+                c.text_in(f, label, &app.display_name, th.fg, HAlign::Center);
+                c.hit(cell, Hit::Custom(i as u32));
             }
-            let label = IRect::new(cell.x + th.pad, cell.y + th.pad * 3 + icon_h, cell.w - th.pad * 2, th.line_h);
-            c.text_in(f, label, &app.display_name, th.fg, HAlign::Center);
-            c.hit(cell, Hit::Custom(i as u32));
         }
         c.restore_clip(old);
-        widgets::scroll_bar(c, th, body, total_rows as i32, visible_rows as i32, self.st.top as i32);
+        let at = st.top as i32 * cell_h + st.drag;
+        widgets::scroll_bar(c, th, body, total_rows as i32 * cell_h, visible_rows as i32 * cell_h, at);
     }
 }
 
@@ -1282,8 +1287,10 @@ impl Screen for Choices {
 /// in its colors, which a small picture would not.
 struct Themes {
     selected: usize,
-    /// Touch: the rows of the sheet.
+    /// On the touch skin, these are the sheet's rows.
     st: ListState,
+    /// The sheet's rows were last drawn in this rectangle.
+    rows: IRect,
     /// Touch: the sheet is to scroll to the selection when it next draws
     /// (it was opened, or a key stepped).
     follow: bool,
@@ -1293,7 +1300,7 @@ struct Themes {
 pub(crate) fn themes(cfg: &crate::UiConfig) -> Box<dyn Screen> {
     let current = crate::wallpaper::find_or_default(&cfg.theme).id;
     let selected = crate::wallpaper::all().iter().position(|w| w.id == current).unwrap_or(0);
-    Box::new(Themes { selected, st: ListState::default(), follow: true })
+    Box::new(Themes { selected, st: ListState::default(), rows: IRect::default(), follow: true })
 }
 
 /// Touch: how many themes the selector's sheet shows at once.
@@ -1333,12 +1340,14 @@ impl Themes {
         c.fill(sheet, th.bg);
         let (title, rows) = sheet.split_top(th.title_h);
         widgets::title_bar(c, th, title, tr::THEME);
+        self.rows = rows;
         self.st.selected = self.selected;
         if self.follow {
             // The selection second from the top, with the theme before it
             // above it.
             self.follow = false;
             self.st.top = self.selected.saturating_sub(1).min(all.len().saturating_sub(THEME_ROWS as usize));
+            self.st.drag = 0;
         }
         // The theme touched last is the one in use (or, fixed by the
         // server, the one shown); there is no highlight to move.
@@ -1380,6 +1389,12 @@ impl Screen for Themes {
     }
     fn list_state(&mut self, _cx: &Cx) -> Option<(&mut ListState, usize)> {
         Some((&mut self.st, crate::wallpaper::all().len()))
+    }
+    /// A finger on the sheet moves the sheet's rows and nothing else, and
+    /// the idle screen above the sheet takes the phone far longer to draw
+    /// than the rows do.
+    fn scrolled(&self) -> Option<IRect> {
+        Some(self.rows).filter(|r| !r.is_empty())
     }
     fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
         match hit {

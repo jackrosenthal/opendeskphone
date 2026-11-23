@@ -105,7 +105,7 @@ pub(crate) fn press_rect(tree: &Tree, x: i32, y: i32) -> Option<IRect> {
     let row_h = n.row_height.max(1) as i32;
     let bar = n.rows.len() as i32 * row_h > r.h;
     let w = r.w - if bar { tree.metrics.scroll_bar_width as i32 } else { 0 };
-    Some(IRect::new(r.x, r.y + (row as i32 - n.top_row as i32) * row_h, w, row_h).intersect(&r))
+    Some(IRect::new(r.x, r.y + (row as i32 - n.top_row as i32) * row_h - n.drag, w, row_h).intersect(&r))
 }
 
 pub(crate) fn softkey_labels(tree: &Tree) -> [String; 4] {
@@ -292,7 +292,7 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
             }
         }
         WidgetKind::List => {
-            let mut st = ListState { selected: node.selected as usize, top: node.top_row as usize, drag: 0 };
+            let mut st = ListState { selected: node.selected as usize, top: node.top_row as usize, drag: node.drag, ..Default::default() };
             let bar = node.rows.len() as i32 * node.row_height as i32 > r.h;
             let widths = column_widths(&node.columns, r.w - if bar { th.scroll_w } else { 0 });
             // A list shows its selection whenever it has focus, or when
@@ -330,7 +330,7 @@ fn draw_node(tree: &mut Tree, c: &mut Canvas, th: &Theme, id: WidgetId, ox: i32,
             });
             if let Some(n) = tree.node_mut(id) {
                 n.selected = st.selected as u32;
-                n.top_row = st.top as u32;
+                (n.top_row, n.drag) = (st.top as u32, st.drag);
             }
         }
         WidgetKind::Input => {
@@ -551,10 +551,8 @@ fn locate(tree: &Tree, x: i32, y: i32) -> Option<Target> {
                 WidgetKind::List => {
                     // The rows as `widgets::list` lays them out.
                     let row_h = n.row_height.max(1) as i32;
-                    let shown = (n.rect.h as i32 / row_h).max(1);
-                    let i = (y - ry) / row_h;
-                    let row = n.top_row as i32 + i;
-                    *found = Some(if i < shown && (row as usize) < n.rows.len() {
+                    let row = n.top_row as i32 + (y - ry + n.drag) / row_h;
+                    *found = Some(if (row as usize) < n.rows.len() {
                         Target::Row { list: id, row: row as u32 }
                     } else {
                         Target::List(id)
@@ -634,7 +632,8 @@ fn scroll_by(tree: &mut Tree, from: WidgetId, dy: i32) {
         let Some(n) = tree.node_mut(id) else { return };
         match n.kind {
             WidgetKind::List if n.rows.len() as i32 * n.row_height as i32 > n.rect.h as i32 => {
-                let mut st = ListState { selected: n.selected as usize, top: n.top_row as usize, drag: n.drag };
+                let visible = (n.rect.h / n.row_height.max(1)) as usize;
+                let mut st = ListState { selected: n.selected as usize, top: n.top_row as usize, drag: n.drag, visible };
                 st.drag(dy, n.row_height as i32, n.rows.len());
                 (n.top_row, n.drag) = (st.top as u32, st.drag);
                 return;
@@ -766,7 +765,7 @@ fn dispatch_locked(tree: &mut Tree, key: Key, now_ms: u64, events: &mut Vec<AppE
                 let len = n.rows.len();
                 match key {
                     Key::Up | Key::Down => {
-                        let mut st = ListState { selected: n.selected as usize, top: n.top_row as usize, drag: 0 };
+                        let mut st = ListState { selected: n.selected as usize, ..Default::default() };
                         if st.step(if key == Key::Up { -1 } else { 1 }, len, n.wrap_selection) {
                             n.selected = st.selected as u32;
                             events.push(AppEvent::ListSelected { widget: id, row: n.selected });

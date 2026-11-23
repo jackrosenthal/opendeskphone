@@ -567,10 +567,13 @@ fn a_finger_scrolls_the_bluetooth_list() {
         }
     });
     let first = r.region(row(0));
+    let fifth = r.region(row(5));
     assert!(!r.has(row(14)));
-    // Up by a few rows: the rows follow the finger.
+    // The finger goes up by a few rows, and the rows follow it by the
+    // pixel.
     r.sim.touch_drag((400, 1000), (400, 600), 8);
     r.ui.pump();
+    assert_eq!(r.region(row(5)), IRect { y: fifth.y - 400, ..fifth });
     assert!(!r.has(row(0)));
     assert!(r.has(row(3)) && !r.has(row(14)));
     // Up by more than there is: the last row is the last one shown.

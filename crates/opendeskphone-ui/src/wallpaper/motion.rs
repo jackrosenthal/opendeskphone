@@ -290,6 +290,11 @@ impl Moving {
         self.frame_and_changes(t_ms).0
     }
 
+    /// The frame drawn last is the one numbered [`Moving::serial`].
+    pub(super) fn drawn(&self) -> &[u32] {
+        &self.out
+    }
+
     /// Draws the frame of `t_ms`; returns it, the pixels drawn, which are
     /// all that can differ from the frame before, and its number.
     pub(super) fn frame_and_changes(&mut self, t_ms: u64) -> (&[u32], &[Run], u64) {

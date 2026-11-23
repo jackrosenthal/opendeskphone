@@ -66,6 +66,12 @@ fn line_h(th: &Theme, line: &Line) -> i32 {
     }
 }
 
+/// This is the first line in view at the end of a list `h` pixels high,
+/// where the last line shows at the bottom.
+fn last_line(th: &Theme, lines: &[Line], h: i32) -> usize {
+    (0..lines.len()).find(|t| lines[*t..].iter().map(|l| line_h(th, l)).sum::<i32>() <= h).unwrap_or(0)
+}
+
 /// Touch: the PIN, typed for the device at `addr` while it asks for one
 /// (its question may be gone by the time the PIN is typed).
 fn pin_entry(addr: String, typed: &str) -> Box<dyn Screen> {
@@ -141,8 +147,8 @@ pub(crate) fn screen() -> Box<dyn Screen> {
         opened: false,
         selected: String::new(),
         index: 0,
-        top: 0,
-        drag: 0,
+        st: widgets::ListState::default(),
+        list_h: 0,
         pin: String::new(),
         pin_for: String::new(),
     })
@@ -155,11 +161,12 @@ struct BluetoothScreen {
     /// when it goes.  (Touch: the device last touched.)
     selected: String,
     index: usize,
-    /// The first line of the list in view.
-    top: usize,
-    /// Touch: how far a finger has dragged the list, in pixels, short of a
-    /// line.
-    drag: i32,
+    /// This holds the first line of the list in view, and on the touch skin
+    /// how far the list is scrolled past that line's top.
+    st: widgets::ListState,
+    /// On the touch skin, the list was this many pixels high when it was
+    /// last drawn.
+    list_h: i32,
     /// The PIN being typed, and the device that asked for it.
     pin: String,
     pin_for: String,
@@ -227,22 +234,22 @@ impl BluetoothScreen {
             self.highlight(rows, i);
         }
         if th.touch() {
-            // A finger scrolls the list ([`Screen::drag`]), no farther
-            // than shows its last line at the bottom.
-            let last = (0..lines.len()).find(|t| lines[*t..].iter().map(height).sum::<i32>() <= body.h).unwrap_or(0);
-            self.top = self.top.min(last);
+            // A drag needs the list's height ([`Screen::drag`]).
+            self.list_h = body.h;
+            self.st.stop_at(last_line(th, &lines, body.h));
         } else {
             // Scroll so that the highlighted row is in view, with its
             // group's heading when there is room, and no room is left
             // below the end.
             let sel = lines.iter().position(|l| Some(*l) == current.map(Line::Device)).unwrap_or(0);
             let first = if sel > 0 && matches!(lines[sel - 1], Line::Heading(_)) { sel - 1 } else { sel };
-            self.top = self.top.min(first).min(lines.len().saturating_sub(1));
-            while self.top < sel && lines[self.top..=sel].iter().map(height).sum::<i32>() > body.h {
-                self.top += 1;
+            let top = &mut self.st.top;
+            *top = (*top).min(first).min(lines.len().saturating_sub(1));
+            while *top < sel && lines[*top..=sel].iter().map(height).sum::<i32>() > body.h {
+                *top += 1;
             }
-            while self.top > 0 && lines[self.top - 1..].iter().map(height).sum::<i32>() <= body.h {
-                self.top -= 1;
+            while *top > 0 && lines[*top - 1..].iter().map(height).sum::<i32>() <= body.h {
+                *top -= 1;
             }
         }
         let total: i32 = lines.iter().map(height).sum();
@@ -250,13 +257,10 @@ impl BluetoothScreen {
         let w = if bar { body.w - th.scroll_w } else { body.w };
         let f = th.font(Font::Normal);
         let old = c.push_clip(body);
-        let mut y = body.y;
-        for line in &lines[self.top..] {
-            if y >= body.bottom() {
-                break;
-            }
+        let st = self.st;
+        for (k, y) in widgets::rows_shown(body, &st, lines.len(), |k| height(&lines[k])) {
+            let line = &lines[k];
             let r = IRect::new(body.x, y, w, height(line));
-            y += r.h;
             let i = match *line {
                 Line::Heading(text) => {
                     // Small, dim, and sitting on the rows it heads.
@@ -299,8 +303,8 @@ impl BluetoothScreen {
             }
         }
         c.restore_clip(old);
-        let before: i32 = lines[..self.top].iter().map(height).sum();
-        widgets::scroll_bar(c, th, body, total, body.h, before);
+        let before: i32 = lines[..st.top].iter().map(height).sum();
+        widgets::scroll_bar(c, th, body, total, body.h, before + st.drag);
     }
 
     /// The pairing question, in a box over the list: whom it is with, and
@@ -551,7 +555,7 @@ impl Screen for BluetoothScreen {
             Key::Up | Key::Down => {
                 let rows = rows(bt);
                 if let Some(i) = self.current(&rows) {
-                    let mut st = widgets::ListState { selected: i, top: 0, drag: 0 };
+                    let mut st = widgets::ListState { selected: i, ..Default::default() };
                     st.step(if key == Key::Up { -1 } else { 1 }, rows.len(), true);
                     self.highlight(&rows, st.selected);
                 }
@@ -593,32 +597,16 @@ impl Screen for BluetoothScreen {
         }
     }
 
-    /// Touch: a finger scrolls the list, a line at a time.
     fn drag(&mut self, cx: &Cx, _from: Option<Hit>, _dx: i32, dy: i32) -> Nav {
         let bt = &cx.st.bluetooth;
         let lines = lines(&rows(bt));
         if bt.pairing.is_some() || lines.is_empty() {
             return Nav::Stay;
         }
-        self.drag -= dy;
-        loop {
-            if self.drag > 0 && self.top + 1 < lines.len() && self.drag >= line_h(cx.th, &lines[self.top]) {
-                self.drag -= line_h(cx.th, &lines[self.top]);
-                self.top += 1;
-            } else if self.drag < 0 && self.top > 0 && -self.drag >= line_h(cx.th, &lines[self.top - 1]) {
-                self.drag += line_h(cx.th, &lines[self.top - 1]);
-                self.top -= 1;
-            } else {
-                break;
-            }
-        }
-        // Not beyond the first line or the last.
-        if self.top == 0 {
-            self.drag = self.drag.max(0);
-        }
-        if self.top + 1 >= lines.len() {
-            self.drag = self.drag.min(0);
-        }
+        // The list may have fewer lines than when it was last drawn.
+        let last = last_line(cx.th, &lines, self.list_h);
+        self.st.stop_at(last);
+        self.st.drag_by(dy, last, |k| line_h(cx.th, &lines[k]));
         Nav::Stay
     }
 

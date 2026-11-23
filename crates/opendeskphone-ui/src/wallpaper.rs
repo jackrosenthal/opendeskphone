@@ -408,7 +408,6 @@ impl Wallpaper {
     /// pixels ([`Wallpaper::render_sized`]).  What is kept is kept for one
     /// wallpaper at one size.
     pub fn with_frame_and_changes_sized<R>(&'static self, w: i32, h: i32, t_ms: u64, f: impl FnOnce(&[u32], Changes) -> R) -> R {
-        static MOVING: Mutex<Option<motion::Moving>> = Mutex::new(None);
         let fit = Fit::new(w, h);
         let mut moving = MOVING.lock().unwrap_or_else(|p| p.into_inner());
         if moving.as_ref().is_none_or(|m| m.id != self.id || m.fit != fit) {
@@ -424,7 +423,21 @@ impl Wallpaper {
         let (frame, runs, serial) = m.frame_and_changes(t_ms);
         f(frame, Changes { serial, before, runs })
     }
+
+    /// A screen of `w` x `h` pixels that shows frame `serial`
+    /// ([`Changes::serial`]) of this wallpaper's motion draws part of
+    /// itself again over that frame with this.  The frame is kept only
+    /// until the next one is drawn, and after that this returns `None`.
+    pub fn with_drawn_frame_sized<R>(&'static self, w: i32, h: i32, serial: u64, f: impl FnOnce(&[u32]) -> R) -> Option<R> {
+        let moving = MOVING.lock().unwrap_or_else(|p| p.into_inner());
+        let m = moving.as_ref().filter(|m| m.id == self.id && m.fit == Fit::new(w, h) && m.serial == serial)?;
+        Some(f(m.drawn()))
+    }
 }
+
+/// The wallpaper in motion keeps its last frame here, and what its next
+/// frame is drawn from ([`Wallpaper::with_frame_and_changes_sized`]).
+static MOVING: Mutex<Option<motion::Moving>> = Mutex::new(None);
 
 /// What a frame of a wallpaper in motion changed
 /// ([`Wallpaper::with_frame_and_changes`]).

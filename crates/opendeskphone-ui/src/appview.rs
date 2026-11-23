@@ -531,7 +531,8 @@ pub(crate) struct Node {
     pub rows: Vec<Vec<Cell>>,
     pub selected: u32,
     pub top_row: u32,
-    /// Touch: how far a finger has dragged the list, short of a row.
+    /// On the touch skin, the list is scrolled this many pixels past the
+    /// top of row `top_row`.
     pub drag: i32,
     pub row_height: u16,
     pub shortcuts: bool,
@@ -880,7 +881,9 @@ impl Tree {
             n.selected = row.min(n.rows.len().saturating_sub(1) as u32);
             if touch {
                 let visible = (n.rect.h / n.row_height.max(1)).max(1) as u32;
-                if n.selected < n.top_row {
+                // A row that is scrolled partly out at the top is brought in
+                // whole.
+                if n.selected < n.top_row || (n.selected == n.top_row && n.drag > 0) {
                     n.top_row = n.selected;
                     n.drag = 0;
                 } else if n.selected >= n.top_row + visible {

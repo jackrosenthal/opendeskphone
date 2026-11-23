@@ -13,9 +13,12 @@ use opendeskphone_state::Key;
 pub struct ListState {
     pub selected: usize,
     pub top: usize,
-    /// Touch: how far a finger has dragged the list, in pixels, short of
-    /// a whole row ([`ListState::drag`]).
+    /// On the touch skin, the list is scrolled this many pixels past the
+    /// top of row `top` ([`ListState::drag`]).
     pub drag: i32,
+    /// On the touch skin, this is how many whole rows the list showed when
+    /// it was last drawn.
+    pub visible: usize,
 }
 
 impl ListState {
@@ -33,26 +36,59 @@ impl ListState {
         new != old
     }
 
-    /// Touch: a finger dragged the list `dy` pixels (up is negative: the
-    /// rows follow the finger, so the list scrolls down).  The list moves
-    /// by whole rows of `row_h` pixels; what is left of the way is kept
-    /// for the next call.  [`list`] keeps the top row within the rows
-    /// there are when it next draws.  Returns whether the list moved.
+    /// On the touch skin, a finger dragged the list `dy` pixels, in rows of
+    /// `row_h` pixels.  Up is negative: the rows follow the finger, so the
+    /// list scrolls down.  The list moves as far as the finger did, by the
+    /// pixel: whole rows go into `top`, and the pixels left over, always
+    /// fewer than a row's, go into `drag`.  The list stops at its ends with
+    /// `drag` at 0, at its first row and where its last row is the last of
+    /// the [`ListState::visible`] rows, and a drag back moves it at once.
+    /// Nothing moves on, or snaps to a row, when the finger is lifted.
+    /// This returns whether the list moved.
     pub fn drag(&mut self, dy: i32, row_h: i32, len: usize) -> bool {
+        self.drag_by(dy, len.saturating_sub(self.visible.max(1)), |_| row_h)
+    }
+
+    /// This is [`ListState::drag`] for rows of different heights, where
+    /// row `i` is `h(i)` pixels high and row `last` is at the top of the
+    /// list at its end.
+    pub fn drag_by(&mut self, dy: i32, last: usize, h: impl Fn(usize) -> i32) -> bool {
+        let h = |i| h(i).max(1);
+        let before = (self.top, self.drag);
         self.drag -= dy;
-        let rows = self.drag / row_h.max(1);
-        self.drag -= rows * row_h.max(1);
-        let top = (self.top as i32 + rows).clamp(0, len.saturating_sub(1) as i32) as usize;
-        let moved = top != self.top;
-        self.top = top;
-        moved
+        while self.drag < 0 && self.top > 0 {
+            self.top -= 1;
+            self.drag += h(self.top);
+        }
+        while self.top < last && self.drag >= h(self.top) {
+            self.drag -= h(self.top);
+            self.top += 1;
+        }
+        self.drag = self.drag.max(0);
+        self.stop_at(last);
+        (self.top, self.drag) != before
+    }
+
+    /// The list's end is where row `last` is at its top, and this keeps the
+    /// list from scrolling past it.
+    pub fn stop_at(&mut self, last: usize) {
+        if self.top >= last {
+            (self.top, self.drag) = (last, 0);
+        }
+    }
+
+    /// The list has `len` rows, of which `visible` show at once, and this
+    /// keeps it within them.
+    pub fn scroll_within(&mut self, len: usize, visible: usize) {
+        self.visible = visible.max(1);
+        self.stop_at(len.saturating_sub(self.visible));
     }
 
     /// Touch: clamps to `len` rows without scrolling to the selection
     /// (the finger scrolls; nothing follows a cursor).
     pub fn settle_touch(&mut self, len: usize, visible: usize) {
         self.selected = self.selected.min(len.saturating_sub(1));
-        self.top = self.top.min(len.saturating_sub(visible.max(1)));
+        self.scroll_within(len, visible);
     }
 
     /// Clamps to `len` rows and scrolls so the selection is within the
@@ -81,10 +117,23 @@ pub fn scroll_bar(c: &mut Canvas, th: &Theme, r: IRect, total: i32, visible: i32
     } else {
         c.vline(track.x, track.y, track.h, th.border);
     }
-    let h = (r.h * visible / total).max(th.px(6));
-    let y = r.y + (r.h - h) * pos / (total - visible).max(1);
+    // A long list's sizes in pixels, multiplied, are more than an i32
+    // holds.
+    let h = ((i64::from(r.h) * i64::from(visible) / i64::from(total)) as i32).max(th.px(6));
+    let y = r.y + (i64::from(r.h - h) * i64::from(pos) / i64::from((total - visible).max(1))) as i32;
     let thumb = IRect::new(track.x + 1, y, th.scroll_w - 1, h);
     c.fill(thumb, if th.gray { th.fg } else { th.secondary });
+}
+
+/// Each item is a row of `len` that reaches into `r` as `st` scrolls the
+/// list, with the row's top.  Row `i` is `h(i)` pixels high.
+pub fn rows_shown(r: IRect, st: &ListState, len: usize, h: impl Fn(usize) -> i32) -> impl Iterator<Item = (usize, i32)> {
+    let mut y = r.y - st.drag;
+    (st.top..len).map_while(move |i| {
+        let at = y;
+        y += h(i);
+        (at < r.bottom()).then_some((i, at))
+    })
 }
 
 /// Draws rows of a list.  `draw_row(canvas, rect, index, selected, fg)`
@@ -94,7 +143,8 @@ pub fn scroll_bar(c: &mut Canvas, th: &Theme, r: IRect, total: i32, visible: i32
 /// On the touch skin each row shown is a region to touch,
 /// [`Hit::Row`] of list 0 ([`list_as`] for another number), and the list
 /// does not scroll to its selection: a finger scrolls it
-/// ([`ListState::drag`]).
+/// ([`ListState::drag`]), and a row scrolled partly out of `r` shows,
+/// and is touched, only within `r`.
 pub fn list(
     c: &mut Canvas,
     th: &Theme,
@@ -131,12 +181,10 @@ pub fn list_as(
     let bar = len > visible;
     let w = if bar { r.w - th.scroll_w } else { r.w };
     let old = c.push_clip(r);
-    for i in 0..visible {
-        let idx = state.top + i;
-        if idx >= len {
-            break;
-        }
-        let rr = IRect::new(r.x, r.y + i as i32 * row_h, w, row_h);
+    // The other skins show whole rows only.
+    let shown = if th.touch() { len } else { visible };
+    for (idx, y) in rows_shown(r, state, len, |_| row_h).take(shown) {
+        let rr = IRect::new(r.x, y, w, row_h);
         if th.touch() {
             c.hit(rr, Hit::Row { list, row: idx as u32 });
         }
@@ -155,7 +203,7 @@ pub fn list_as(
         }
     }
     if bar {
-        scroll_bar(c, th, r, len as i32, visible as i32, state.top as i32);
+        scroll_bar(c, th, r, len as i32 * row_h, visible as i32 * row_h, state.top as i32 * row_h + state.drag);
     }
     c.restore_clip(old);
     visible

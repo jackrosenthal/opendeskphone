@@ -277,8 +277,14 @@ fn an_app_is_launched_from_the_grid_and_the_grid_scrolls() {
     assert!(b.x > a.x && d.x == a.x && d.y > a.y);
     r.tap(Hit::Custom(4));
     assert_eq!(taken(&r.apps), vec![Command::LaunchApp { name: "app4".into() }]);
-    // A finger up the screen: the first row goes, the last one comes.
+    // A finger goes up the screen, and the rows follow it by the pixel
+    // until the first row goes and the last one comes.
     assert!(r.ui.canvas().hit_rect(Hit::Custom(19)).is_none());
+    let (x, y) = ((d.x + d.w / 2) as u16, (d.y + d.h / 2) as u16);
+    r.sim.touch_drag((x, y), (x, y - 40), 2);
+    r.ui.pump();
+    assert_eq!(r.region(Hit::Custom(3)), IRect { y: d.y - 40, ..d });
+    assert_eq!(r.region(Hit::Custom(0)), IRect { h: a.h - 40, ..a });
     for _ in 0..3 {
         r.sim.touch_drag((400, 1100), (400, 300), 8);
         r.ui.pump();
@@ -408,6 +414,90 @@ fn a_theme_is_chosen_and_shown_by_a_tap() {
     r.tap(Hit::Key(Key::Cancel));
     assert_eq!(r.screen(), "display");
     assert!(taken(&r.config).is_empty());
+}
+
+#[test]
+fn a_finger_moves_the_themes_by_the_pixel_and_chooses_none() {
+    // The test runs over a still wallpaper, and over one in motion.
+    for moving in [false, true] {
+        let mut r = Rig::new();
+        if moving {
+            r.ui.set_motion_time(Some(3_000));
+        }
+        r.show("menu");
+        r.tap(row(MENU_SETTINGS));
+        r.tap(row(SETTINGS_DISPLAY));
+        r.tap(row(3));
+        assert_eq!(r.screen(), "theme");
+        assert_eq!(r.ui.motion_deadline().is_some(), moving);
+        // This finds the rows with the check mark at their left.
+        let checked = |r: &Rig| -> Vec<u32> {
+            let th = shown_th();
+            let mark = |at: IRect| (at.x..at.x + th.back_w).any(|x| (at.y..at.bottom()).any(|y| r.ui.canvas().pixel(x, y) == th.accent));
+            r.rows().into_iter().filter(|i| mark(r.region(row(*i)))).collect()
+        };
+        let shown = r.rows();
+        let before: Vec<IRect> = shown.iter().map(|i| r.region(row(*i))).collect();
+        let mark = checked(&r);
+        assert_eq!(mark, [shown[1]]);
+        // The finger goes up by 40 pixels from the middle of the second row,
+        // and the screen is drawn after each movement.  The first movement
+        // draws it whole, because the row no longer looks pressed.
+        let (x, y) = (before[1].x as u16 + before[1].w as u16 / 2, before[1].y as u16 + before[1].h as u16 / 2);
+        for (phase, y) in [(TouchPhase::Down, y), (TouchPhase::Move, y - 20)] {
+            r.sim.touch(phase, x, y);
+            r.ui.pump();
+        }
+        let parts = r.ui.parts_drawn();
+        r.sim.touch(TouchPhase::Move, x, y - 40);
+        r.ui.pump();
+        assert_eq!(r.ui.parts_drawn(), parts + 1, "only the sheet's rows are drawn again");
+        let part = r.ui.canvas().pixels().to_vec();
+        r.sim.touch(TouchPhase::Up, x, y - 40);
+        r.ui.pump();
+        // Every row is 40 pixels higher, the first is cut off at the top of
+        // the rows, and 40 pixels of the next row show under the last.
+        assert_eq!(r.region(row(shown[0])), IRect { h: before[0].h - 40, ..before[0] });
+        for (i, at) in shown.iter().zip(&before).skip(1) {
+            assert_eq!(r.region(row(*i)), IRect { y: at.y - 40, ..*at });
+        }
+        let last = before[before.len() - 1];
+        assert_eq!(r.region(row(shown[shown.len() - 1] + 1)), IRect { y: last.bottom() - 40, h: 40, ..last });
+        // Nothing was chosen, and the check mark moved with its row.
+        assert!(taken(&r.config).is_empty());
+        assert_eq!(checked(&r), mark);
+        // Drawn in part, the screen is as it is when drawn whole.
+        r.ui.handle().wake();
+        r.ui.pump();
+        assert!(r.ui.canvas().pixels() == &part[..], "moving: {moving}");
+    }
+}
+
+#[test]
+fn a_finger_scrolls_a_status_page_by_the_pixel() {
+    let mut r = Rig::new();
+    r.store.update::<Accounts, _>(|a| {
+        for i in 1..6 {
+            let mut acct = Account::new(AccountId(i));
+            acct.label = format!("10{i}");
+            a.accounts.push(acct);
+        }
+    });
+    r.show("menu");
+    // The finger opens Phone status and then its Accounts page, which has
+    // four rows for each account.
+    r.tap(row(7));
+    r.tap(row(2));
+    assert_eq!(r.screen(), "accounts");
+    // This finds the hairlines under the rows, down the middle of the page.
+    let lines = |r: &Rig| -> Vec<i32> { (0..th().height).filter(|y| r.ui.canvas().pixel(400, *y) == shown_th().border).collect() };
+    let before = lines(&r);
+    assert!(before.len() > 10, "{before:?}");
+    r.sim.touch_drag((400, 900), (400, 860), 2);
+    r.ui.pump();
+    let after = lines(&r);
+    let moved: Vec<i32> = before.iter().map(|y| y - 40).collect();
+    assert_eq!(after[..moved.len()], moved[..]);
 }
 
 #[test]

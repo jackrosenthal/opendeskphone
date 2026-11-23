@@ -118,24 +118,31 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    /// The first step: the canvas holds the screen drawn over black.
-    pub fn over_black(&mut self, c: &Canvas) {
-        self.px.clear();
-        self.px.extend_from_slice(&c.pix);
+    /// This is the first step, for which the canvas holds the screen drawn
+    /// over black.  It takes the pixels within `r` and leaves the rest as
+    /// they were.
+    pub fn over_black(&mut self, c: &Canvas, r: IRect) {
+        self.px.resize(c.pix.len(), 0);
+        for row in c.rows(r) {
+            self.px[row.clone()].copy_from_slice(&c.pix[row]);
+        }
     }
 
     /// The second step: the canvas holds the same drawn over white.
-    pub fn over_white(&mut self, c: &Canvas) {
-        for (o, white) in self.px.iter_mut().zip(&c.pix) {
-            let black = *o & 0xFF_FFFF;
-            let shows = if black == 0 && *white == 0xFF_FFFF {
-                255
-            } else {
-                // The same in every channel, but for the rounding.
-                let ch = |shift: u32| ((white >> shift) & 255).saturating_sub((black >> shift) & 255);
-                (ch(16) + ch(8) + ch(0) + 1) / 3
-            };
-            *o = (shows << 24) | black;
+    pub fn over_white(&mut self, c: &Canvas, r: IRect) {
+        for row in c.rows(r) {
+            for (o, white) in self.px[row.clone()].iter_mut().zip(&c.pix[row]) {
+                let black = *o & 0xFF_FFFF;
+                let shows = if black == 0 && *white == 0xFF_FFFF {
+                    255
+                } else {
+                    // The difference is the same in every channel, but for
+                    // the rounding.
+                    let ch = |shift: u32| ((white >> shift) & 255).saturating_sub((black >> shift) & 255);
+                    (ch(16) + ch(8) + ch(0) + 1) / 3
+                };
+                *o = (shows << 24) | black;
+            }
         }
     }
 
@@ -166,7 +173,13 @@ pub struct Canvas {
     front: Vec<u32>,
     /// False until the first present: everything is damaged.
     presented: bool,
+    /// The screen sets this clip, and a region is cut to it
+    /// ([`Canvas::hit`]).
     clip: IRect,
+    limit: IRect,
+    /// Drawing changes pixels only within this rectangle, which is the clip
+    /// within the limit.
+    paint: IRect,
     /// Where the picture can be touched ([`Canvas::hit`]), in the order
     /// registered.
     hits: Vec<(IRect, crate::touch::Hit)>,
@@ -233,6 +246,8 @@ impl Canvas {
             front: vec![0; n],
             presented: false,
             clip: IRect::new(0, 0, width as i32, height as i32),
+            limit: IRect::new(0, 0, width as i32, height as i32),
+            paint: IRect::new(0, 0, width as i32, height as i32),
             hits: Vec::new(),
             quiet: Vec::new(),
             rounds: Vec::new(),
@@ -265,20 +280,51 @@ impl Canvas {
     /// previous clip for [`Canvas::restore_clip`].
     pub fn set_clip(&mut self, r: IRect) -> IRect {
         let old = self.clip;
-        self.clip = r.intersect(&self.bounds());
+        self.restore_clip(r.intersect(&self.bounds()));
         old
     }
     /// Narrows the clip to its intersection with `r`.
     pub fn push_clip(&mut self, r: IRect) -> IRect {
         let old = self.clip;
-        self.clip = r.intersect(&old);
+        self.restore_clip(r.intersect(&old));
         old
     }
     pub fn restore_clip(&mut self, old: IRect) {
         self.clip = old;
+        self.paint = old.intersect(&self.limit);
     }
     pub fn clip(&self) -> IRect {
         self.clip
+    }
+
+    /// From now on drawing changes no pixel outside `r`, or with `None` it
+    /// changes pixels anywhere again.  The clip a screen sees and the
+    /// regions it registers do not change.
+    pub fn set_limit(&mut self, r: Option<IRect>) {
+        self.limit = r.map_or(self.bounds(), |r| r.intersect(&self.bounds()));
+        self.restore_clip(self.clip);
+    }
+
+    /// Each item is the range of places in [`Canvas::pixels`] that a row of
+    /// `r` covers within the canvas.
+    fn rows(&self, r: IRect) -> impl Iterator<Item = std::ops::Range<usize>> + use<> {
+        let r = r.intersect(&self.bounds());
+        let w = self.w as usize;
+        (r.y as usize..r.bottom() as usize).map(move |y| y * w + r.x as usize..y * w + r.right() as usize)
+    }
+
+    /// The pixels of `r` become what `over` puts over `frame`, a frame of
+    /// the wallpaper in motion, and the screen is not drawn over the
+    /// wallpaper again.
+    pub fn compose(&mut self, r: IRect, frame: &[u32], over: &Overlay) {
+        if frame.len() != self.pix.len() || over.px.len() != self.pix.len() {
+            return;
+        }
+        for row in self.rows(r) {
+            for i in row {
+                self.pix[i] = Overlay::over(over.px[i], frame[i]);
+            }
+        }
     }
 
     fn color(&self, c: Rgb) -> Rgb {
@@ -286,7 +332,7 @@ impl Canvas {
     }
 
     pub fn fill(&mut self, r: IRect, c: Rgb) {
-        let r = r.intersect(&self.clip);
+        let r = r.intersect(&self.paint);
         if r.is_empty() {
             return;
         }
@@ -379,7 +425,7 @@ impl Canvas {
 
     #[inline]
     fn put_blend(&mut self, x: i32, y: i32, c: Rgb, a: u32, max: u32) {
-        if a == 0 || x < self.clip.x || y < self.clip.y || x >= self.clip.right() || y >= self.clip.bottom() {
+        if a == 0 || x < self.paint.x || y < self.paint.y || x >= self.paint.right() || y >= self.paint.bottom() {
             return;
         }
         let i = (y * self.w + x) as usize;
@@ -398,10 +444,10 @@ impl Canvas {
             let gy = y - g.top as i32;
             pen += g.adv as i32;
             if g.w == 0
-                || gx >= self.clip.right()
-                || gx + g.w as i32 <= self.clip.x
-                || gy >= self.clip.bottom()
-                || gy + g.h as i32 <= self.clip.y
+                || gx >= self.paint.right()
+                || gx + g.w as i32 <= self.paint.x
+                || gy >= self.paint.bottom()
+                || gy + g.h as i32 <= self.paint.y
             {
                 continue;
             }
@@ -546,7 +592,7 @@ impl Canvas {
             return;
         }
         // Rows and columns outside the clip are not visited.
-        let clip = self.clip.intersect(&IRect::new(x, y, w * scale, h * scale));
+        let clip = self.paint.intersect(&IRect::new(x, y, w * scale, h * scale));
         if clip.is_empty() {
             return;
         }
@@ -577,19 +623,22 @@ impl Canvas {
             return Some(self.bounds());
         }
         let w = self.w as usize;
-        let rows = self.h as usize;
+        // Nothing outside the limit was drawn.
+        let lim = self.limit;
+        let (x0, x1) = (lim.x as usize, lim.right() as usize);
+        let rows = lim.y as usize..lim.bottom() as usize;
         // Pixel by pixel (a comparison of the slices is one of their
         // bytes, one at a time, in the phone's C library).
-        let differs = |y: usize| self.pix[y * w..(y + 1) * w].iter().zip(&self.front[y * w..(y + 1) * w]).any(|(a, b)| a != b);
-        let top = (0..rows).find(|&y| differs(y))?;
-        let bottom = (top..rows).rev().find(|&y| differs(y)).unwrap_or(top);
-        let (mut left, mut right) = (w, 0);
+        let differs = |y: usize| self.pix[y * w + x0..y * w + x1].iter().zip(&self.front[y * w + x0..y * w + x1]).any(|(a, b)| a != b);
+        let top = rows.clone().find(|&y| differs(y))?;
+        let bottom = (top..rows.end).rev().find(|&y| differs(y)).unwrap_or(top);
+        let (mut left, mut right) = (x1, x0);
         for y in top..=bottom {
             let (a, b) = (&self.pix[y * w..(y + 1) * w], &self.front[y * w..(y + 1) * w]);
-            if let Some(l) = (0..left).find(|&x| a[x] != b[x]) {
+            if let Some(l) = (x0..left).find(|&x| a[x] != b[x]) {
                 left = l;
             }
-            if let Some(r) = (right..w).rev().find(|&x| a[x] != b[x]) {
+            if let Some(r) = (right..x1).rev().find(|&x| a[x] != b[x]) {
                 right = r + 1;
             }
         }
@@ -861,7 +910,8 @@ impl Canvas {
             sum / (r.w as u64 * r.h as u64) < 140 * 256
         });
         let target = if to_white { 0xFF_FFFF } else { 0x00_0000 };
-        for yy in r.y..r.bottom() {
+        let paint = r.intersect(&self.paint);
+        for yy in paint.y..paint.bottom() {
             // The inset of this row of the shape, by its corner's circle.
             let from_edge = (yy - shape.y).min(shape.bottom() - 1 - yy);
             let inset = if from_edge < rad {
@@ -874,7 +924,7 @@ impl Canvas {
             } else {
                 0
             };
-            let (x0, x1) = ((shape.x + inset).max(r.x), (shape.right() - inset).min(r.right()));
+            let (x0, x1) = ((shape.x + inset).max(paint.x), (shape.right() - inset).min(paint.right()));
             let row = (yy * self.w) as usize;
             for xx in x0..x1 {
                 let px = &mut self.pix[row + xx as usize];
@@ -903,7 +953,7 @@ impl Canvas {
             self.clear(plain);
             return None;
         }
-        let clip = self.clip;
+        let clip = self.paint;
         if self.w != WIDTH || self.h != HEIGHT {
             let (w, h, pix) = (self.w, self.h, &mut self.pix);
             let mut copy = |src: &[u32]| {

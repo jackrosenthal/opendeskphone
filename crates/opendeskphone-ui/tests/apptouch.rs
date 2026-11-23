@@ -139,10 +139,11 @@ fn a_drag_scrolls_a_list_and_a_tap_then_finds_the_row_under_the_finger() {
     let list = r.list(40);
     r.ui.pump();
     let (top, row_h) = (i32::from(r.m.title_height), i32::from(r.m.row_height));
-    // Up by three rows and a bit: the fourth row is the first shown.
+    // The finger goes up by three rows and a bit, and the rows follow it:
+    // the fourth row shows but for the bit.
     r.drag((400, top + 5 * row_h), (400, top + 2 * row_h - 10));
     assert_eq!(r.events(), [], "scrolling tells the app nothing");
-    r.tap(400, top + row_h / 2);
+    r.tap(400, top + row_h - 11);
     assert_eq!(
         r.events(),
         [
@@ -151,6 +152,8 @@ fn a_drag_scrolls_a_list_and_a_tap_then_finds_the_row_under_the_finger() {
             AppEvent::ListActivated { widget: list, row: 3 },
         ]
     );
+    r.tap(400, top + row_h - 9);
+    assert_eq!(r.events(), [AppEvent::ListSelected { widget: list, row: 4 }, AppEvent::ListActivated { widget: list, row: 4 }]);
     // Down again, farther than there are rows: the first row is first.
     r.drag((400, top + row_h), (400, top + 9 * row_h));
     r.tap(400, top + row_h / 2);
@@ -168,6 +171,12 @@ fn a_drag_scrolls_a_list_and_a_tap_then_finds_the_row_under_the_finger() {
     r.ui.pump();
     r.tap(400, top + 5);
     assert_eq!(r.events(), [AppEvent::ListActivated { widget: list, row: 7 }]);
+    // A row the finger left partly out of view is brought in too.
+    r.drag((400, top + 300), (400, top + 340));
+    r.view.list_select(list, 6);
+    r.ui.pump();
+    r.tap(400, top + 50);
+    assert_eq!(r.events(), [AppEvent::ListActivated { widget: list, row: 6 }]);
     // A list whose rows all show does not move.
     let mut r = Rig::new();
     let list = r.list(3);

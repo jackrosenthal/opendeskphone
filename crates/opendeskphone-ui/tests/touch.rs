@@ -183,28 +183,52 @@ fn a_finger_scrolls_a_list() {
     r.show("call_log");
     let th = Theme::for_model(Model::D80);
     let top = r.region(row(0));
-    // Up by three rows and a bit: the fourth row is where the first was.
+    // This gives where row `i` is within the list when the list is
+    // scrolled `by` pixels.
+    let at = |i: i32, by: i32| {
+        let y = top.y + i * th.row_h - by;
+        IRect { y: y.max(top.y), h: th.row_h - (top.y - y).max(0), ..top }
+    };
+    // The finger goes up by three rows and a bit, and the rows follow it:
+    // the fourth row shows but for the bit.
     let from = (400u16, (top.y + 5 * th.row_h) as u16);
     let to = (400u16, from.1 - (3 * th.row_h + 10) as u16);
     r.sim.touch_drag(from, to, 8);
     r.ui.pump();
     assert_eq!(r.screen(), "call_log");
-    assert_eq!(r.region(row(3)), top);
-    assert!(r.ui.canvas().hit_rect(row(0)).is_none());
+    assert_eq!(r.region(row(3)), at(3, 3 * th.row_h + 10));
+    assert_eq!(r.region(row(4)), at(4, 3 * th.row_h + 10));
+    assert!(r.ui.canvas().hit_rect(row(2)).is_none());
     // The drag dialed nothing.
     assert!(r.call_cmds().is_empty());
-    // Down again by more than there is: the list stops at its first row.
+    // The finger goes down again by more than there is, and the list stops
+    // at its first row.  The next drag moves it as far as the finger at
+    // once.
     r.sim.touch_drag(to, (400, 1200), 8);
     r.ui.pump();
     assert_eq!(r.region(row(0)), top);
-    // And up by more than there is: the last row is the last one shown.
+    r.sim.touch_drag((400, 900), (400, 860), 2);
+    r.ui.pump();
+    assert_eq!(r.region(row(0)), at(0, 40));
+    // The list rests where one drag leaves it short of a row, and the next
+    // drag goes on from there, so two drags of 40 pixels move it 80.
+    r.sim.touch_drag((400, 900), (400, 860), 2);
+    r.ui.pump();
+    assert_eq!(r.region(row(0)), at(0, 80));
+    assert_eq!(r.region(row(1)), at(1, 80));
+    // The finger goes up by more than there is, and the last row is the
+    // last one shown, whole.  A drag back moves the list at once.
     for _ in 0..8 {
         r.sim.touch_drag((400, 1100), (400, 200), 8);
         r.ui.pump();
     }
     let last = r.region(row(39));
+    assert_eq!(last.h, th.row_h);
     assert!(last.bottom() <= th.height);
     assert!(r.ui.canvas().hit_rect(row(0)).is_none());
+    r.sim.touch_drag((400, 600), (400, 640), 2);
+    r.ui.pump();
+    assert_eq!(r.region(row(39)).y, last.y + 40);
 }
 
 #[test]

@@ -896,6 +896,12 @@ pub struct Ui {
     state_pending: Arc<AtomicBool>,
     _guard: ds::CallbackGuard,
     needs_draw: bool,
+    /// When drags have scrolled a list of the top screen and changed
+    /// nothing else, this is the part of the screen to draw again
+    /// ([`Screen::scrolled`]).  With `needs_draw` set, the screen is drawn
+    /// whole instead.
+    scrolled: Option<IRect>,
+    parts_drawn: u64,
     quit: bool,
     last_failed_update: bool,
     /// When the top screen next needs a tick or repaint (set at each draw).
@@ -994,6 +1000,8 @@ impl Ui {
             state_pending,
             _guard: guard,
             needs_draw: true,
+            scrolled: None,
+            parts_drawn: 0,
             quit: false,
             last_failed_update: false,
             screen_deadline: None,
@@ -1044,13 +1052,19 @@ impl Ui {
         self.motion_frames
     }
 
+    /// This is how many times the UI drew only part of the screen again
+    /// after drags that scrolled a list (tests).
+    pub fn parts_drawn(&self) -> u64 {
+        self.parts_drawn
+    }
+
     /// Shows the wallpaper's motion as it is at `ms`, as the UI does when
     /// a frame is due and nothing else on the screen has changed: only
     /// what the motion changed is drawn (tests and measurements).
     pub fn motion_step(&mut self, ms: u64) {
         self.motion_time = Some(ms);
         if self.needs_draw {
-            self.draw();
+            self.draw(None);
         } else {
             self.motion_frame();
         }
@@ -1325,7 +1339,8 @@ impl Ui {
             // A drag is the top screen's, unless the finger came down on
             // something that is not the screen's (a softkey, a dialog).
             Gesture::Drag { x, y, dx, dy } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
-                self.with_cx(|nav, cx| {
+                let whole = self.needs_draw;
+                let part = self.with_cx(|nav, cx| {
                     let mut r = nav.top().drag_at(cx, hit, x, y, dx, dy);
                     if matches!(r, Nav::Ignored)
                         && let Some((list, len)) = nav.top().list_state(cx)
@@ -1333,8 +1348,16 @@ impl Ui {
                         list.drag(dy, cx.th.row_h, len);
                         r = Nav::Stay;
                     }
+                    let part = if matches!(r, Nav::Stay) { nav.top().scrolled() } else { None };
                     nav.apply(cx, r);
+                    part
                 });
+                // When only a list moved, its part of the screen is drawn
+                // again, unless something else has the screen drawn whole.
+                if let Some(part) = part.filter(|p| !whole && self.scrolled.is_none_or(|s| s == *p)) {
+                    self.needs_draw = false;
+                    self.scrolled = Some(part);
+                }
             }
             Gesture::DragEnd { .. } if matches!(hit, None | Some(Hit::Row { .. } | Hit::Custom(_))) => {
                 self.with_cx(|nav, cx| {
@@ -1548,7 +1571,10 @@ impl Ui {
 
     // ------------------------------------------------------------- draw
 
-    fn draw(&mut self) {
+    /// With `part` this draws only that part of the screen again
+    /// ([`Ui::scrolled`]), and without it the whole screen.
+    fn draw(&mut self, part: Option<IRect>) {
+        self.scrolled = None;
         let begun = std::time::Instant::now();
         let st = self.store.snapshot();
         let cfg = self.cfg.clone();
@@ -1610,12 +1636,30 @@ impl Ui {
             backdrop = Backdrop::Moving(wallpaper, t);
             frame_ms = Some(u64::from(every));
         }
+        // Part of the screen has to go over the wallpaper as the rest of the
+        // screen shows it, still or in the frame of its motion now on the
+        // screen, or else the screen is drawn whole.
+        let moving = match (backdrop, self.moving) {
+            (Backdrop::Moving(wallpaper, _), Some(m)) if std::ptr::eq(wallpaper, m.wallpaper) => Some(m),
+            _ => None,
+        };
+        if part.is_some() && (frame_ms.is_some() || self.moving.is_some()) && moving.is_none() {
+            return self.draw(None);
+        }
         // Over a wallpaper in motion the screen is drawn three times: over
         // black and over white, which together tell what the screen puts
         // over the wallpaper ([`crate::gfx::Overlay`]), and then as it is
         // shown.  The frames that follow are made from the wallpaper and
-        // that ([`Ui::motion_frame`]) until something else changes.
-        let passes: &[Pass] = if frame_ms.is_some() { &[Pass::OverBlack, Pass::OverWhite, Pass::Shown] } else { &[Pass::Shown] };
+        // that ([`Ui::motion_frame`]) until something else changes.  Part
+        // of the screen is shown from the first two alone, over the frame
+        // on the screen ([`Canvas::compose`]).
+        let passes: &[Pass] = match (frame_ms, part) {
+            (None, _) => &[Pass::Shown],
+            (Some(_), None) => &[Pass::OverBlack, Pass::OverWhite, Pass::Shown],
+            (Some(_), Some(_)) => &[Pass::OverBlack, Pass::OverWhite],
+        };
+        let limit = part.unwrap_or(bounds);
+        c.set_limit(part);
         let mut serial = None;
         for pass in passes {
             // The regions to touch are those of this picture.
@@ -1749,10 +1793,30 @@ impl Ui {
                 press_to_white = c.show_press(hit, press_to_white);
             }
             match pass {
-                Pass::OverBlack => self.over.over_black(c),
-                Pass::OverWhite => self.over.over_white(c),
+                Pass::OverBlack => self.over.over_black(c, limit),
+                Pass::OverWhite => self.over.over_white(c, limit),
                 Pass::Shown => {}
             }
+        }
+        if let Some(part) = part {
+            let over = &self.over;
+            let shown = moving.is_none_or(|m| {
+                m.wallpaper.with_drawn_frame_sized(bounds.w, bounds.h, m.serial, |frame| c.compose(part, frame, over)).is_some()
+            });
+            if shown {
+                self.parts_drawn += 1;
+                if let Err(e) = c.present(self.display.as_mut(), opendeskphone_hal::Screen::Main) {
+                    log::warn!("display: {e}");
+                }
+            }
+            c.set_limit(None);
+            self.needs_draw = false;
+            // When another frame of the motion was drawn elsewhere since,
+            // the screen is drawn whole.
+            if !shown {
+                self.draw(None);
+            }
+            return;
         }
         self.screen_deadline = top.deadline(&cx);
         let name = top.name();
@@ -1804,7 +1868,7 @@ impl Ui {
         self.motion_due = false;
         let (now_ms, _) = self.now();
         let (Some(moving), Some(t)) = (self.moving, self.motion_time.or(self.fixed_time.is_none().then_some(now_ms))) else {
-            return self.draw();
+            return self.draw(None);
         };
         let started = clock::mono_ms();
         let begun = std::time::Instant::now();
@@ -1826,7 +1890,7 @@ impl Ui {
                 }
             }
         });
-        let Some(serial) = serial else { return self.draw() };
+        let Some(serial) = serial else { return self.draw(None) };
         self.moving = Some(Moving { serial, ..moving });
         self.motion_frames += 1;
         let done = clock::mono_ms();
@@ -2105,7 +2169,9 @@ impl Ui {
         self.sync_idle_view();
         self.sync_lamps();
         if self.needs_draw {
-            self.draw();
+            self.draw(None);
+        } else if let Some(part) = self.scrolled {
+            self.draw(Some(part));
         } else if self.motion_due {
             self.motion_frame();
         }
