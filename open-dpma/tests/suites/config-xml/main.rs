@@ -159,13 +159,13 @@ fn migration(ctx: &mut Ctx) -> Result<()> {
         ctx.c.check(
             format!("{phone}: the migration payload in lan_port_mode"),
             doc.contains_str(
-                "<setting id=\"lan_port_mode\" value=\"auto;sh /data/digium/tmp/odp-migrate.sh\"/>",
+                "<setting id=\"lan_port_mode\" value=\"auto;sh /data/digium/tmp/odp-migrate.sh\" conflict=\"freeze\"/>",
             ),
             find_all(&doc, "<setting id=\"lan_port_mode\"").join(" | "),
         );
         ctx.c.check(
             format!("{phone}: pc_port_mode emptied"),
-            doc.contains_str("<setting id=\"pc_port_mode\" value=\"\"/>"),
+            doc.contains_str("<setting id=\"pc_port_mode\" value=\"\" conflict=\"freeze\"/>"),
             find_all(&doc, "<setting id=\"pc_port_mode\"").join(" | "),
         );
         ctx.c.check(

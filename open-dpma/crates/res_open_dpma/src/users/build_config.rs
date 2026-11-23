@@ -1073,14 +1073,20 @@ fn build_config(
     // A migration document carries its payload in `lan_port_mode`, which
     // the stock config daemon executes as root without validation, and
     // empties `pc_port_mode`: with a `down` value, the stock daemon takes
-    // a different code path that never runs `lan_port_mode`.
+    // a different code path that never runs `lan_port_mode`.  Both are
+    // frozen: the stock merge takes the phone's own files (`ui-config.xml`,
+    // which has the setting once it was saved on the phone) after the
+    // server's document, and a later value replaces any that is not frozen.
     if let Some(payload) = migration {
         ap!(
             o,
-            "<setting id=\"lan_port_mode\" value=\"{}\" />\n",
+            "<setting id=\"lan_port_mode\" value=\"{}\" conflict=\"freeze\" />\n",
             val(payload)
         );
-        ap!(o, "<setting id=\"pc_port_mode\" value=\"\" />\n");
+        ap!(
+            o,
+            "<setting id=\"pc_port_mode\" value=\"\" conflict=\"freeze\" />\n"
+        );
     } else {
         if !p.lan_port_mode.is_empty() {
             ap!(

@@ -302,19 +302,13 @@ pub fn phone_ip(tx: &crate::session::Transaction) -> Option<IpAddr> {
         .map(|s| s.lock().contact.clone())
         .unwrap_or_default();
     for uri in [&tx.response_uri, &contact] {
-        // `to_host_port` parses SIP URIs, but a response URI may use the
-        // pjsip scheme; rewrite it as a sip: URI first.
-        let owned;
-        let uri: &[u8] = match uri.strip_prefix(b"pjsip:") {
-            Some(rest) => {
-                owned = bformat!("sip:{}", String::from_utf8_lossy(rest));
-                &owned
-            }
-            None => uri,
-        };
-        let Some((host, _)) = dpma_proto::uri::to_host_port(uri) else {
-            continue;
-        };
+        // The address is what follows the scheme and any user part, up to
+        // the first parameter.  A response URI has no user part
+        // (`pjsip:10.0.0.5:5060;transport=udp`), which `to_host_port`
+        // does not split.
+        let uri = dpma_proto::uri::get_in_brackets(uri);
+        let (addr, _) = dpma_proto::uri::phone_utils_parse_uri(&uri);
+        let (host, _) = dpma_proto::uri::split_hostport(&addr);
         let Ok(text) = std::str::from_utf8(&host) else {
             continue;
         };
@@ -401,7 +395,10 @@ pub fn hand_off(mac: Vec<u8>, ip: IpAddr, kit: Arc<Kit>) {
                 std::thread::sleep(FIRST_HAND_OFF_WAIT);
                 for attempt in 1..=HAND_OFF_ATTEMPTS {
                     match push_eff(ip, &kit.eff) {
-                        Ok(0) => {
+                        // The CGI answers 1 when `update-firmware.sh`
+                        // exits with success, and a negative number
+                        // otherwise.
+                        Ok(1) => {
                             dpma_log!(
                                 "Migration of {:#?}: the stock updater accepted Open Desk Phone {}; the phone restarts into its recovery",
                                 String::from_utf8_lossy(&mac),
@@ -565,11 +562,15 @@ fn upload(ip: IpAddr, name: &str, data: &[u8]) -> Result<(), String> {
 /// Posts the image to the stock updater's CGI and returns the `<status>`
 /// value from its reply.
 fn push_eff(ip: IpAddr, eff: &[u8]) -> Result<i32, String> {
+    // The CGI takes the image as the browser's upload form sends it: it
+    // skips to the part's `application/octet-stream` header, and answers
+    // -102 to a body without one.
+    let boundary = "ODP-MIGRATE-BOUNDARY";
     let reply = post(
         ip,
         FIRMWARE_PATH,
-        "application/octet-stream",
-        eff,
+        &format!("multipart/form-data; boundary={boundary}"),
+        &multipart(boundary, "firmware.eff", eff),
         FIRMWARE_TIMEOUT,
     )?;
     // The reply looks like `<response>...<status>%d</status>...</response>`.
@@ -645,7 +646,7 @@ mkdir -p /cache/recovery
 `cp $TMP/update.zip /cache/recovery/update.zip 2>&1`;
 echo "boot-recovery" > /cache/recovery/command
 echo "--update_package=/cache/recovery/update.zip" >> /cache/recovery/command
-if [ "x${{2}}" = "xreset" ]; then
+if [ "x${2}" = "xreset" ]; then
     echo "--wipe_data" >> /cache/recovery/command
 fi
 /sbin/uboot_env -m bootcmd='booti mmc3 recovery'
