@@ -29,8 +29,6 @@ async fn phone() -> Phone {
     phone_of(Model::D60).await
 }
 
-/// A phone of another model.  (The configuration is a D60's for every
-/// model: what the tests read of it is common to all.)
 async fn phone_of(model: Model) -> Phone {
     let mut id = [0u8; 8];
     getrandom::fill(&mut id).unwrap();
@@ -38,7 +36,7 @@ async fn phone_of(model: Model) -> Phone {
     std::fs::create_dir_all(dir.join("nvdata")).unwrap();
     let nv = Nvdata::new(dir.join("nvdata"));
     nv.ensure_layout().unwrap();
-    let config = Arc::new(Mutex::new(ConfigStore::open(nv, opendeskphone_config::Model::D60, dir.join("tmp")).unwrap()));
+    let config = Arc::new(Mutex::new(ConfigStore::open(nv, model.name().parse().unwrap(), dir.join("tmp")).unwrap()));
     let store = Store::new(model);
     let options = WebOptions {
         http: Some("127.0.0.1:0".parse().unwrap()),

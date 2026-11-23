@@ -336,13 +336,13 @@ fn provisioned_ssh_keys_combine_with_local_ones() {
 fn default_idle_softkeys_by_model() {
     use opendeskphone_config::IdleFunction::*;
     let common = [CallLog, Contacts, Status, Menu, Apps, Dnd, Forward].map(IdleSoftkey::Function);
-    for model in [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70] {
+    for model in Model::ALL {
         let dir = TempDir::new("softkeys");
         let nv = Nvdata::new(dir.path().join("nvdata"));
         nv.ensure_layout().unwrap();
         let mut s = ConfigStore::open(nv, model, dir.path().join("tmp")).unwrap();
         let keys = s.config().idle_softkeys().keys;
-        let color = matches!(model, Model::D60 | Model::D62 | Model::D65);
+        let color = matches!(model, Model::D60 | Model::D62 | Model::D65 | Model::D80);
         assert_eq!(keys[..7], common, "{model:?}");
         if color {
             assert_eq!(keys[7..], [IdleSoftkey::Function(Theme)], "{model:?}: Theme after Forward");

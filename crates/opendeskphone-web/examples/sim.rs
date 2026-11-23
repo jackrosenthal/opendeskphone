@@ -850,9 +850,16 @@ fn main() -> std::io::Result<()> {
 </contacts></phonebooks>"#,
         )?;
     }
-    // The configuration knows the D40 thru D70; the D80 takes the
-    // D60's, as in the main role.
-    let cfg_model: opendeskphone_config::Model = model.name().parse().unwrap_or(opendeskphone_config::Model::D60);
+    let cfg_model = match model {
+        Model::D40 => opendeskphone_config::Model::D40,
+        Model::D45 => opendeskphone_config::Model::D45,
+        Model::D50 => opendeskphone_config::Model::D50,
+        Model::D60 => opendeskphone_config::Model::D60,
+        Model::D62 => opendeskphone_config::Model::D62,
+        Model::D65 => opendeskphone_config::Model::D65,
+        Model::D70 => opendeskphone_config::Model::D70,
+        Model::D80 => opendeskphone_config::Model::D80,
+    };
     let config = ConfigStore::open(nv, cfg_model, std::env::temp_dir()).map_err(|e| std::io::Error::other(e.to_string()))?;
     let config = Arc::new(Mutex::new(config));
 

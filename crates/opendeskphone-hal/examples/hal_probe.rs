@@ -9,7 +9,7 @@ use std::time::Duration;
 /// Print what the phone HAL backend finds on this machine
 #[derive(Parser)]
 struct Args {
-    /// The model [default: the one on the kernel command line, or d60]
+    /// The model [default: the one on the kernel command line, else in the devicetree, else d60]
     #[arg(value_parser = |name: &str| name.parse::<Model>().map_err(|_| "not a model"))]
     model: Option<Model>,
     /// Draw a test pattern on every display
@@ -31,6 +31,10 @@ fn main() {
     let model = args
         .model
         .or_else(|| std::fs::read_to_string("/proc/cmdline").ok().and_then(|c| Model::from_cmdline(&c)))
+        .or_else(|| {
+            let compatible = std::fs::read("/proc/device-tree/compatible").ok()?;
+            compatible.split(|b| *b == 0).filter_map(|s| std::str::from_utf8(s).ok()).find_map(Model::from_compatible)
+        })
         .unwrap_or(Model::D60);
     println!("model: {model}");
     let mut hal = Hal::phone(model);

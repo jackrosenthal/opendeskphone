@@ -92,7 +92,7 @@ fn not_ready() -> Option<String> {
 
 fn start(args: &Ramboot) -> Result<(), String> {
     let model: opendeskphone_state::Model = crate::model::detect()
-        .and_then(|d| d.model.name().parse().ok())
+        .map(|d| d.model.into())
         .ok_or("model unknown (no digium_board= and no devicetree match)")?;
     let ready = not_ready();
     if let (Some(why), false) = (&ready, args.dry_run) {

@@ -210,7 +210,7 @@ pub fn run(opts: Options) -> i32 {
 
 /// Our model as the state crate's type.
 pub fn state_model(model: Model) -> opendeskphone_state::Model {
-    model.name().parse().unwrap_or(opendeskphone_state::Model::D60)
+    model.into()
 }
 
 fn resolve_model(opts: &Options) -> Model {

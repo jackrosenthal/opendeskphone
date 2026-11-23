@@ -51,7 +51,7 @@ pub fn wanted_resources(cfg: &Config) -> Wanted {
     }
     // Stock sends the wallpaper setting to every model; only a color
     // screen shows one.
-    if cfg.model().is_new_family() {
+    if cfg.model().has_themes() {
         use opendeskphone_config::palette::{PALETTE_SETTING, WALLPAPER_SETTING};
         let named = |id: &str, kind: Kind| {
             let url = cfg.setting_attr(id, "url").map(str::trim).filter(|u| !u.is_empty())?;

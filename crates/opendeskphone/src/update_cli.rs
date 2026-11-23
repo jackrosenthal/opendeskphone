@@ -129,8 +129,7 @@ fn cmdline() -> String {
 }
 
 fn model() -> Option<opendeskphone_state::Model> {
-    let detected = crate::model::detect()?;
-    detected.model.name().parse().ok()
+    crate::model::detect().map(|d| d.model.into())
 }
 
 fn open_mtd() -> Result<PhoneMtd, String> {

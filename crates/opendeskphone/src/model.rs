@@ -64,6 +64,38 @@ impl FromStr for Model {
     }
 }
 
+impl From<Model> for opendeskphone_config::Model {
+    fn from(model: Model) -> Self {
+        use opendeskphone_config::Model as C;
+        match model {
+            Model::D40 => C::D40,
+            Model::D45 => C::D45,
+            Model::D50 => C::D50,
+            Model::D60 => C::D60,
+            Model::D62 => C::D62,
+            Model::D65 => C::D65,
+            Model::D70 => C::D70,
+            Model::D80 => C::D80,
+        }
+    }
+}
+
+impl From<Model> for opendeskphone_state::Model {
+    fn from(model: Model) -> Self {
+        use opendeskphone_state::Model as S;
+        match model {
+            Model::D40 => S::D40,
+            Model::D45 => S::D45,
+            Model::D50 => S::D50,
+            Model::D60 => S::D60,
+            Model::D62 => S::D62,
+            Model::D65 => S::D65,
+            Model::D70 => S::D70,
+            Model::D80 => S::D80,
+        }
+    }
+}
+
 /// `digium_board=` value from a kernel command line.
 pub fn model_from_cmdline(cmdline: &str) -> Option<Model> {
     cmdline
@@ -141,5 +173,16 @@ mod tests {
         assert_eq!(decide(None, None), None);
         assert_eq!(Model::D40.family(), Family::Old);
         assert_eq!(Model::D65.family(), Family::New);
+    }
+
+    #[test]
+    fn the_config_and_state_crates_agree_on_every_model() {
+        for model in Model::ALL {
+            let config = opendeskphone_config::Model::from(model);
+            let state = opendeskphone_state::Model::from(model);
+            assert_eq!((config.name(), state.name()), (model.name(), model.name()));
+            assert_eq!(config.max_accounts(), usize::from(state.max_accounts()), "{model}");
+            assert_eq!(config.has_themes(), state.is_color(), "{model}");
+        }
     }
 }

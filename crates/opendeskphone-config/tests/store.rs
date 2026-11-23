@@ -24,6 +24,7 @@ fn factory_layers_freeze_model_facts() {
         (Model::D62, 2, "480", "272"),
         (Model::D65, 6, "480", "272"),
         (Model::D70, 6, "320", "160"),
+        (Model::D80, 6, "800", "1280"),
     ];
     for (model, accounts, w, h) in expect {
         let (_d, mut s) = store(model);
@@ -38,7 +39,7 @@ fn factory_layers_freeze_model_facts() {
         }
         assert_eq!(c.setting("enable_blf_on_unused_line_keys"), Some("1"));
         assert_eq!(c.softkeys("idle").len(), 6);
-        assert_eq!(c.keymap_states().len(), if model == Model::D70 { 18 } else { 19 });
+        assert_eq!(c.keymap_states().len(), if matches!(model, Model::D70 | Model::D80) { 18 } else { 19 }, "{model}");
         assert_eq!(c.enabled_codecs().iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), [
             "PCMU", "PCMA", "G722", "G726-32"
         ]);

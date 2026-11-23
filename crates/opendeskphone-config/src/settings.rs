@@ -180,7 +180,7 @@ impl IdleFunction {
     /// Whether `model` has the function: every model has every one but
     /// the theme selector, which only the color models have.
     pub fn on_model(self, model: crate::Model) -> bool {
-        self != IdleFunction::Theme || model.is_new_family()
+        self != IdleFunction::Theme || model.has_themes()
     }
 }
 

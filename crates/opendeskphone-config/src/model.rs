@@ -1,4 +1,4 @@
-//! The seven phone models and what the configuration needs to know of them.
+//! This module describes the phone models to the configuration.
 
 use std::fmt;
 use std::str::FromStr;
@@ -12,11 +12,12 @@ pub enum Model {
     D62,
     D65,
     D70,
+    D80,
 }
 
 impl Model {
-    pub const ALL: [Model; 7] =
-        [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70];
+    pub const ALL: [Model; 8] =
+        [Model::D40, Model::D45, Model::D50, Model::D60, Model::D62, Model::D65, Model::D70, Model::D80];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -27,6 +28,7 @@ impl Model {
             Model::D62 => "D62",
             Model::D65 => "D65",
             Model::D70 => "D70",
+            Model::D80 => "D80",
         }
     }
 
@@ -35,13 +37,13 @@ impl Model {
         match self {
             Model::D40 | Model::D45 | Model::D60 | Model::D62 => 2,
             Model::D50 => 4,
-            Model::D65 | Model::D70 => 6,
+            Model::D65 | Model::D70 | Model::D80 => 6,
         }
     }
 
-    /// True for the color models (D60, D62, D65).
-    pub fn is_new_family(self) -> bool {
-        matches!(self, Model::D60 | Model::D62 | Model::D65)
+    /// The color models' screens show themes and wallpapers.
+    pub fn has_themes(self) -> bool {
+        matches!(self, Model::D60 | Model::D62 | Model::D65 | Model::D80)
     }
 
     /// The compiled-in factory layer for this model.
@@ -54,6 +56,7 @@ impl Model {
             Model::D62 => include_str!("../defaults/factory-D62.xml"),
             Model::D65 => include_str!("../defaults/factory-D65.xml"),
             Model::D70 => include_str!("../defaults/factory-D70.xml"),
+            Model::D80 => include_str!("../defaults/factory-D80.xml"),
         }
     }
 }

@@ -97,7 +97,7 @@ async fn phone(model: Model, panel: Arc<Panel>) -> Phone {
     let dir = std::env::temp_dir().join(format!("opendeskphone-web-screen-{}", id.map(|b| format!("{b:02x}")).concat()));
     let nv = Nvdata::new(dir.join("nvdata"));
     nv.ensure_layout().unwrap();
-    let config = Arc::new(Mutex::new(ConfigStore::open(nv, opendeskphone_config::Model::D60, dir.join("tmp")).unwrap()));
+    let config = Arc::new(Mutex::new(ConfigStore::open(nv, model.name().parse().unwrap(), dir.join("tmp")).unwrap()));
     let store = Store::new(model);
     let options = WebOptions { http: Some("127.0.0.1:0".parse().unwrap()), https: None, upload_dir: dir.join("upload"), ..Default::default() };
     let bound = WebServer::new(store.clone(), config, options).with_screen(panel.clone()).bind().await.unwrap();

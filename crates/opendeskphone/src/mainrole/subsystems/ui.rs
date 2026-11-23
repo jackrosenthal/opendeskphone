@@ -415,8 +415,8 @@ mod tests {
         assert!(ui_config(&ctx, Some(&cfg)).time_24h);
     }
 
-    fn config(xml: &str) -> Config {
-        Config::from_merged(opendeskphone_config::xml::Element::parse(xml).unwrap(), opendeskphone_config::Model::D65, None)
+    fn config(ctx: &Context, xml: &str) -> Config {
+        Config::from_merged(opendeskphone_config::xml::Element::parse(xml).unwrap(), ctx.model.into(), None)
     }
 
     /// With no softkeys configured the D80 has its own home buttons, and
@@ -428,15 +428,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ctx = |model| Context::standalone(crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")), model);
         let (d80, d65) = (ctx(crate::model::Model::D80), ctx(crate::model::Model::D65));
-        let plain = config("<config/>");
         assert_eq!(ui_config(&d80, None).idle_softkeys, IdleSoftkey::touch_defaults());
-        assert_eq!(ui_config(&d80, Some(&plain)).idle_softkeys, IdleSoftkey::touch_defaults());
-        let keyed = ui_config(&d65, Some(&plain)).idle_softkeys;
+        assert_eq!(ui_config(&d80, Some(&config(&d80, "<config/>"))).idle_softkeys, IdleSoftkey::touch_defaults());
+        let keyed = ui_config(&d65, Some(&config(&d65, "<config/>"))).idle_softkeys;
         assert_eq!(keyed[..3], [IdleSoftkey::CallLog, IdleSoftkey::Contacts, IdleSoftkey::Status]);
         assert!(!keyed.contains(&IdleSoftkey::Voicemail));
-        let set = config("<config><setting id=\"opendeskphone_idle_softkeys\" value=\"menu,redial\"/></config>");
+        let set = "<config><setting id=\"opendeskphone_idle_softkeys\" value=\"menu,redial\"/></config>";
         for ctx in [&d80, &d65] {
-            assert_eq!(ui_config(ctx, Some(&set)).idle_softkeys, [IdleSoftkey::Menu, IdleSoftkey::Redial]);
+            assert_eq!(ui_config(ctx, Some(&config(ctx, set))).idle_softkeys, [IdleSoftkey::Menu, IdleSoftkey::Redial]);
         }
     }
 
@@ -449,11 +448,11 @@ mod tests {
             crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")),
             crate::model::Model::D65,
         );
-        let plain = ui_config(&ctx, Some(&config("<config><appconfig id=\"voicemail\"/></config>")));
+        let plain = ui_config(&ctx, Some(&config(&ctx, "<config><appconfig id=\"voicemail\"/></config>")));
         assert!(!plain.voicemail_app_account && !plain.park);
         let set = ui_config(
             &ctx,
-            Some(&config(concat!(
+            Some(&config(&ctx, concat!(
                 "<config>",
                 "<setting id=\"parking_lot_extension\" value=\"700\"/>",
                 "<appconfig id=\"voicemail\"><account account_id=\"100\" username=\"u\" password=\"p\"/></appconfig>",

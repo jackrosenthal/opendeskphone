@@ -1,0 +1,12 @@
+<?xml version="1.0" ?>
+<!-- Open Desk Phone factory restrictions for the D80 (merge layer 2). -->
+<config>
+    <setting id="phone_model" value="D80" conflict="freeze"/>
+    <setting id="max_accounts" value="6" conflict="freeze"/>
+    <setting id="width" value="800" conflict="freeze"/>
+    <setting id="height" value="1280" conflict="freeze"/>
+    <setting id="desi_strip_type" value="none" conflict="freeze"/>
+    <setting id="desi_strip_size" value="0" conflict="freeze"/>
+    <setting id="desi_strip_max_pages" value="0" conflict="freeze"/>
+    <setting id="page_linekeys" value="0" conflict="freeze"/>
+</config>

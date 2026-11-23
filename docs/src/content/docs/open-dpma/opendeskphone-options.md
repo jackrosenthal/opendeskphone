@@ -104,7 +104,7 @@ The idle screen softkeys, from the left.
 
 - **Value:** softkeys, separated by commas: functions from the table below, or `app:<name>` to open an app.  A line with an unknown softkey is skipped.
 - **Repeatable:** each occurrence appends softkeys.  A softkey listed twice appears once.
-- **Default:** `call_log,contacts,status,menu,apps,dnd,forward`, then `theme` on the color models (D60, D62, and D65).
+- **Default:** `call_log,contacts,status,menu,apps,dnd,forward`, then `theme` on the color models (D60, D62, D65, and D80).
 
 | Function | Softkey |
 | --- | --- |
@@ -142,7 +142,7 @@ The built-in theme: a wallpaper and the color palette for every screen.
 
 - **Value:** a theme name, e.g., `dusk`: 1 to 32 letters, digits, `_`, and `-`.  The phone's theme selector and web interface list the themes.  For an unknown name, the phone shows the default theme.
 - **Default:** the theme chosen on the phone, or else Tides.
-- **Models:** D60, D62, and D65.
+- **Models:** D60, D62, D65, and D80.
 
 A `wallpaper_file` in the phone section replaces the theme.
 
@@ -152,7 +152,7 @@ The palette for the `wallpaper_file` picture: the colors of every screen while t
 
 - **Value:** a file name or URL, e.g., `lobby.txtpb`, located like `wallpaper_file`: the module serves a file in `file_directory`; another name is fetched from the network's `file_url_prefix`; a full URL is used as written.
 - **Default:** the phone's current palette.
-- **Models:** D60, D62, and D65.
+- **Models:** D60, D62, D65, and D80.
 
 The phone fetches the palette only with `wallpaper_file`.  The file is a `opendeskphone.palette.v1` message in protobuf text format, at most 16 KiB, defined in `proto/opendeskphone/palette/v1/palette.proto` in the repository.
 

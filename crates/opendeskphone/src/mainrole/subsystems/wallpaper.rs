@@ -85,7 +85,7 @@ pub fn apply(cfg: &Config, nv: &Nvdata, out: &mut UiConfig) {
         ThemeChoice::Builtin(name) => out.theme = name,
         ThemeChoice::Picture => {
             out.theme = theme.builtin;
-            if cfg.model().is_new_family() {
+            if cfg.model().has_themes() {
                 out.wallpaper_picture = picture(nv, cfg.palette_file_named());
             }
         }

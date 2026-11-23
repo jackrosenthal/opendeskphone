@@ -379,7 +379,7 @@ fn filter_section(text: &str, filter: &str) -> String {
 }
 
 fn config_model(ctx: &Context) -> opendeskphone_config::Model {
-    ctx.model.name().parse().unwrap_or(opendeskphone_config::Model::D60)
+    ctx.model.into()
 }
 
 /// True when this image may write files that stock also owns.

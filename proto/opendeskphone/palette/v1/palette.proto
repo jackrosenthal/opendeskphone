@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package opendeskphone.palette.v1;
 
-// The colors of every screen of a color model (D60, D62, D65): a palette
+// The colors of every screen of a color model (D60, D62, D65, D80): a palette
 // file, in protobuf text format (`.txtpb`).  A provisioning server names
 // one beside a wallpaper picture:
 //

@@ -72,7 +72,7 @@ export type OpenDeskPhoneSettings = Message<"opendeskphone.settings.v1.OpenDeskP
   /**
    * The idle screen's softkeys, in order.  Default (also when there are
    * none here): Call Log, Contacts, Status, Menu, Apps, DND, Forward, and,
-   * on the color models (D60, D62, D65), Theme.  The softkeys of the
+   * on the color models (D60, D62, D65, D80), Theme.  The softkeys of the
    * "idle" keymap state in the XML configuration are not used.  In this file, one entry per softkey:
    *   idle_softkeys { function: FUNCTION_CALL_LOG }
    *   idle_softkeys { app { name: "parking" } }
@@ -103,7 +103,7 @@ export type OpenDeskPhoneSettings = Message<"opendeskphone.settings.v1.OpenDeskP
   disabledApps?: DisabledApps | undefined;
 
   /**
-   * The theme of the color models (D60, D62, D65), by the name of a
+   * The theme of the color models (D60, D62, D65, D80), by the name of a
    * built-in one (e.g., "dusk"; the phone's theme selector and the web UI
    * list them).  A theme is a wallpaper and the palette every screen is
    * drawn in.  Default: "tides".  An unknown name is the default theme.
@@ -313,8 +313,8 @@ export enum IdleSoftkey_Function {
   REDIAL = 8,
 
   /**
-   * The theme selector.  Only the color models (D60, D62, D65) have
-   * themes; on the others the softkey is not shown.
+   * The theme selector.  Only the color models (D60, D62, D65, D80)
+   * have themes; on the others the softkey is not shown.
    *
    * @generated from enum value: FUNCTION_THEME = 9;
    */

@@ -92,7 +92,7 @@ async fn ask(store: &dyn PbxStore, op: StoreOp) -> StoreReply {
 fn local(config: &SharedConfig) -> (bool, Option<String>, ThemeSync) {
     let cfg = config.lock().unwrap().config();
     let settings = cfg.opendeskphone_settings();
-    (cfg.model().is_new_family(), settings.local_theme(), settings.theme_sync.as_option().cloned().unwrap_or_default())
+    (cfg.model().has_themes(), settings.local_theme(), settings.theme_sync.as_option().cloned().unwrap_or_default())
 }
 
 /// Writes the record, and with `take` the theme too, unless the theme was
@@ -241,7 +241,7 @@ pub async fn sync(config: &SharedConfig, store: &dyn PbxStore, now_unix: Option<
 /// changes, for as long as the phone runs.
 pub fn start(ctx: &Context, config: Option<SharedConfig>, hub: &ConfigHub, store: Arc<dyn PbxStore>, online: Arc<tokio::sync::Notify>) {
     let Some(config) = config else { return };
-    if !config.lock().unwrap().config().model().is_new_family() {
+    if !config.lock().unwrap().config().model().has_themes() {
         return;
     }
     // One notification for both reasons.
