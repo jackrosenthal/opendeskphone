@@ -161,6 +161,7 @@ fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
     if let Some(name) = out.ringtones.iter().find(|n| n.eq_ignore_ascii_case(&active)) {
         out.ringtone = name.clone();
     }
+    out.ringtone_locked = cfg.setting_frozen("active_ringtone");
     // Stock: an account's `dial_plan`, else `default_dial_plan`; a plan
     // that does not compile is no plan.
     let default_plan = cfg.sip().default_dial_plan;
@@ -463,5 +464,18 @@ mod tests {
             ))),
         );
         assert!(set.voicemail_app_account && set.park);
+    }
+
+    #[test]
+    fn the_ui_knows_whether_the_ringtone_is_frozen() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Context::standalone(
+            crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")),
+            crate::model::Model::D65,
+        );
+        let fallback = config(&ctx, "<config><setting id=\"default_ringtone\" value=\"Solarium\" conflict=\"freeze\"/></config>");
+        assert!(!ui_config(&ctx, Some(&fallback)).ringtone_locked);
+        let frozen = config(&ctx, "<config><setting id=\"active_ringtone\" value=\"Digium\" conflict=\"freeze\"/></config>");
+        assert!(ui_config(&ctx, Some(&frozen)).ringtone_locked);
     }
 }

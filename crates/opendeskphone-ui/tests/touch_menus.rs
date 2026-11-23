@@ -308,6 +308,13 @@ fn pair(id: &str, value: &str) -> (String, String) {
     (id.into(), value.into())
 }
 
+/// The check mark of a ringtone is in the accent, at the left of its row.
+fn check(r: &Rig, i: u32) -> bool {
+    let at = r.region(row(i));
+    let th = shown_th();
+    (at.x..at.x + th.back_w).any(|x| (at.y..at.bottom()).any(|y| r.ui.canvas().pixel(x, y) == th.accent))
+}
+
 #[test]
 fn a_ringtone_is_heard_and_chosen_by_a_tap() {
     let mut r = Rig::new();
@@ -319,25 +326,40 @@ fn a_ringtone_is_heard_and_chosen_by_a_tap() {
     assert_eq!(r.screen(), "ringtones");
     // No buttons: a tap sounds the ringtone and makes it the ringtone.
     assert!(r.regions().iter().all(|(_, h)| !matches!(h, Hit::Soft(_))));
-    let check = |r: &Rig, i: u32| {
-        let at = r.region(row(i));
-        // The check mark, in the accent, at the left of the row.
-        let th = shown_th();
-        (at.x..at.x + th.back_w).any(|x| (at.y..at.bottom()).any(|y| r.ui.canvas().pixel(x, y) == th.accent))
-    };
     assert!(check(&r, 0) && !check(&r, 1));
     r.tap(row(1));
     assert_eq!(taken(&r.audio), vec![Command::PlaySound { name: "Acheron".into() }]);
-    assert_eq!(setting(taken(&r.config)), vec![pair("default_ringtone", "Acheron")]);
+    assert_eq!(setting(taken(&r.config)), vec![pair("active_ringtone", "Acheron")]);
     assert!(check(&r, 1) && !check(&r, 0));
     r.tap(row(2));
     assert_eq!(taken(&r.audio), vec![Command::PlaySound { name: "Andromeda".into() }]);
-    assert_eq!(setting(taken(&r.config)), vec![pair("default_ringtone", "Andromeda")]);
+    assert_eq!(setting(taken(&r.config)), vec![pair("active_ringtone", "Andromeda")]);
     // The back button stops the sound and keeps the ringtone.
     r.tap(Hit::Key(Key::Cancel));
     assert_eq!(taken(&r.audio), vec![Command::StopSound]);
     assert!(taken(&r.config).is_empty());
     assert_eq!(r.screen(), "sounds");
+}
+
+#[test]
+fn a_frozen_ringtone_is_heard_and_not_chosen_by_a_tap() {
+    let mut r = Rig::new();
+    r.ui.handle().set_config(UiConfig {
+        backlight_timeout_secs: 0,
+        ringtone: "Flutey Phone".into(),
+        ringtones: vec!["Flutey Phone".into(), "Acheron".into(), "Andromeda".into()],
+        ringtone_locked: true,
+        ..Default::default()
+    });
+    r.show("menu");
+    r.tap(row(MENU_SETTINGS));
+    r.tap(row(SETTINGS_SOUNDS));
+    r.tap(row(0));
+    assert_eq!(r.screen(), "ringtones");
+    r.tap(row(1));
+    assert_eq!(taken(&r.audio), vec![Command::PlaySound { name: "Acheron".into() }]);
+    assert!(taken(&r.config).is_empty());
+    assert!(check(&r, 0) && !check(&r, 1), "the check mark stays on the ringtone in use");
 }
 
 #[test]

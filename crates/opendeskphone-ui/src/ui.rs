@@ -103,6 +103,10 @@ pub struct UiConfig {
     /// The provisioning server fixed the theme: the phone's selector
     /// shows the choices and changes nothing.
     pub theme_locked: bool,
+    /// The configuration froze the ringtone (stock `active_ringtone`), so
+    /// the Ringtones screen plays the ringtones and changes nothing: it has
+    /// no Select, and a tap only sounds the ringtone.
+    pub ringtone_locked: bool,
     /// The voicemail app has its application account, with which it
     /// reaches the server.  Without it the Messages key calls the
     /// account's voicemail number, though the app is installed.
@@ -140,6 +144,7 @@ impl Default for UiConfig {
             theme: String::new(),
             wallpaper_picture: None,
             theme_locked: false,
+            ringtone_locked: false,
             voicemail_app_account: false,
             park: false,
             network_dhcp: true,

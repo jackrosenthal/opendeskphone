@@ -1507,16 +1507,19 @@ impl Screen for Ringtones {
         if cx.th.touch() {
             return Vec::new();
         }
-        vec![soft(1, tr::SELECT), soft(2, tr::PLAY), soft(0, ""), soft(4, tr::BACK)]
+        let select = if cx.cfg.ringtone_locked { soft(0, "") } else { soft(1, tr::SELECT) };
+        vec![select, soft(2, tr::PLAY), soft(0, ""), soft(4, tr::BACK)]
     }
     fn tap(&mut self, cx: &Cx, hit: Hit, _x: i32, _y: i32) -> Nav {
         match hit {
             Hit::Row { row, .. } if (row as usize) < cx.cfg.ringtones.len() => {
                 let name = cx.cfg.ringtones[row as usize].clone();
-                self.picked = Some(row as usize);
                 self.st.selected = row as usize;
                 cx.post(Command::PlaySound { name: name.clone() });
-                set(cx, "default_ringtone", name);
+                if !cx.cfg.ringtone_locked {
+                    self.picked = Some(row as usize);
+                    set(cx, "active_ringtone", name);
+                }
                 Nav::Stay
             }
             _ => Nav::Ignored,
@@ -1525,9 +1528,9 @@ impl Screen for Ringtones {
     fn softkey(&mut self, cx: &Cx, id: u32) -> Nav {
         let name = cx.cfg.ringtones.get(self.st.selected).cloned();
         match (id, name) {
-            (1, Some(name)) => {
+            (1, Some(name)) if !cx.cfg.ringtone_locked => {
                 cx.post(Command::StopSound);
-                set(cx, "default_ringtone", name);
+                set(cx, "active_ringtone", name);
                 Nav::Pop
             }
             (2, Some(name)) => {
@@ -1567,7 +1570,7 @@ impl Screen for Ringtones {
         let touch = th.touch();
         let mark_w = if touch { th.back_w } else { th.icon + 2 * th.pad };
         let checked = |i: usize| match self.picked {
-            Some(p) if touch => p == i,
+            Some(p) if touch && !cx.cfg.ringtone_locked => p == i,
             _ => tones[i] == cx.cfg.ringtone,
         };
         widgets::list(c, th, widgets::body_rows(th, body), tones.len(), &mut self.st, th.row_h, !touch, |c, r, i, _, fg| {

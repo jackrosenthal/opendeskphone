@@ -430,6 +430,38 @@ fn menu_shortcuts_and_settings() {
 }
 
 #[test]
+fn a_ringtone_is_chosen_unless_it_is_frozen() {
+    for locked in [false, true] {
+        let mut r = Rig::new(Model::D60);
+        r.ui.handle().set_config(UiConfig {
+            backlight_timeout_secs: 0,
+            ringtone: "Flutey Phone".into(),
+            ringtones: vec!["Flutey Phone".into(), "Acheron".into()],
+            ringtone_locked: locked,
+            ..Default::default()
+        });
+        let p = r.store.send(Command::ShowScreen { name: "settings".into() });
+        r.ui.pump();
+        p.wait().unwrap();
+        r.tap(Key::Digit(4)); // Sounds
+        r.tap(Key::Digit(1)); // Ringtone
+        assert_eq!(r.screen(), "ringtones");
+        r.tap(Key::Down);
+        r.tap(Key::Soft(2));
+        assert_eq!(r.audio_cmds(), vec![Command::PlaySound { name: "Acheron".into() }]);
+        r.tap(Key::Soft(1));
+        if locked {
+            r.tap(Key::Select);
+            assert!(Rig::drain(&r.config).is_empty());
+            assert_eq!(r.screen(), "ringtones");
+        } else {
+            assert_eq!(Rig::drain(&r.config), vec![Command::SetSettings { settings: vec![("active_ringtone".into(), "Acheron".into())] }]);
+            assert_eq!(r.screen(), "sounds");
+        }
+    }
+}
+
+#[test]
 fn injected_keys_and_events() {
     let mut r = Rig::new(Model::D60);
     let sub = r.store.subscribe_events(TopicSet::NONE);
