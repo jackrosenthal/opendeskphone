@@ -96,7 +96,7 @@ The image build takes four more files from the stock D80 image, which Nix downlo
 
 Two things about installing the package are not settled:
 
-- **The first installation.**  A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither key, so the stock recovery refuses it.  While `d80_stock_firmware_migration` is on, the Open DPMA module [re-keys such a phone](../open-dpma/administration.md#d80-stock-migration) instead.
+- **The first installation.**  A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither key, so the stock recovery refuses it.  While `d80_stock_firmware_migration` is on, the Open DPMA module [re-keys such a phone](../open-dpma/administration.md#firmware-migration) instead.
 - **Updates from the web interface and from provisioning.**  Only `dphone update install` leaves a package for the recovery.  The web interface and a DPMA server's firmware entries refuse on a D80.
 
 ### The D80's recovery
@@ -109,7 +109,7 @@ nix build .#recovery-d80
 
 The recovery image is the D80's kernel with a ramdisk, 7.3 MiB of the partition's 8 MiB.  The ramdisk holds the recovery program as `/init` (`crates/opendeskphone-recovery`), the shell, and a few utilities.  The kernel runs a ramdisk's `/init` before it mounts a root file system, so the kernel and its command line are the boot image's.
 
-[`dphone update install`](firmware-updates.mdx#the-d80) and the recovery work together as the stock firmware and the stock recovery do, with the same files in the same places:
+[`dphone update install`](firmware-updates.mdx#dphone-update-install) and the recovery work together as the stock firmware and the stock recovery do, with the same files in the same places:
 
 1. `dphone` stores the package in nvdata as `recovery/update.zip`, and names it in `recovery/command`.
 2. `dphone` writes the package's recovery image to `mmcblk0p2`, unless the partition holds that image already.  For a stock package, `dphone` makes the stock recovery image from the package's boot image and recovery patch.

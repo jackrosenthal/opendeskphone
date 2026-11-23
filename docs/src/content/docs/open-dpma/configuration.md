@@ -55,7 +55,7 @@ line=101
 | `message_delay` | Milliseconds | `5` | Delay between the SIP messages of a multi-message reply. |
 | `appserver_certificate` | Path to a PEM file | A certificate built into the module | The server certificate sent to phones in the handshake.  Open DPMA only. |
 | `phone_ca_file` | Path to a PEM file with one or more CA certificates | The CA certificates built into the module | The CA certificates that verify a phone's certificate in the handshake.  Open DPMA only. |
-| `d80_stock_firmware_migration` | On/off | `yes` | [Re-keys](administration.md#d80-stock-migration) a D80 that contacts the server running stock firmware, when the firmware package contains an Open Desk Phone image for it.  Open DPMA only. |
+| `d80_stock_firmware_migration` | On/off | `yes` | [Re-keys](administration.md#firmware-migration) a D80 that contacts the server running stock firmware, when the firmware package contains an Open Desk Phone image for it.  Open DPMA only. |
 
 The built-in certificates are the original module's, which D-series phones trust.  If the file named by `appserver_certificate` or `phone_ca_file` is unreadable, the module does not load at startup.
 
