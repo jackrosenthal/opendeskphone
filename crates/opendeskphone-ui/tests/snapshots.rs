@@ -50,18 +50,22 @@ struct Rig {
     sim: opendeskphone_hal::sim::SimHandle,
 }
 
+/// Returns the configuration that the snapshots are taken with.
+fn config(model: Model) -> UiConfig {
+    UiConfig {
+        utc_offset_secs: -7 * 3600,
+        ringtone: "Flutey Phone".into(),
+        ringtones: vec!["Flutey Phone".into(), "Acheron".into(), "Andromeda".into()],
+        ..UiConfig::for_model(model)
+    }
+}
+
 impl Rig {
     fn new(model: Model) -> Rig {
         let mut hal = Hal::sim(model);
         let sim = hal.sim.clone().unwrap();
         let store = Store::new(model);
-        let cfg = UiConfig {
-            utc_offset_secs: -7 * 3600,
-            ringtone: "Flutey Phone".into(),
-            ringtones: vec!["Flutey Phone".into(), "Acheron".into(), "Andromeda".into()],
-            ..UiConfig::for_model(model)
-        };
-        let mut ui = Ui::from_hal(&mut hal, store.clone(), cfg);
+        let mut ui = Ui::from_hal(&mut hal, store.clone(), config(model));
         ui.set_fixed_time(Some((MONO, UNIX)));
         Rig { model, store, ui, sim }
     }
@@ -774,6 +778,19 @@ fn d80_touch_calls() {
     r.store.update::<Accounts, _>(|a| *a = (*accounts).clone());
     r.store.update::<Keys, _>(|k| *k = (*keys).clone());
     r.store.update::<Mwi, _>(|m| *m = (*mwi).clone());
+    r.ui.pump();
+    // The home screen has buttons for two apps whose icons are color icons
+    // of the phone's.
+    let apps = r.store.get::<Apps>();
+    r.store.update::<Apps, _>(|a| {
+        a.installed.push(AppInfo { name: "alarms".into(), display_name: "Alarms".into(), icon: "app-alarms".into(), ..Default::default() });
+    });
+    let app = |name: &str| opendeskphone_ui::IdleSoftkey::App(name.into());
+    let keys = vec![app("voicemail"), app("alarms"), opendeskphone_ui::IdleSoftkey::Contacts];
+    r.ui.handle().set_config(UiConfig { idle_softkeys: keys, ..config(model) });
+    r.shot("60d-touch-idle-apps");
+    r.ui.handle().set_config(config(model));
+    r.store.update::<Apps, _>(|a| *a = (*apps).clone());
     r.ui.pump();
 
     // The dialer: opened from the idle screen, the number touched in.

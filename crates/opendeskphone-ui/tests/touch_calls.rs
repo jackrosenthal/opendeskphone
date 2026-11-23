@@ -9,7 +9,7 @@ use opendeskphone_hal::Hal;
 use opendeskphone_state::*;
 use opendeskphone_ui::gfx::IRect;
 use opendeskphone_ui::skin::Theme;
-use opendeskphone_ui::{Hit, Ui, UiConfig};
+use opendeskphone_ui::{Hit, IdleSoftkey, Ui, UiConfig};
 
 const MONO: u64 = 5_000_000;
 const UNIX: u64 = 1_794_607_087;
@@ -321,6 +321,44 @@ fn the_home_buttons_have_voicemail_and_redial_and_do_not_disturb_is_lit_while_on
     r.store.update::<Features, _>(|f| f.forward = Forward { busy: "1099".into(), ..Default::default() });
     r.ui.pump();
     assert!(!r.has(FORWARD_OFF));
+}
+
+#[test]
+fn an_apps_home_button_has_its_icon_over_its_label_as_the_others_do() {
+    let app = |name: &str| IdleSoftkey::App(name.into());
+    let keys = vec![app("alarms"), IdleSoftkey::Contacts];
+    let mut r = Rig::with_config(UiConfig { backlight_timeout_secs: 0, idle_softkeys: keys, ..UiConfig::for_model(Model::D80) });
+    // The app's icon is a color icon of the phone's.
+    r.store.update::<Apps, _>(|a| {
+        a.installed.push(AppInfo { name: "alarms".into(), display_name: "Alarms".into(), icon: "app-alarms".into(), ..Default::default() });
+    });
+    r.ui.pump();
+    let th = Theme::for_model(Model::D80);
+    let c = r.ui.canvas();
+    for id in 1..=2 {
+        // Each run is a band of rows in which something is drawn on the
+        // button's fill, inside its rounded edge, and holds (top, bottom,
+        // left, right).
+        let b = r.region(Hit::Soft(1000 + id)).inset_xy(th.px(6), th.px(2));
+        let fill = c.pixel(b.x, b.y);
+        let mut runs: Vec<(i32, i32, i32, i32)> = Vec::new();
+        for y in b.y..b.bottom() {
+            let ink: Vec<i32> = (b.x..b.right()).filter(|x| c.pixel(*x, y) != fill).collect();
+            let (Some(left), Some(right)) = (ink.first().copied(), ink.last().map(|x| x + 1)) else { continue };
+            match runs.last_mut() {
+                Some(run) if run.1 == y => *run = (run.0, y + 1, run.2.min(left), run.3.max(right)),
+                _ => runs.push((y, y + 1, left, right)),
+            }
+        }
+        // The last run is the label, which is wider than an icon, and the
+        // runs above it are the icon, which fits in an icon's square.
+        let (label, icon) = runs.split_last().unwrap();
+        assert!(label.3 - label.2 > th.icon && !icon.is_empty(), "button {id}: {runs:?}");
+        let (top, bottom) = (icon[0].0, icon[icon.len() - 1].1);
+        let left = icon.iter().map(|run| run.2).min().unwrap();
+        let right = icon.iter().map(|run| run.3).max().unwrap();
+        assert!(bottom - top <= th.icon && right - left <= th.icon, "button {id}: {runs:?}");
+    }
 }
 
 #[test]

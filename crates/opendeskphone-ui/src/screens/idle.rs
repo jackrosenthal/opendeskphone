@@ -484,9 +484,9 @@ fn softkey_label(cx: &Cx, key: &IdleSoftkey) -> Option<String> {
     Some(label.to_string())
 }
 
-/// Touch: the icon of a home button (one of the skin's; none if empty),
-/// and how the button looks.
-fn home_button(cx: &Cx, key: &IdleSoftkey) -> (String, Look) {
+/// Returns the icon of a home button on the touch screen, which is one of
+/// the skin's, and how the button looks.
+fn home_button<'a>(cx: &'a Cx, key: &IdleSoftkey) -> (&'a str, Look) {
     let icon = match key {
         IdleSoftkey::CallLog => "calllog",
         IdleSoftkey::Contacts => "contacts",
@@ -498,17 +498,23 @@ fn home_button(cx: &Cx, key: &IdleSoftkey) -> (String, Look) {
         IdleSoftkey::Redial => "phone-out",
         IdleSoftkey::Voicemail => "voicemail",
         IdleSoftkey::Theme => "brightness",
-        IdleSoftkey::App(name) => {
-            let own = cx.st.apps.installed.iter().find(|a| a.name == *name).map(|a| a.icon.as_str()).unwrap_or("");
-            if cx.th.icon(own).is_some() { own } else { "apps" }
-        }
+        IdleSoftkey::App(name) => app_icon(cx, name),
     };
     let look = match key {
         IdleSoftkey::Dnd if cx.st.features.dnd => Look::On,
         IdleSoftkey::Redial if calls::last_placed(cx).is_none() => Look::Off,
         _ => Look::Plain,
     };
-    (icon.to_string(), look)
+    (icon, look)
+}
+
+/// Picks a one-color icon for an app's home button, so that the button
+/// draws it in its label's color as the other buttons draw theirs.
+fn app_icon<'a>(cx: &'a Cx, name: &str) -> &'a str {
+    let app = cx.st.apps.installed.iter().find(|a| a.name == name);
+    let named = app.map(|a| crate::icons::twin(&a.icon).unwrap_or(&a.icon));
+    let by_name = crate::icons::twin(&format!("app-{name}"));
+    named.into_iter().chain(by_name).find(|n| cx.th.icon(n).is_some()).unwrap_or("apps")
 }
 
 /// Touch: the rows the home buttons are in, and how many are in each: at
@@ -706,7 +712,7 @@ impl Idle {
             let needs: Vec<i32> = row.iter().map(|(_, _, label)| th.font(Font::Bold).width(label) + 2 * th.pad).collect();
             for (cell, (id, key, label)) in home_columns(r, &needs, gap).into_iter().zip(row) {
                 let (icon, look) = home_button(cx, key);
-                dialpad::control(c, th, cell, &icon, label, look, Hit::Soft(HOME + *id));
+                dialpad::control(c, th, cell, icon, label, look, Hit::Soft(HOME + *id));
             }
         }
         if !rows.is_empty() {
