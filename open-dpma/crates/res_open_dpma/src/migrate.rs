@@ -1,23 +1,22 @@
 //! Migrates a D80 from the stock firmware to Open Desk Phone.
 //!
-//! Prior to installing Open Desk Phone on stock firmware, the phone needs re-keyed to accept Open
-//! Desk Phone's signing keys instead of Digium's.
+//! The stock firmware only installs packages signed by Digium, and so does its recovery.  Open
+//! Desk Phone's recovery does not check signatures, so the migration replaces the recovery, and
+//! has it install the package.
 //!
 //! During provisioning, Open DPMA detects the stock firmware (version <3) when it's installing Open
 //! Desk Phone (version >=3).  When this is detected:
-//! 1. Open DPMA uploads several files to the phone using upload_file.cgi:
-//!    - odp-recovery.img: The new recovery image, extracted from the firmware.
-//!    - odp-otacerts.zip: Open Desk Phone's OTA certificates.
-//!    - odp-update-firmware.sh: A modified version of the phone's update-firmware.sh which does not
-//!      check the package's certificates.
-//!    - odp-migrate.sh: A shell script to the phone that will flash the recovery image,
-//!      replace /system/bin/update-firmware.sh with odp-update-firmware.sh, and replace
-//!      /system/security/otacerts.zip with odp-otacerts.zip.
+//! 1. Open DPMA uploads odp-migrate.sh to the phone using upload_file.cgi.  The file is a shell
+//!    script followed by the recovery image and the package, both taken from the firmware.
 //! 2. A configuration payload with `lan_port_mode` set to
 //!    `auto;sh /data/digium/tmp/odp-migrate.sh` is sent to the phone.  The stock firmware
 //!    conveniently executes this script for us.
-//! 3. The server posts the image to the stock updater (`update_firmware.cgi`).  The modified updater
-//!    then accepts the image, and hands the package to the recovery, and the recovery installs it.
+//! 3. The script leaves the package in /cache, flashes the recovery image, and restarts the phone
+//!    into the recovery, which installs the package.
+//!
+//! Nothing on the phone's /system is changed, so a phone whose installation fails starts the stock
+//! firmware again (which restores its own recovery), and is migrated again when it next asks for
+//! its configuration.
 //!
 //! If `d80_stock_firmware_migration` is set to `no`, Open DPMA will never attempt this migration.
 
@@ -26,25 +25,24 @@ use dpma_ast::dpma_bytes::ByteSlice;
 use dpma_ast::dpma_log;
 use eff::EffReader;
 use opendeskphone_recovery::{sig, zip};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-/// The certificate installed into the phone's `otacerts.zip`.
-const OTA_CERTIFICATE: &str =
-    include_str!("../../../../crates/opendeskphone-image/keys/d80-ota.x509.pem");
-
 /// The only model this migration handles: its stock firmware has the
-/// command injection, and it has the recovery partition that the re-key
-/// overwrites.
+/// command injection, and it has the recovery partition that the
+/// migration overwrites.
 const MODEL: &[u8] = b"D80";
 
-/// The size of the recovery partition.  The staged recovery image is
-/// padded to this size so that the payload script can read the whole
-/// partition back and compare it against what it wrote.
+/// The size of the recovery partition, which the recovery image must fit.
 const RECOVERY_PARTITION_SIZE: usize = 8 << 20;
+
+/// The block size of the migration file's layout: the script is padded to
+/// one block and the recovery image to whole blocks, so that the phone's
+/// `dd` can take the file apart.
+const BLOCK: usize = 4096;
 
 /// The phone's web server upload endpoint.  `upload_file.cgi` saves each
 /// upload under its client-supplied file name in `/data/digium/tmp/` (the
@@ -52,9 +50,6 @@ const RECOVERY_PARTITION_SIZE: usize = 8 << 20;
 /// because it runs as root.
 const UPLOAD_PATH: &str = "/cgi-bin/upload_file.cgi";
 const PAYLOAD_NAME: &str = "odp-migrate.sh";
-const RECOVERY_NAME: &str = "odp-recovery.img";
-const UPDATE_SCRIPT_NAME: &str = "odp-update-firmware.sh";
-const OTACERTS_NAME: &str = "odp-otacerts.zip";
 
 /// The `lan_port_mode` value used in a migration document: `auto` for the
 /// switch configuration, followed by the staged script, which the stock
@@ -63,41 +58,22 @@ pub fn payload_setting() -> &'static [u8] {
     b"auto;sh /data/digium/tmp/odp-migrate.sh"
 }
 
-/// The phone's unauthenticated firmware upload endpoint; the stock updater
-/// runs on whatever is posted there.
-const FIRMWARE_PATH: &str = "/cgi-bin/update_firmware.cgi";
 const HTTP_PORT: u16 = 80;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-/// Timeouts for uploading a recovery image and for the updater's
-/// response; decrypting and verifying a package takes the phone a while.
-const UPLOAD_TIMEOUT: Duration = Duration::from_secs(30);
-const FIRMWARE_TIMEOUT: Duration = Duration::from_secs(120);
-/// The config daemon runs the payload within seconds of applying a
-/// configuration, so the first hand-off waits that long; the remaining
-/// attempts retry in case the phone is slower.
-const FIRST_HAND_OFF_WAIT: Duration = Duration::from_secs(12);
-const HAND_OFF_ATTEMPTS: u32 = 12;
-const HAND_OFF_RETRY: Duration = Duration::from_secs(20);
-/// If a phone's configuration is reapplied within this window, its files
-/// do not need to be staged again.
+/// The timeout for each read and write of an upload.  The phone answers
+/// only after it has copied the whole file into place.
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+/// If a phone's configuration is reapplied within this window, the file
+/// is not uploaded again.
 const STAGE_TTL: Duration = Duration::from_secs(120);
 
 /// Everything a migration needs, built from the Open Desk Phone image in
 /// the firmware package.
 #[derive(Debug)]
 pub struct Kit {
-    /// The recovery image from the package, padded to the size of the
-    /// recovery partition.
-    pub recovery: Vec<u8>,
-    /// The replacement for `/system/bin/update-firmware.sh`.
-    pub update_script: Vec<u8>,
-    /// An `otacerts.zip` holding the Open Desk Phone certificate.
-    pub otacerts: Vec<u8>,
-    /// The script the payload setting runs.
-    pub payload_script: Vec<u8>,
-    /// The image from the firmware package, ready to hand to the stock
-    /// updater once the phone's key is ours.
-    pub eff: Vec<u8>,
+    /// The file the payload setting runs: the script, followed by the
+    /// recovery image and the package.
+    pub payload: Vec<u8>,
     /// The version the image installs (from its encrypted header).
     pub version: String,
 }
@@ -170,8 +146,8 @@ pub fn kit() -> Option<Arc<Kit>> {
 }
 
 /// Builds a kit from the bytes of the firmware package's Open Desk Phone
-/// image: extracts the recovery image the package carries, and prepares
-/// the scripts and certificate that the re-keying needs.
+/// image: takes the package out of the image and the recovery image out
+/// of the package, and puts both after the script that installs them.
 fn build(image: &[u8]) -> Result<Kit, String> {
     let mut eff = EffReader::new(image).map_err(|e| e.to_string())?;
     let header = eff.header().clone();
@@ -181,20 +157,19 @@ fn build(image: &[u8]) -> Result<Kit, String> {
             header.model.trim()
         ));
     }
-    // Re-keying a phone for a stock image would hand it Digium firmware;
-    // only an Open Desk Phone image (version 3 and up) may be migrated.
+    // Only an Open Desk Phone image (version 3 and up) is installed this
+    // way; the stock updater installs a stock image.
     if !is_odp_version(&header.version) {
         return Err(format!(
             "{} is not an Open Desk Phone version",
             header.version
         ));
     }
-    let mut payload = Vec::new();
-    eff.read_to_end(&mut payload).map_err(|e| e.to_string())?;
-    // The image consists of the package followed by its signature: the
-    // recovery gets the package, and the stock updater gets the whole
-    // image.
-    let (package, _) = sig::split_image(&payload).map_err(|e| format!("not a D80 image: {e}"))?;
+    let mut signed = Vec::new();
+    eff.read_to_end(&mut signed).map_err(|e| e.to_string())?;
+    // The image consists of the package followed by its signature, which
+    // only the stock updater would check.
+    let (package, _) = sig::split_image(&signed).map_err(|e| format!("not a D80 image: {e}"))?;
 
     let len = package.len() as u64;
     let mut archive = zip::Archive::open(std::io::Cursor::new(package), len)?;
@@ -214,27 +189,20 @@ fn build(image: &[u8]) -> Result<Kit, String> {
     if recovery.get(..8) != Some(b"ANDROID!") {
         return Err("the package's recovery image is not a boot image".into());
     }
-    // Padded to the partition size, so the payload script writes the
-    // whole image and reads the whole partition back for a byte-for-byte
-    // comparison.
+    // The file is the script in one block, the recovery image in whole
+    // blocks, then the package up to the end of the file.
     let mut recovery = recovery;
-    recovery.resize(RECOVERY_PARTITION_SIZE, 0);
-
-    let update_script = update_firmware_script();
-    let payload_script = payload_script();
-    let otacerts = zip::write(&[zip::FileEntry {
-        name: "d80-ota.x509.pem",
-        data: OTA_CERTIFICATE.as_bytes(),
-        executable: false,
-    }])
-    .map_err(|e| format!("otacerts.zip: {e}"))?;
+    recovery.resize(recovery.len().next_multiple_of(BLOCK), 0);
+    let mut payload = payload_script(recovery.len() / BLOCK);
+    if payload.len() > BLOCK {
+        return Err("the migration script does not fit its block".into());
+    }
+    payload.resize(BLOCK, b'\n');
+    payload.extend_from_slice(&recovery);
+    payload.extend_from_slice(package);
 
     Ok(Kit {
-        recovery,
-        update_script,
-        otacerts,
-        payload_script,
-        eff: image.to_vec(),
+        payload,
         version: header.version,
     })
 }
@@ -320,14 +288,14 @@ pub fn phone_ip(tx: &crate::session::Transaction) -> Option<IpAddr> {
     None
 }
 
-/// For each phone, when its files were last staged and with which kit.
+/// For each phone, when the kit's file was last uploaded and for which kit.
 type StagedKits = Option<HashMap<Vec<u8>, (Instant, Arc<Kit>)>>;
 
 static STAGED: Mutex<StagedKits> = Mutex::new(None);
 
-/// Uploads the kit's files to the phone, unless they were uploaded
-/// recently for the same kit.  A failed staging is not cached, so the
-/// next configuration apply tries again.
+/// Uploads the kit's file to the phone, unless it was uploaded recently
+/// for the same kit.  A failed upload is not remembered, so the next
+/// configuration apply tries again.
 pub fn stage(mac: &[u8], ip: IpAddr, kit: &Arc<Kit>) {
     {
         let mut g = STAGED.lock().unwrap_or_else(|e| e.into_inner());
@@ -340,109 +308,22 @@ pub fn stage(mac: &[u8], ip: IpAddr, kit: &Arc<Kit>) {
         staged.insert(mac.to_vec(), (Instant::now(), kit.clone()));
     }
     dpma_log!(
-        "Migration of {:#?}: staging the Open Desk Phone recovery and scripts on {}",
+        "Migration of {:#?}: uploading Open Desk Phone {} and its recovery to {}",
         String::from_utf8_lossy(mac),
+        kit.version,
         ip
     );
-    let files = [
-        (PAYLOAD_NAME, &kit.payload_script),
-        (RECOVERY_NAME, &kit.recovery),
-        (UPDATE_SCRIPT_NAME, &kit.update_script),
-        (OTACERTS_NAME, &kit.otacerts),
-    ];
-    for (name, data) in files {
-        if let Err(e) = upload(ip, name, data) {
-            dpma_log!(
-                "Migration of {:#?}: staging {} failed: {}",
-                String::from_utf8_lossy(mac),
-                name,
-                e
-            );
-            STAGED
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .as_mut()
-                .map(|staged| staged.remove(mac));
-            return;
-        }
-    }
-}
-
-/// Phones with a hand-off in progress, so that a re-applied configuration
-/// does not start a second one.
-static HANDING_OFF: Mutex<Option<HashSet<Vec<u8>>>> = Mutex::new(None);
-
-/// Posts the image to the phone's stock updater, retrying while the phone
-/// may still be running the payload: the configuration reaches the phone
-/// within seconds, but the updater only accepts the image once the
-/// re-keying is done.  Runs on its own thread because the hand-off takes
-/// minutes; if the image is ultimately refused, the next configuration
-/// apply handles it anyway.
-pub fn hand_off(mac: Vec<u8>, ip: IpAddr, kit: Arc<Kit>) {
-    if !HANDING_OFF
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_with(HashSet::new)
-        .insert(mac.clone())
-    {
-        return;
-    }
-    let spawned = std::thread::Builder::new()
-        .name("odp-migrate".into())
-        .spawn({
-            let mac = mac.clone();
-            move || {
-                std::thread::sleep(FIRST_HAND_OFF_WAIT);
-                for attempt in 1..=HAND_OFF_ATTEMPTS {
-                    match push_eff(ip, &kit.eff) {
-                        // The CGI answers 1 when `update-firmware.sh`
-                        // exits with success, and a negative number
-                        // otherwise.
-                        Ok(1) => {
-                            dpma_log!(
-                                "Migration of {:#?}: the stock updater accepted Open Desk Phone {}; the phone restarts into its recovery",
-                                String::from_utf8_lossy(&mac),
-                                kit.version
-                            );
-                            break;
-                        }
-                        Ok(status) => {
-                            dpma_log!(
-                                "Migration of {:#?}: the stock updater refused the image (status {}){}",
-                                String::from_utf8_lossy(&mac),
-                                status,
-                                if attempt == HAND_OFF_ATTEMPTS { "" } else { "; trying again" }
-                            );
-                        }
-                        Err(e) => {
-                            dpma_log!(
-                                "Migration of {:#?}: handing the image to the stock updater failed: {}{}",
-                                String::from_utf8_lossy(&mac),
-                                e,
-                                if attempt == HAND_OFF_ATTEMPTS { "" } else { "; trying again" }
-                            );
-                        }
-                    }
-                    if attempt == HAND_OFF_ATTEMPTS {
-                        break;
-                    }
-                    std::thread::sleep(HAND_OFF_RETRY);
-                }
-                HANDING_OFF
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .get_or_insert_with(HashSet::new)
-                    .remove(&mac);
-            }
-        });
-    if spawned.is_err() {
-        // The thread could not be started; leave the hand-off to the
-        // next configuration apply.
-        HANDING_OFF
+    if let Err(e) = upload(ip, PAYLOAD_NAME, &kit.payload) {
+        dpma_log!(
+            "Migration of {:#?}: the upload failed: {}",
+            String::from_utf8_lossy(mac),
+            e
+        );
+        STAGED
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_or_insert_with(HashSet::new)
-            .remove(&mac);
+            .as_mut()
+            .map(|staged| staged.remove(mac));
     }
 }
 
@@ -559,152 +440,43 @@ fn upload(ip: IpAddr, name: &str, data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Posts the image to the stock updater's CGI and returns the `<status>`
-/// value from its reply.
-fn push_eff(ip: IpAddr, eff: &[u8]) -> Result<i32, String> {
-    // The CGI takes the image as the browser's upload form sends it: it
-    // skips to the part's `application/octet-stream` header, and answers
-    // -102 to a body without one.
-    let boundary = "ODP-MIGRATE-BOUNDARY";
-    let reply = post(
-        ip,
-        FIRMWARE_PATH,
-        &format!("multipart/form-data; boundary={boundary}"),
-        &multipart(boundary, "firmware.eff", eff),
-        FIRMWARE_TIMEOUT,
-    )?;
-    // The reply looks like `<response>...<status>%d</status>...</response>`.
-    let at = find(&reply, b"<status>").ok_or_else(|| {
-        format!(
-            "the reply names no status ({:?})",
-            String::from_utf8_lossy(&reply)
-        )
-    })?;
-    let rest = &reply[at + 8..];
-    let end = rest
-        .iter()
-        .position(|&c| c == b'<')
-        .ok_or_else(|| String::from("the reply's status is not terminated"))?;
-    let status = std::str::from_utf8(&rest[..end])
-        .map_err(|_| String::from("the reply's status is not text"))?
-        .trim();
-    status
-        .parse()
-        .map_err(|_| String::from("the reply's status is not a number"))
-}
-
 /// Finds the first occurrence of `needle` in `hay`.
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-fn update_firmware_script() -> Vec<u8> {
-    r#"#!/system/bin/sh
-PATH=/system/bin
-TMP=/data/digium/firmware
-LOG='log -p v -t update-firmware.sh'
-
-rm $TMP/update.zip;
-
-$LOG "Updating firmware using $1";
-if [ "PK" = "`busybox head -c 2 $1`" ]; then
-  $LOG "Unencrypted, relocating to $TMP/update.zip";
-  # use cp instead of mv to avoid cross-device link
-  `cp $1 $TMP/update.zip 2>&1`;
-  # Remove the original file to reduce the number of free bytes needed for a firmware update
-  /system/bin/rm $1
-else
-  $LOG "Decrypting OTA update";
-  busybox tail -c +101 $1 | openssl enc -d -aes-256-cbc -pass file:/system/etc/otapassphrase | busybox head -c -256 > $TMP/decrypted;
-
-  # Remove the original file to reduce the number of free bytes needed for a firmware update
-  /system/bin/rm $1
-
-  # dump the third 100 bytes into the model number file
-  busybox tail -c +201 $TMP/decrypted | busybox head -c 100 > $TMP/decrypted_model_number;
-
-  if [ "`getprop ro.product.model`" != "`cat $TMP/decrypted_model_number`" ]; then
-    # the model number doesn't match the model number of this device
-    # best case, the recovery rejects it
-    # worst case, this phone gets bricktastic
-    # don't attempt the update
-    $LOG "Device does not match firmware target"
-    exit 1;
-  fi
-
-  # dump the remainder into the ota update file
-  busybox tail -c +401 $TMP/decrypted > $TMP/update.zip;
-
-  rm $TMP/decrypted
-fi
-
-# Where the Open Desk Phone recovery looks for a package: /cache, under
-# the same name `dphone` uses.  The stock script leaves it in
-# /data/digium/firmware, which the recovery does not mount.
-$LOG "Flashing OTA update";
-mkdir -p /cache/recovery
-`cp $TMP/update.zip /cache/recovery/update.zip 2>&1`;
-echo "boot-recovery" > /cache/recovery/command
-echo "--update_package=/cache/recovery/update.zip" >> /cache/recovery/command
-if [ "x${2}" = "xreset" ]; then
-    echo "--wipe_data" >> /cache/recovery/command
-fi
-/sbin/uboot_env -m bootcmd='booti mmc3 recovery'
-/system/bin/service call power 12 i32 0 s16 "firmware_update" i32 0 || reboot recovery
-"#.into()
-}
-
-/// Builds the script that the `lan_port_mode` payload runs.  It is safe
-/// to re-run: the server reruns it for as long as the phone is on stock
-/// firmware, and each step either has already been done or aborts the
-/// migration and leaves the phone unchanged.  (The stock updater refuses
-/// the image until its key is ours, so a partial migration cannot install
-/// anything.)
-fn payload_script() -> Vec<u8> {
+/// Builds the script at the start of the migration file, for a recovery
+/// image of `recovery_blocks` blocks.  It ends with `exit`, so the shell
+/// never reads the images that follow it.
+///
+/// The package goes to `/cache`, the only partition the Open Desk Phone
+/// recovery mounts, before anything is changed.  The recovery image is
+/// then written over the stock one (partition 2) and read back, and only
+/// a recovery that reads back as written is started.  The file removes
+/// itself, because the phone keeps the payload setting: should the
+/// installation fail, the stock firmware must not run the file again
+/// without the server.
+fn payload_script(recovery_blocks: usize) -> Vec<u8> {
     format!(
         r#"#!/system/bin/sh
 PATH=/system/bin:/sbin
 TMP=/data/digium/tmp
-LOG=$TMP/odp-migrate.log
 
-echo "=== Open Desk Phone migration $(date) ===" >> $LOG
-
-# Write our recovery over the stock one (partition 2, 8 MiB), and read
-# it back to make sure it was written correctly.
-dd if=$TMP/{RECOVERY_NAME} of=/dev/block/mmcblk0p2 || exit 1
+mkdir -p /cache/recovery
+dd if=$0 of=/cache/recovery/update.zip bs={BLOCK} skip={package_skip} || exit 1
+dd if=$0 of=$TMP/odp-recovery.img bs={BLOCK} skip=1 count={recovery_blocks} || exit 1
+dd if=$TMP/odp-recovery.img of=/dev/block/mmcblk0p2 bs={BLOCK} || exit 1
 sync
-dd if=/dev/block/mmcblk0p2 of=$TMP/odp-recovery.readback bs=1048576 count=8 || exit 1
-cmp $TMP/{RECOVERY_NAME} $TMP/odp-recovery.readback || {{
-    echo "the recovery partition does not read back as written" >> $LOG
-    rm $TMP/odp-recovery.readback
-    exit 1
-}}
-rm $TMP/odp-recovery.readback
+dd if=/dev/block/mmcblk0p2 of=$TMP/odp-recovery.readback bs={BLOCK} count={recovery_blocks} || exit 1
+cmp $TMP/odp-recovery.img $TMP/odp-recovery.readback || exit 1
 
-# Replace the updater script (which holds the updater's key) and the
-# RecoverySystem trust store on /system.  The otapassphrase is left
-# unchanged: Open Desk Phone images are encrypted with it, just like the
-# stock ones.
-mount -o remount,rw /system
-cp $TMP/{UPDATE_SCRIPT_NAME} /system/bin/update-firmware.sh || exit 1
-chmod 755 /system/bin/update-firmware.sh
-cp $TMP/{OTACERTS_NAME} /system/etc/security/otacerts.zip
-sync
-mount -o remount,ro /system
-
-# Restore lan_port_mode to a plain value so this script stops running on
-# every configuration apply.  A concurrent apply may write the old value
-# back; that is harmless, since the phone leaves stock firmware for good
-# at the next restart.
-CFG=`cat /data/digium/nvdata/config.xml`
-echo "${{CFG//auto;sh \/data\/digium\/tmp\/odp-migrate.sh/auto}}" > /data/digium/nvdata/config.xml
-
-rm $TMP/{RECOVERY_NAME} $TMP/{UPDATE_SCRIPT_NAME} $TMP/{OTACERTS_NAME}
-echo "=== Open Desk Phone migration: the recovery and the keys are in place ===" >> $LOG
+echo "--update_package=/cache/recovery/update.zip" > /cache/recovery/command
+rm $0 $TMP/odp-recovery.img $TMP/odp-recovery.readback
+uboot_env -m bootcmd='booti mmc3 recovery'
+service call power 12 i32 0 s16 "firmware_update" i32 0 || reboot recovery
+exit
 "#,
-        RECOVERY_NAME = RECOVERY_NAME,
-        UPDATE_SCRIPT_NAME = UPDATE_SCRIPT_NAME,
-        OTACERTS_NAME = OTACERTS_NAME,
+        package_skip = 1 + recovery_blocks,
     )
     .into_bytes()
 }
