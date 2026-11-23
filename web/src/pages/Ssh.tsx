@@ -18,7 +18,7 @@ export function MetricsSwitch() {
     <div className="space-y-2 border-t border-slate-100 pt-4 dark:border-slate-800">
       <ErrorNote error={error ?? loaded.error} />
       <Dpma on={dpma}>
-        <Toggle label="Prometheus metrics" checked={setting?.value ?? false} disabled={!setting || dpma || set.isPending} onChange={(v) => set.mutate({ metricsEnabled: v })} />
+        <Toggle label="Prometheus metrics" checked={setting?.value ?? false} disabled={!setting || setting.locked || set.isPending} onChange={(v) => set.mutate({ metricsEnabled: v })} />
       </Dpma>
     </div>
   );
@@ -39,7 +39,7 @@ export function WebSwitch() {
     <>
       <ErrorNote error={error ?? list.error} />
       <Dpma on={setting?.provisioned}>
-        <Toggle label="Enabled" checked={on} disabled={!setting || setting.frozen || setting.provisioned || set.isPending} onChange={(v) => (v ? save(true) : setAsking(true))} />
+        <Toggle label="Enabled" checked={on} disabled={!setting || setting.frozen || set.isPending} onChange={(v) => (v ? save(true) : setAsking(true))} />
       </Dpma>
       {asking && (
         <Modal
@@ -143,7 +143,7 @@ export function EhsPortCard() {
       <div className="space-y-4">
         <ErrorNote error={error ?? loaded.error} />
         <Dpma on={dpma}>
-          <Select aria-label="EHS port" value={serial ? "console" : "ehs"} disabled={!setting || dpma || set.isPending} onChange={(e) => set.mutate({ serialConsole: e.target.value === "console" })}>
+          <Select aria-label="EHS port" value={serial ? "console" : "ehs"} disabled={!setting || setting.locked || set.isPending} onChange={(e) => set.mutate({ serialConsole: e.target.value === "console" })}>
             <option value="ehs">Headset</option>
             <option value="console">Serial Console (115200 8N1)</option>
           </Select>
@@ -191,7 +191,7 @@ export function SshCard() {
         <ErrorNote error={error ?? loaded.error} />
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <Dpma on={dpma}>
-            <Toggle label="Enabled" checked={enabled?.value ?? false} disabled={!ssh || dpma || enable.isPending} onChange={(v) => enable.mutate({ enabled: v })} />
+            <Toggle label="Enabled" checked={enabled?.value ?? false} disabled={!ssh || enabled?.locked || enable.isPending} onChange={(v) => enable.mutate({ enabled: v })} />
           </Dpma>
           {stopped && <Badge tone="red">Not running</Badge>}
         </div>

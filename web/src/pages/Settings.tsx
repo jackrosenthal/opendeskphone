@@ -11,13 +11,16 @@ import { ErrorNote } from "./common";
 type Kind = { type: "bool" } | { type: "number"; min: number; max: number } | { type: "text"; placeholder?: string } | { type: "choice"; options: [string, string][] };
 /// One stock setting in a form.  `grayOnly`: the setting exists only on
 /// the gray-display models.  `wide`: the field spans the card.
-export type Item = { id: string; label: string; hint?: string; grayOnly?: boolean; wide?: boolean } & Kind;
+/// A field with a `fallback` shows that setting's value while its own
+/// setting has none.
+export type Item = { id: string; label: string; hint?: string; grayOnly?: boolean; wide?: boolean; fallback?: string } & Kind;
 
 const truthy = (v: string) => v === "1" || v.toLowerCase() === "true" || v.toLowerCase() === "yes";
 
 function Control({ item, setting, value, onChange }: { item: Item; setting?: Setting; value: string; onChange: (v: string) => void }) {
-  // Not changeable here: frozen by a lower layer, or set through DPMA.
-  const frozen = setting?.frozen || setting?.provisioned;
+  // As on stock's web UI, only a frozen setting is disabled: a value set
+  // here replaces any other provisioned one.
+  const frozen = setting?.frozen;
   if (item.type === "bool") {
     return (
       <Dpma on={setting?.provisioned}>
@@ -66,11 +69,12 @@ export function SettingsCard({ title, items, children, after, actions, className
     },
   });
   const byId = useMemo(() => new Map((list.data?.settings ?? []).map((s) => [s.id, s])), [list.data]);
-  const value = (id: string) => draft[id] ?? byId.get(id)?.value ?? "";
-  const change = (id: string, v: string) => {
+  const saved = (item: Item) => byId.get(item.id)?.value || (item.fallback && byId.get(item.fallback)?.value) || "";
+  const value = (item: Item) => draft[item.id] ?? saved(item);
+  const change = (item: Item, v: string) => {
     const next = { ...draft };
-    if (v === (byId.get(id)?.value ?? "")) delete next[id];
-    else next[id] = v;
+    if (v === saved(item)) delete next[item.id];
+    else next[item.id] = v;
     setDraft(next);
   };
   const changes = Object.entries(draft).map(([id, v]) => ({ id, value: v }));
@@ -102,7 +106,7 @@ export function SettingsCard({ title, items, children, after, actions, className
             .filter((item) => !item.grayOnly || skin !== Skin.COLOR)
             .map((item) => (
               <div key={item.id} className={item.type === "bool" || item.wide ? "sm:col-span-2" : ""}>
-                <Control item={item} setting={byId.get(item.id)} value={value(item.id)} onChange={(v) => change(item.id, v)} />
+                <Control item={item} setting={byId.get(item.id)} value={value(item)} onChange={(v) => change(item, v)} />
               </div>
             ))}
         </div>
@@ -117,7 +121,9 @@ const sound: Item[] = [
   { id: "handset_volume", label: "Handset volume", type: "number", min: 0, max: 10 },
   { id: "headset_volume", label: "Headset volume", type: "number", min: 0, max: 10 },
   { id: "speaker_volume", label: "Speaker volume", type: "number", min: 0, max: 10 },
-  { id: "default_ringtone", label: "Ringtone", type: "text" },
+  // Stock's web UI and phone menu set `active_ringtone`, and
+  // `default_ringtone` names the ringtone of the image and is frozen.
+  { id: "active_ringtone", label: "Ringtone", type: "text", fallback: "default_ringtone" },
   { id: "ehs", label: "EHS headset", type: "choice", options: [["auto", "Auto"], ["plantronics", "Plantronics"], ["jabra_iq", "Jabra"], ["none", "None"]] },
   { id: "reset_call_volume", label: "Reset call volume after each call", type: "bool" },
   { id: "lock_ringing_volume", label: "Lock ringer volume", type: "bool" },
@@ -161,7 +167,7 @@ function IdleSoftkeys() {
   const label = (key: IdleSoftkey) => keys?.choices.find((c) => sameSoftkey(c.softkey, key))?.label ?? (key.action.case === "app" ? key.action.value.name : "");
   const unused = (keys?.choices ?? []).filter((c) => c.softkey && !softkeys.some((k) => sameSoftkey(c.softkey, k)));
   const dpma = viaDpma(keys);
-  const fixed = !keys || dpma || set.isPending;
+  const fixed = !keys || keys.locked || set.isPending;
   const save = (softkeys: IdleSoftkey[]) => set.mutate({ softkeys });
   const move = (i: number, by: number) => {
     const next = [...softkeys];
@@ -246,7 +252,7 @@ function ThemeSelect() {
         <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Theme</span>
         <Select
           value={theme?.picture ? "" : (theme?.id ?? "")}
-          disabled={!theme || dpma || set.isPending}
+          disabled={!theme || theme.locked || set.isPending}
           onChange={(e) => e.target.value && set.mutate({ id: e.target.value })}
         >
           {theme?.picture && <option value="">Provisioned picture</option>}
@@ -267,8 +273,9 @@ function ThemeSelect() {
   );
 }
 
-/// True when the value of one of Open Desk Phone's own settings is the
-/// provisioning server's: its control is then disabled.
+/// A control's tooltip says when one of Open Desk Phone's own settings has
+/// the provisioning server's value; the control itself is disabled only
+/// when the setting is `locked`.
 export function viaDpma(s: { locked: boolean; source: SettingSource } | undefined): boolean {
   return !!s && (s.locked || s.source === SettingSource.PROVISIONED);
 }

@@ -358,6 +358,23 @@ async fn configuration_accounts_and_contacts() {
     let v = rpc_json(p.addr, &s, "ConfigService/ListSettings", r#"{"prefix":"handset_"}"#).await.json();
     assert_eq!(v["settings"][0]["value"], "4");
     assert_eq!(v["settings"][0]["provisioned"], true);
+    assert_ne!(v["settings"][0]["frozen"], true);
+    let r = rpc_json(p.addr, &s, "ConfigService/SetSettings", r#"{"changes":[{"id":"handset_volume","value":"7"}]}"#).await;
+    assert_eq!(r.status, 200, "{:?}", String::from_utf8_lossy(&r.body));
+    assert_eq!(p.config.lock().unwrap().get("handset_volume").as_deref(), Some("7"));
+    let v = rpc_json(p.addr, &s, "ConfigService/ListSettings", r#"{"prefix":"handset_"}"#).await.json();
+    assert_eq!(v["settings"][0]["value"], "7");
+    assert_ne!(v["settings"][0]["provisioned"], true);
+    p.config
+        .lock()
+        .unwrap()
+        .apply_fetched(r#"<config><setting id="handset_volume" value="4" conflict="freeze"/></config>"#)
+        .unwrap();
+    let v = rpc_json(p.addr, &s, "ConfigService/ListSettings", r#"{"prefix":"handset_"}"#).await.json();
+    assert_eq!((&v["settings"][0]["value"], &v["settings"][0]["frozen"]), (&serde_json::json!("4"), &serde_json::json!(true)));
+    let r = rpc_json(p.addr, &s, "ConfigService/SetSettings", r#"{"changes":[{"id":"handset_volume","value":"8"}]}"#).await;
+    assert_eq!(r.json()["code"], "failed_precondition");
+    assert_eq!(p.config.lock().unwrap().get("handset_volume").as_deref(), Some("4"));
     // Secrets never leave the phone, and the password has its own RPC.
     let v = rpc_json(p.addr, &s, "ConfigService/ListSettings", r#"{"prefix":"login_"}"#).await.json();
     assert_eq!(v["settings"][0]["secret"], true);

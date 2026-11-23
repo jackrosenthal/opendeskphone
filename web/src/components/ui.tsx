@@ -170,12 +170,13 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
   );
 }
 
-/// Wraps a control whose value the provisioning server set.  The control
-/// itself is disabled by the caller; a disabled control gets no hover, so
-/// the tooltip is on this element and the pointer passes through to it.
+/// This element wraps a control whose value the provisioning server set,
+/// and carries the control's tooltip, since a disabled control gets no
+/// hover.  The caller disables the control when it cannot be changed, and
+/// the pointer then passes through the control to this element.
 export function Dpma({ on, children, className }: { on: boolean | undefined; children: ReactNode; className?: string }) {
   return (
-    <div title={on ? "Configured via DPMA" : undefined} className={cx(className, on && "[&_*]:pointer-events-none")}>
+    <div title={on ? "Configured via DPMA" : undefined} className={cx(className, on && "[&_:disabled]:pointer-events-none")}>
       {children}
     </div>
   );

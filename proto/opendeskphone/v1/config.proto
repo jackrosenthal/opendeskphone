@@ -22,12 +22,13 @@ message Setting {
   string id = 1;
   // Secret values (passwords) are returned empty with `secret` set.
   string value = 2;
-  // Fixed by the base or factory layer; cannot be changed.
+  // A configuration layer, the image's or the provisioning server's, froze
+  // the setting, so a value set on the phone does not replace it.
   bool frozen = 3;
   reserved 4;
   bool secret = 5;
-  // The value in effect is the provisioning server's: no value set on the
-  // phone replaces it.
+  // The value in effect is the provisioning server's, because it is frozen
+  // or no value is set on the phone.
   bool provisioned = 6;
 }
 

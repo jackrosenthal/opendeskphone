@@ -56,36 +56,36 @@ export function Network() {
     dot1xPassthrough: "8021x_passthrough",
   } as const;
   const addressing = ["dhcp", "staticIp", "subnetMask", "gateway", "primaryDns", "secondaryDns"];
-  /// True when DPMA set the field: it is then disabled, with the tooltip.
-  const dpma = (k: keyof typeof ids) => {
-    if (s.addressingProvisioned && addressing.includes(k)) return true;
-    const setting = stock.data?.settings.find((x) => x.id === ids[k]);
-    return !!setting && (setting.provisioned || setting.frozen);
-  };
+  const setting = (k: keyof typeof ids) => stock.data?.settings.find((x) => x.id === ids[k]);
+  // The server's static address stands in the form for the phone's
+  // address settings, which a save leaves alone.
+  const served = (k: keyof typeof ids) => s.addressingProvisioned && addressing.includes(k);
+  const dpma = (k: keyof typeof ids) => served(k) || !!setting(k)?.provisioned;
+  const locked = (k: keyof typeof ids) => served(k) || !!setting(k)?.frozen;
   const text = (k: "staticIp" | "subnetMask" | "gateway" | "primaryDns" | "secondaryDns" | "domain", label: string) => (
     <Dpma on={dpma(k)}>
       <Field label={label}>
-        <Input value={s[k]} disabled={dpma(k)} onChange={(e) => set(k, e.target.value)} />
+        <Input value={s[k]} disabled={locked(k)} onChange={(e) => set(k, e.target.value)} />
       </Field>
     </Dpma>
   );
   const num = (k: "sipDscp" | "rtpDscp" | "sipQos" | "rtpQos" | "pcQos", label: string, max: number) => (
     <Dpma on={dpma(k)}>
       <Field label={label}>
-        <Input type="number" min={0} max={max} value={s[k]} disabled={dpma(k)} onChange={(e) => set(k, Number(e.target.value))} />
+        <Input type="number" min={0} max={max} value={s[k]} disabled={locked(k)} onChange={(e) => set(k, Number(e.target.value))} />
       </Field>
     </Dpma>
   );
   const vlan = (k: "vlanId" | "pcVlanId", label: string, disabled = false) => (
     <Dpma on={dpma(k)}>
       <Field label={label}>
-        <Input type="number" min={1} max={4094} placeholder="None" disabled={disabled || dpma(k)} value={s[k] ?? ""} onChange={(e) => set(k, e.target.value === "" ? undefined : Number(e.target.value))} />
+        <Input type="number" min={1} max={4094} placeholder="None" disabled={disabled || locked(k)} value={s[k] ?? ""} onChange={(e) => set(k, e.target.value === "" ? undefined : Number(e.target.value))} />
       </Field>
     </Dpma>
   );
   const mode = (dhcp: boolean, name: string) => (
-    <label className={dpma("dhcp") ? "flex items-center gap-2 text-sm opacity-50" : "flex items-center gap-2 text-sm"}>
-      <input type="radio" name="addressing" className="size-4 accent-brand-600" checked={s.dhcp === dhcp} disabled={dpma("dhcp")} onChange={() => set("dhcp", dhcp)} />
+    <label className={locked("dhcp") ? "flex items-center gap-2 text-sm opacity-50" : "flex items-center gap-2 text-sm"}>
+      <input type="radio" name="addressing" className="size-4 accent-brand-600" checked={s.dhcp === dhcp} disabled={locked("dhcp")} onChange={() => set("dhcp", dhcp)} />
       <span className="text-slate-700 dark:text-slate-300">{name}</span>
     </label>
   );
@@ -173,13 +173,13 @@ export function Network() {
                 {text("domain", "Domain")}
               </div>
               <Dpma on={dpma("ipv6Enabled")} className="w-fit">
-                <Toggle label="IPv6" checked={s.ipv6Enabled} disabled={dpma("ipv6Enabled")} onChange={(v) => set("ipv6Enabled", v)} />
+                <Toggle label="IPv6" checked={s.ipv6Enabled} disabled={locked("ipv6Enabled")} onChange={(v) => set("ipv6Enabled", v)} />
               </Dpma>
             </section>
             <section className="grid gap-4 border-t border-slate-100 pt-5 dark:border-slate-800 sm:grid-cols-3">
               <Dpma on={dpma("vlanDiscoveryMode")}>
                 <Field label="VLAN discovery">
-                  <Select value={s.vlanDiscoveryMode} disabled={dpma("vlanDiscoveryMode")} onChange={(e) => set("vlanDiscoveryMode", Number(e.target.value) as VlanDiscoveryMode)}>
+                  <Select value={s.vlanDiscoveryMode} disabled={locked("vlanDiscoveryMode")} onChange={(e) => set("vlanDiscoveryMode", Number(e.target.value) as VlanDiscoveryMode)}>
                     <option value={VlanDiscoveryMode.LLDP}>LLDP-MED</option>
                     <option value={VlanDiscoveryMode.MANUAL}>Manual</option>
                     <option value={VlanDiscoveryMode.NONE}>None</option>
@@ -194,7 +194,7 @@ export function Network() {
               {num("sipQos", "SIP 802.1p priority", 7)}
               {num("rtpQos", "RTP 802.1p priority", 7)}
               <Dpma on={dpma("dot1xPassthrough")} className="flex items-end pb-2">
-                <Toggle label="802.1X passthrough" checked={s.dot1xPassthrough} disabled={dpma("dot1xPassthrough")} onChange={(v) => set("dot1xPassthrough", v)} />
+                <Toggle label="802.1X passthrough" checked={s.dot1xPassthrough} disabled={locked("dot1xPassthrough")} onChange={(v) => set("dot1xPassthrough", v)} />
               </Dpma>
             </section>
           </div>

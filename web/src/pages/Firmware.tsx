@@ -40,7 +40,7 @@ function ProvisionedFirmware({ onError }: { onError: (e: unknown) => void }) {
   const dpma = viaDpma(ignore);
   return (
     <Dpma on={dpma} className="border-t border-slate-100 pt-4 dark:border-slate-800">
-      <Toggle label="Ignore DPMA firmware updates" checked={ignore?.value ?? false} disabled={!ignore || dpma || set.isPending} onChange={(v) => set.mutate({ ignore: v })} />
+      <Toggle label="Ignore DPMA firmware updates" checked={ignore?.value ?? false} disabled={!ignore || ignore.locked || set.isPending} onChange={(v) => set.mutate({ ignore: v })} />
     </Dpma>
   );
 }

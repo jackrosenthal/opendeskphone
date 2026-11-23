@@ -20,7 +20,7 @@ export function Apps() {
   const disabled = useQuery(AppsService.method.getDisabledApps, {});
   const enable = useMutation(AppsService.method.setAppEnabled, { onError: setError, onSuccess: () => (setError(undefined), disabled.refetch()) });
   const dpma = viaDpma(disabled.data?.disabledApps);
-  const locked = !disabled.data || dpma || enable.isPending;
+  const locked = !disabled.data || disabled.data.disabledApps?.locked || enable.isPending;
 
   async function install(f: File) {
     setBusy(true);

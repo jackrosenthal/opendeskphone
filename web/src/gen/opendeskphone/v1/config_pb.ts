@@ -31,7 +31,8 @@ export type Setting = Message<"opendeskphone.v1.Setting"> & {
   value: string;
 
   /**
-   * Fixed by the base or factory layer; cannot be changed.
+   * A configuration layer, the image's or the provisioning server's, froze
+   * the setting, so a value set on the phone does not replace it.
    *
    * @generated from field: bool frozen = 3;
    */
@@ -43,8 +44,8 @@ export type Setting = Message<"opendeskphone.v1.Setting"> & {
   secret: boolean;
 
   /**
-   * The value in effect is the provisioning server's: no value set on the
-   * phone replaces it.
+   * The value in effect is the provisioning server's, because it is frozen
+   * or no value is set on the phone.
    *
    * @generated from field: bool provisioned = 6;
    */
