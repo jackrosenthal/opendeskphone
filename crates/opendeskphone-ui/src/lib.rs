@@ -68,3 +68,9 @@ pub fn idle_app_area(model: opendeskphone_state::Model) -> opendeskphone_state::
     let th = skin::Theme::for_model(model);
     opendeskphone_state::Size::new(screens::idle::idle_app_w(th) as u16, screens::idle::idle_app_h(th) as u16)
 }
+
+/// Returns the height in pixels at which `model` draws an app's glyph
+/// (`AppInfo::glyph`).
+pub fn glyph_height(model: opendeskphone_state::Model) -> u16 {
+    skin::Theme::for_model(model).icon as u16
+}

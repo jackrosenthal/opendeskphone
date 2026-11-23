@@ -412,6 +412,9 @@ impl Shell for UiShell {
             height: s.height,
         }
     }
+    fn glyph_height(&self) -> u16 {
+        opendeskphone_ui::glyph_height(self.model)
+    }
 }
 
 #[cfg(test)]

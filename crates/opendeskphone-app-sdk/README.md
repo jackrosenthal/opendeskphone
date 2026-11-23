@@ -83,6 +83,7 @@ The manifest is what the phone has to know about an app before it runs it.  It i
 | `icon` | The app's icon: the content of a PNG file, `include_bytes!("hello.png")`.  At most 256 KiB. |
 | `icon_for` | Icons for particular models of phone, each as `icon` is: `&[(PhoneModel::D60, include_bytes!("color.png"))]`.  A phone shows its model's icon if there is one, else `icon`. |
 | `phone_icon` | One of the phone's icons, for an app without an icon: `Some(Icon::AppCalendar)`. |
+| `glyph` | The app in one color, for where the phone tints it, e.g., the D80's home buttons: `opendeskphone_app_sdk::glyph!("weather-glyph.svg")`, which renders an SVG file as the app is compiled.  The macro is in the feature `glyph`. |
 | `memory_kib` | The most memory the app may have, in KiB.  The default is 4 MiB, and the phone gives no app more than 16 MiB. |
 
 A manifest with everything:

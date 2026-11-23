@@ -411,3 +411,5 @@ The variants of `Icon`, by their names in the interface (`phone-in` is `Icon::Ph
 `alarm`, `apps`, `backspace`, `brightness`, `calllog`, `clock`, `conference`, `contacts`, `desk`, `dnd`, `down`, `error`, `forward`, `handset`, `headset`, `hold`, `info`, `left`, `lock`, `more`, `mute`, `net-down`, `network`, `ok`, `page`, `park`, `phone`, `phone-in`, `phone-missed`, `phone-out`, `phone-unregistered`, `presence`, `registered`, `right`, `ring`, `settings`, `speaker`, `transfer`, `unregistered`, `up`, `update`, `voicemail`, and `warning`.
 
 App icons, in color on the color models (`app-contacts` is `Icon::AppContacts`): `app-alarms`, `app-app`, `app-boxpusher`, `app-calendar`, `app-calllog`, `app-contacts`, `app-desksparrow`, `app-diagnostics`, `app-forward`, `app-hotdesking`, `app-info`, `app-lightup`, `app-network`, `app-paging`, `app-parking`, `app-queues`, `app-settings`, `app-status`, `app-update`, and `app-voicemail`.
+
+Where the phone draws an app in one color, each app icon has a one-color twin: the glyph on its tile, e.g., `alarm` for `app-alarms`.  See [Glyph](manifest.md#glyph).

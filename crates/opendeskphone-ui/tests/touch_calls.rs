@@ -326,16 +326,20 @@ fn the_home_buttons_have_voicemail_and_redial_and_do_not_disturb_is_lit_while_on
 #[test]
 fn an_apps_home_button_has_its_icon_over_its_label_as_the_others_do() {
     let app = |name: &str| IdleSoftkey::App(name.into());
-    let keys = vec![app("alarms"), IdleSoftkey::Contacts];
+    let keys = vec![app("alarms"), app("weather"), IdleSoftkey::Contacts];
     let mut r = Rig::with_config(UiConfig { backlight_timeout_secs: 0, idle_softkeys: keys, ..UiConfig::for_model(Model::D80) });
-    // The app's icon is a color icon of the phone's.
+    // One app's icon is a color icon of the phone's, and the other app's
+    // glyph is a square as tall as the D80's status icons.
+    let side = opendeskphone_ui::glyph_height(Model::D80);
+    let square = Mask { width: side, height: side, alpha: vec![0xff; (usize::from(side) * usize::from(side)).div_ceil(2)].into() };
     r.store.update::<Apps, _>(|a| {
         a.installed.push(AppInfo { name: "alarms".into(), display_name: "Alarms".into(), icon: "app-alarms".into(), ..Default::default() });
+        a.installed.push(AppInfo { name: "weather".into(), display_name: "Weather".into(), glyph: Some(square), ..Default::default() });
     });
     r.ui.pump();
     let th = Theme::for_model(Model::D80);
     let c = r.ui.canvas();
-    for id in 1..=2 {
+    for id in 1..=3 {
         // Each run is a band of rows in which something is drawn on the
         // button's fill, inside its rounded edge, and holds (top, bottom,
         // left, right).

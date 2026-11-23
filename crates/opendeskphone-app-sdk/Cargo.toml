@@ -12,5 +12,16 @@ readme = "README.md"
 keywords = ["digium", "voip", "phone", "wasm", "sdk"]
 categories = ["wasm", "embedded"]
 
+[features]
+# The feature turns on `glyph!`.  It is off by default so that an app
+# without a glyph does not build the SVG renderer.
+glyph = ["dep:opendeskphone-app-sdk-macros"]
+
 [dependencies]
 wit-bindgen = { version = "0.63", default-features = false, features = ["macros", "realloc"] }
+opendeskphone-app-sdk-macros = { path = "../opendeskphone-app-sdk-macros", version = "=3.1.0", optional = true }
+
+[dev-dependencies]
+# tests/glyph.rs needs the feature `glyph` and the renderer.
+opendeskphone-app-sdk = { path = ".", features = ["glyph"] }
+opendeskphone-svg = { path = "../opendeskphone-svg" }

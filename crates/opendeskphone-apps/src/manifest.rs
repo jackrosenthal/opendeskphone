@@ -2,7 +2,7 @@
 //!
 //! An app is one WebAssembly component.  Its manifest (the stock fields
 //! `name`, `id`, `displayName`, `description`, `type`, `hasIdle`, `hidden`,
-//! and the icon, plus a memory limit) is the
+//! and the icon, plus a memory limit and a glyph) is the
 //! protobuf message `opendeskphone.app.v1.Manifest` in the custom section
 //! `opendeskphone-app` of the app's module, which the macro `export_app!` of
 //! `opendeskphone-app-sdk` writes (the format is `proto/manifest.proto` of that
@@ -16,6 +16,7 @@
 //! A stock app package (a ZIP archive with `app.json` and JavaScript) is
 //! recognized only to say that it cannot run.
 
+use opendeskphone_state::Mask;
 use std::fmt;
 
 /// The custom section that holds the manifest.
@@ -26,6 +27,8 @@ pub const FORMAT: u32 = 1;
 pub const RECORD: &str = "app.pb";
 /// The largest icon.
 pub const MAX_ICON_BYTES: usize = 256 << 10;
+/// The SDK's `proto/manifest.proto` sets this limit.
+pub const MAX_GLYPH_MASKS: usize = 8;
 /// The models of phone an icon can be for.
 pub const MODELS: [&str; 8] = ["D40", "D45", "D50", "D60", "D62", "D65", "D70", "D80"];
 
@@ -148,6 +151,8 @@ pub enum ManifestError {
     /// An icon that is too large or not a PNG file, or one for a model
     /// that is none.
     BadIcon(&'static str),
+    /// The glyph breaks a limit of `proto/manifest.proto`.
+    BadGlyph(&'static str),
     /// The component imports something that is not an interface of the
     /// phone.
     UnknownImport(String),
@@ -176,6 +181,7 @@ impl fmt::Display for ManifestError {
             ManifestError::BadName(why) => write!(f, "bad app name: {why}"),
             ManifestError::BadKind(k) => write!(f, "bad app kind {k}"),
             ManifestError::BadIcon(why) => write!(f, "bad app icon: {why}"),
+            ManifestError::BadGlyph(why) => write!(f, "bad app glyph: {why}"),
             ManifestError::UnknownImport(i) => write!(
                 f,
                 "the app imports {i:?}, which is not an interface of this firmware"
@@ -205,6 +211,8 @@ pub struct Manifest {
     /// for particular models: (model, PNG).
     pub icon_png: Vec<u8>,
     pub icons_for: Vec<(String, Vec<u8>)>,
+    /// [`Manifest::glyph_for`] picks the mask to draw from these.
+    pub glyph: Vec<Mask>,
     /// The component's file name in the app's directory: `<name>.wasm`.
     pub wasm: String,
     /// The interfaces the component imports.  Not part of an app's own
@@ -385,6 +393,66 @@ fn put_text(out: &mut Vec<u8>, field: u64, text: &str) {
     }
 }
 
+/// Decodes a `GlyphMask` message and refuses a mask that breaks a limit.
+fn read_mask(b: &[u8]) -> Result<Mask, ManifestError> {
+    let (mut width, mut height, mut alpha) = (0, 0, &[][..]);
+    fields(b, |n, v| {
+        match n {
+            1 => width = number(v)?,
+            2 => height = number(v)?,
+            3 => alpha = message(v)?,
+            _ => {}
+        }
+        Ok(())
+    })?;
+    if !(1..=128).contains(&height) {
+        return Err(ManifestError::BadGlyph("a mask is not 1 to 128 pixels tall"));
+    }
+    if width > 2 * height {
+        return Err(ManifestError::BadGlyph("a mask is more than twice as wide as it is tall"));
+    }
+    if alpha.len() as u64 != (width * height).div_ceil(2) {
+        return Err(ManifestError::BadGlyph("a mask's coverage is not ceil(width * height / 2) bytes"));
+    }
+    Ok(Mask {
+        width: width as u16,
+        height: height as u16,
+        alpha: alpha.into(),
+    })
+}
+
+/// Scales `mask` down to `height` pixels tall and keeps its proportions.
+/// Each new pixel is the average of the pixels that it covers.
+fn reduce(mask: &Mask, height: u16) -> Mask {
+    let (w, h, nh) = (u32::from(mask.width), u32::from(mask.height), u32::from(height));
+    let nw = if w == 0 { 0 } else { ((w * nh + h / 2) / h).max(1) };
+    let at = |x: u32, y: u32| {
+        let n = (y * w + x) as usize;
+        let byte = mask.alpha[n / 2];
+        u32::from(if n.is_multiple_of(2) { byte >> 4 } else { byte & 15 })
+    };
+    let span = |i: u32, from: u32, to: u32| (i * from / to, ((i + 1) * from / to).max(i * from / to + 1));
+    let mut alpha = vec![0u8; (nw * nh).div_ceil(2) as usize];
+    for y in 0..nh {
+        let (y0, y1) = span(y, h, nh);
+        for x in 0..nw {
+            let (x0, x1) = span(x, w, nw);
+            let sum: u32 = (y0..y1)
+                .flat_map(|sy| (x0..x1).map(move |sx| at(sx, sy)))
+                .sum();
+            let n = (y1 - y0) * (x1 - x0);
+            let v = ((sum + n / 2) / n) as u8;
+            let i = (y * nw + x) as usize;
+            alpha[i / 2] |= if i.is_multiple_of(2) { v << 4 } else { v };
+        }
+    }
+    Mask {
+        width: nw as u16,
+        height,
+        alpha: alpha.into(),
+    }
+}
+
 fn read_text(b: &[u8], into: &mut String) -> Result<(), ManifestError> {
     fields(b, |n, v| {
         if n == 1 {
@@ -500,6 +568,17 @@ impl Manifest {
             .unwrap_or(&self.icon_png)
     }
 
+    /// Returns the mask of `height` pixels if the glyph has one, and
+    /// otherwise scales the next taller mask down.  A shorter mask is never
+    /// scaled up, so the result is `None` when every mask is shorter.
+    pub fn glyph_for(&self, height: u16) -> Option<Mask> {
+        if let Some(m) = self.glyph.iter().find(|m| m.height == height) {
+            return Some(m.clone());
+        }
+        let taller = self.glyph.iter().filter(|m| m.height > height).min_by_key(|m| m.height)?;
+        Some(reduce(taller, height))
+    }
+
     fn decode(bytes: &[u8], record: bool) -> Result<Manifest, ManifestError> {
         let mut m = Manifest {
             name: String::new(),
@@ -512,6 +591,7 @@ impl Manifest {
             icon: String::new(),
             icon_png: Vec::new(),
             icons_for: Vec::new(),
+            glyph: Vec::new(),
             wasm: String::new(),
             capabilities: Vec::new(),
             memory_kib: 0,
@@ -557,6 +637,12 @@ impl Manifest {
                         .map(|i| crate::view::icon_name(*i).to_string())
                         .unwrap_or_default()
                 }
+                14 => fields(message(v)?, |n, v| {
+                    if n == 1 {
+                        m.glyph.push(read_mask(message(v)?)?);
+                    }
+                    Ok(())
+                })?,
                 // Only the phone's own record says what the app may use.
                 16 if record => {
                     if let Some(c) = numbered(&Capability::ALL, number(v)?)
@@ -584,6 +670,14 @@ impl Manifest {
                 return Err(ManifestError::BadIcon("two for one model"));
             }
             validate_icon(png)?;
+        }
+        if m.glyph.len() > MAX_GLYPH_MASKS {
+            return Err(ManifestError::BadGlyph("more than 8 masks"));
+        }
+        for (i, mask) in m.glyph.iter().enumerate() {
+            if m.glyph[..i].iter().any(|other| other.height == mask.height) {
+                return Err(ManifestError::BadGlyph("two masks of one height"));
+            }
         }
         if m.display_name.is_empty() {
             m.display_name = m.name.clone();
@@ -622,6 +716,19 @@ impl Manifest {
             let n = MODELS.iter().position(|m| m == model).map_or(0, |n| n as u64 + 1);
             put_number(&mut i, 3, n);
             put_bytes(&mut out, 12, &i);
+        }
+        if !self.glyph.is_empty() {
+            let mut glyph = Vec::new();
+            for mask in &self.glyph {
+                let mut m = Vec::new();
+                put_number(&mut m, 1, u64::from(mask.width));
+                put_number(&mut m, 2, u64::from(mask.height));
+                if !mask.alpha.is_empty() {
+                    put_bytes(&mut m, 3, &mask.alpha);
+                }
+                put_bytes(&mut glyph, 1, &m);
+            }
+            put_bytes(&mut out, 14, &glyph);
         }
         for c in &self.capabilities {
             let n = Capability::ALL.iter().position(|a| a == c).map_or(0, |n| n as u64 + 1);
@@ -798,6 +905,81 @@ mod tests {
             Manifest::from_wasm(&module_with(&m.section())),
             Err(ManifestError::BadIcon(_))
         ));
+    }
+
+    /// Returns a mask of `width` by `height` whose every pixel has
+    /// coverage `v`.
+    fn flat(width: u16, height: u16, v: u8) -> Mask {
+        let n = usize::from(width) * usize::from(height);
+        let mut alpha = vec![v << 4 | v; n.div_ceil(2)];
+        if n % 2 == 1 {
+            *alpha.last_mut().unwrap() &= 0xf0;
+        }
+        Mask {
+            width,
+            height,
+            alpha: alpha.into(),
+        }
+    }
+
+    #[test]
+    fn a_glyph_round_trips_and_is_had_at_any_height_but_a_taller_one() {
+        let mut m = sample();
+        m.glyph = vec![flat(44, 44, 15), flat(13, 13, 7), flat(30, 15, 3)];
+        let back = Manifest::from_wasm(&module_with(&m.record())).unwrap();
+        assert_eq!(back.glyph, m.glyph);
+        assert_eq!(Manifest::from_record(&back.record()).unwrap().glyph, m.glyph);
+        assert_eq!(back.glyph_for(13), Some(flat(13, 13, 7)));
+        assert_eq!(back.glyph_for(14), Some(flat(28, 14, 3)));
+        assert_eq!(back.glyph_for(22), Some(flat(22, 22, 15)));
+        assert_eq!(back.glyph_for(45), None);
+        assert_eq!(sample().glyph_for(22), None);
+    }
+
+    #[test]
+    fn a_reduced_mask_averages_the_pixels_it_covers() {
+        // Two rows, 15 0 15 0 and 15 15 0 0, become one row of two pixels.
+        let m = Mask {
+            width: 4,
+            height: 2,
+            alpha: vec![0xf0, 0xf0, 0xff, 0x00].into(),
+        };
+        let expected = Mask {
+            width: 2,
+            height: 1,
+            alpha: vec![0xb4].into(),
+        };
+        assert_eq!(reduce(&m, 1), expected);
+    }
+
+    #[test]
+    fn a_glyph_the_phone_cannot_draw_is_refused() {
+        let read = |glyph: Vec<Mask>| {
+            let mut m = sample();
+            m.glyph = glyph;
+            Manifest::from_wasm(&module_with(&m.section()))
+        };
+        let refused = |glyph: Vec<Mask>| match read(glyph) {
+            Err(e @ ManifestError::BadGlyph(_)) => e.to_string(),
+            other => panic!("{other:?}"),
+        };
+        assert!(read((1..=8).map(|h| flat(h, h, 1)).collect()).is_ok());
+        assert_eq!(refused((1..=9).map(|h| flat(h, h, 1)).collect()), "bad app glyph: more than 8 masks");
+        assert_eq!(refused(vec![flat(4, 4, 1), flat(6, 4, 1)]), "bad app glyph: two masks of one height");
+        assert_eq!(refused(vec![flat(0, 0, 0)]), "bad app glyph: a mask is not 1 to 128 pixels tall");
+        assert_eq!(refused(vec![flat(129, 129, 1)]), "bad app glyph: a mask is not 1 to 128 pixels tall");
+        assert_eq!(
+            refused(vec![flat(9, 4, 1)]),
+            "bad app glyph: a mask is more than twice as wide as it is tall"
+        );
+        let short = Mask {
+            alpha: vec![0xff].into(),
+            ..flat(2, 2, 15)
+        };
+        assert_eq!(
+            refused(vec![short]),
+            "bad app glyph: a mask's coverage is not ceil(width * height / 2) bytes"
+        );
     }
 
     #[test]

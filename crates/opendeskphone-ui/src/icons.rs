@@ -80,18 +80,29 @@ pub fn twin(app_icon: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use crate::atlas;
+    use opendeskphone_state::Model;
 
-    const SKINS: &[&[IconRec]] = &[
-        atlas::ICONS_SMALL_GRAY,
-        atlas::ICONS_LARGE_GRAY,
-        atlas::ICONS_COLOR,
+    /// Each skin is paired with a model that has it.
+    const SKINS: &[(&[IconRec], Model)] = &[
+        (atlas::ICONS_SMALL_GRAY, Model::D40),
+        (atlas::ICONS_LARGE_GRAY, Model::D70),
+        (atlas::ICONS_COLOR, Model::D60),
         #[cfg(feature = "touch")]
-        atlas::ICONS_TOUCH,
+        (atlas::ICONS_TOUCH, Model::D80),
     ];
 
     #[test]
+    fn an_apps_glyph_is_made_and_shown_as_tall_as_the_status_icons() {
+        for ((icons, model), made) in SKINS.iter().zip(opendeskphone_svg::GLYPH_HEIGHTS) {
+            let alarm = icons.iter().find(|r| r.name == "alarm").unwrap();
+            assert_eq!(u32::from(alarm.h), made, "{model:?}");
+            assert_eq!(u32::from(crate::glyph_height(*model)), made, "{model:?}");
+        }
+    }
+
+    #[test]
     fn every_app_icon_has_a_one_color_twin_in_every_skin() {
-        for icons in SKINS {
+        for (icons, _) in SKINS {
             let apps: Vec<&str> = icons.iter().map(|r| r.name).filter(|n| n.starts_with("app-")).collect();
             assert_eq!(apps.len(), TWINS.len());
             for app in apps {

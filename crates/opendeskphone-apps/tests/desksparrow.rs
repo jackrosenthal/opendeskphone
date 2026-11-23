@@ -530,6 +530,9 @@ impl Shell for Watch {
     fn idle_size(&self) -> opendeskphone_apps::view::Size {
         self.inner.idle_size()
     }
+    fn glyph_height(&self) -> u16 {
+        self.inner.glyph_height()
+    }
 }
 
 impl AppWindow for WatchedWindow {

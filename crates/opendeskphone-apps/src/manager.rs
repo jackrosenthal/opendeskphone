@@ -101,6 +101,9 @@ struct Known {
     manifest: Manifest,
     builtin: bool,
     code: Option<Component>,
+    /// `scan` picks the glyph's mask for the skin, so that publishing the
+    /// list does not scale the mask down again each time.
+    glyph: Option<opendeskphone_state::Mask>,
 }
 
 struct Running {
@@ -256,6 +259,7 @@ impl AppManager {
 
     /// Discovers built-in and installed apps and publishes the list.
     pub fn scan(&mut self) {
+        let glyph_height = self.shell.glyph_height();
         let mut known = BTreeMap::new();
         for (dir, manifest) in Installer::scan_root(&self.cfg.builtin_root) {
             let code = self.known.remove(&manifest.name).and_then(|k| k.code);
@@ -263,6 +267,7 @@ impl AppManager {
                 manifest.name.clone(),
                 Known {
                     dir,
+                    glyph: manifest.glyph_for(glyph_height),
                     manifest,
                     builtin: true,
                     code,
@@ -281,6 +286,7 @@ impl AppManager {
                 manifest.name.clone(),
                 Known {
                     dir,
+                    glyph: manifest.glyph_for(glyph_height),
                     manifest,
                     builtin: false,
                     code: None,
@@ -477,6 +483,7 @@ impl AppManager {
                 icon_png: opendeskphone_state::Picture(
                     k.manifest.icon_for(self.store.model().name()).into(),
                 ),
+                glyph: k.glyph.clone(),
                 running: self.running.contains_key(&k.manifest.name),
             })
             .partition(|a| !a.builtin || self.services.config.app_enabled(&a.name));

@@ -780,13 +780,14 @@ fn d80_touch_calls() {
     r.store.update::<Mwi, _>(|m| *m = (*mwi).clone());
     r.ui.pump();
     // The home screen has buttons for two apps whose icons are color icons
-    // of the phone's.
+    // of the phone's, and for one app that has a glyph of its own.
     let apps = r.store.get::<Apps>();
     r.store.update::<Apps, _>(|a| {
         a.installed.push(AppInfo { name: "alarms".into(), display_name: "Alarms".into(), icon: "app-alarms".into(), ..Default::default() });
+        a.installed.push(AppInfo { name: "weather".into(), display_name: "Weather".into(), glyph: Some(sun_glyph()), ..Default::default() });
     });
     let app = |name: &str| opendeskphone_ui::IdleSoftkey::App(name.into());
-    let keys = vec![app("voicemail"), app("alarms"), opendeskphone_ui::IdleSoftkey::Contacts];
+    let keys = vec![app("voicemail"), app("alarms"), app("weather"), opendeskphone_ui::IdleSoftkey::Contacts];
     r.ui.handle().set_config(UiConfig { idle_softkeys: keys, ..config(model) });
     r.shot("60d-touch-idle-apps");
     r.ui.handle().set_config(config(model));
@@ -855,6 +856,15 @@ fn d80_touch_calls() {
     r.shot("68-touch-call-waiting");
     r.end_calls();
     assert_eq!(r.ui.screen_name(), "idle");
+}
+
+/// Renders a sun as `glyph!` of the SDK would, at the height of the D80's
+/// status icons.
+fn sun_glyph() -> Mask {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="#000"/><path fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>"##;
+    let height = opendeskphone_ui::glyph_height(Model::D80) as u32;
+    let m = opendeskphone_svg::glyph(svg.as_bytes()).unwrap().into_iter().find(|m| m.height == height).unwrap();
+    Mask { width: m.width as u16, height: m.height as u16, alpha: m.alpha.into() }
 }
 
 /// The region registered with `hit` in the picture on the screen.

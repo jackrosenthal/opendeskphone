@@ -29,5 +29,9 @@ png = "0.18"
 
 [build-dependencies]
 fontdue = "0.9"
-resvg = { version = "0.48", default-features = false, features = ["text"] }
+opendeskphone-svg = { path = "../opendeskphone-svg", features = ["text"] }
+
+[dev-dependencies]
+# The tests use the glyph heights and the renderer.
+opendeskphone-svg = { path = "../opendeskphone-svg" }
 

@@ -3,7 +3,7 @@
 //! `manifest.proto`, and this holds them to each other.
 
 use opendeskphone_apps::manifest::{AppType, Manifest};
-use opendeskphone_app_sdk::manifest::{AppKind, Manifest as Written};
+use opendeskphone_app_sdk::manifest::{AppKind, Glyph, GlyphMask, Manifest as Written};
 use opendeskphone_app_sdk::{Icon, PhoneModel};
 
 /// A module that holds nothing but the section.
@@ -26,6 +26,12 @@ fn module(section: &[u8]) -> Vec<u8> {
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nthe rest of a picture";
 const COLOR: &[u8] = b"\x89PNG\r\n\x1a\na picture in color";
+const GLYPH: Glyph = Glyph {
+    masks: &[
+        GlyphMask { width: 3, height: 2, alpha: &[0x0f, 0x80, 0x7f] },
+        GlyphMask { width: 1, height: 1, alpha: &[0xf0] },
+    ],
+};
 
 #[test]
 fn every_field_arrives() {
@@ -40,6 +46,7 @@ fn every_field_arrives() {
         icon: PNG,
         icon_for: &[(PhoneModel::D60, COLOR), (PhoneModel::D65, COLOR)],
         phone_icon: Some(Icon::AppStatus),
+        glyph: GLYPH,
         memory_kib: 8192,
     }
     .checked();
@@ -57,6 +64,8 @@ fn every_field_arrives() {
     assert_eq!(m.icon_for("D60"), COLOR);
     assert_eq!(m.icon_for("D65"), COLOR);
     assert_eq!(m.icon_for("D40"), PNG);
+    let masks: Vec<_> = m.glyph.iter().map(|g| (g.width, g.height, g.alpha.to_vec())).collect();
+    assert_eq!(masks, [(3, 2, vec![0x0f, 0x80, 0x7f]), (1, 1, vec![0xf0])]);
     assert_eq!(m.memory_kib, 8192);
     assert_eq!(m.wasm, "probe.wasm");
     assert!(m.capabilities.is_empty());
@@ -81,4 +90,5 @@ fn the_least_manifest() {
     assert_eq!(m.kind, AppType::Foreground);
     assert!(!m.has_idle && !m.hidden);
     assert!(m.icon.is_empty() && m.icon_for("D60").is_empty());
+    assert!(m.glyph.is_empty());
 }

@@ -901,6 +901,10 @@ impl Shell for FakeUi {
             height: 40,
         }
     }
+    fn glyph_height(&self) -> u16 {
+        // This is the height of the color skin's status icons.
+        22
+    }
 }
 
 type Handler = Box<dyn Fn(&Value) -> Result<Value, Value> + Send + Sync>;

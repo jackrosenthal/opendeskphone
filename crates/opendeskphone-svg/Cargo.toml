@@ -1,0 +1,19 @@
+[package]
+name = "opendeskphone-svg"
+description = "Open Desk Phone: the rasterizer of SVG artwork, shared by the firmware's build and the glyph! macro of opendeskphone-app-sdk"
+# The SDK's macros pin this crate to their own version, so it is published
+# with the SDK.
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+# The firmware's artwork has text, which this feature renders in the fonts
+# of the `usvg::Options` that a tree is parsed with.  A glyph has no text,
+# so the macros leave the feature off.
+text = ["resvg/text"]
+
+[dependencies]
+resvg = { version = "0.48", default-features = false }

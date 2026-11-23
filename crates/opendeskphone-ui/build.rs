@@ -13,6 +13,7 @@
 //! [`TOUCH_MARK`], by which a program that has the skin is told from one
 //! that has not.
 
+use opendeskphone_svg::resvg::usvg;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
@@ -117,6 +118,9 @@ const BITMAP_FALLBACKS: [(&str, &str); 8] = [
 /// A file named `<name>.<skin>.svg` (`small-gray`, `large-gray`, `color`,
 /// or `touch`) replaces `<name>.svg` on that skin.  It is drawn for that
 /// skin's pixels: it is rendered at its own size, and never inverted.
+///
+/// `GLYPH_HEIGHTS` of `opendeskphone-svg` copies the first row, and a test
+/// of `icons` checks that the two agree.
 const CLASSES: [(&str, [u32; 4], bool, bool); 3] = [
     ("icons/status", [13, 15, 22, 44], false, false),
     ("icons/app", [24, 28, 48, 96], true, false),
@@ -204,7 +208,6 @@ fn gen_font(out: &mut String, blobs: &Path, assets: &Path, name: &str, file: &st
     .unwrap();
 }
 
-/// Renders an SVG `height` pixels tall, or at its own size.
 /// Converts a BDF bitmap font into a one-bit glyph table: each glyph's
 /// rows as in the file, most significant bit first, each row padded to a
 /// byte.  (BDF is a line-oriented text format; the few keywords read here
@@ -272,27 +275,10 @@ fn gen_bitmap_font(out: &mut String, blobs: &Path, assets: &Path, name: &str, fi
     .unwrap();
 }
 
-fn render_svg(path: &Path, height: Option<u32>, opt: &resvg::usvg::Options) -> (u32, u32, Vec<u8>) {
+fn render_svg(path: &Path, height: Option<u32>, opt: &usvg::Options) -> (u32, u32, Vec<u8>) {
     let data = fs::read(path).unwrap();
-    let tree = resvg::usvg::Tree::from_data(&data, opt)
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let size = tree.size();
-    let height = height.unwrap_or(size.height().round().max(1.0) as u32);
-    let scale = height as f32 / size.height();
-    let width = (size.width() * scale).round().max(1.0) as u32;
-    let mut pm = resvg::tiny_skia::Pixmap::new(width, height).unwrap();
-    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
-    // Un-premultiply.
-    let mut px = pm.take();
-    for p in px.as_chunks_mut::<4>().0 {
-        let a = p[3] as u32;
-        if a != 0 && a != 255 {
-            for c in &mut p[..3] {
-                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
-            }
-        }
-    }
-    (width, height, px)
+    let tree = usvg::Tree::from_data(&data, opt).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    opendeskphone_svg::render(&tree, height)
 }
 
 /// `on_white` (gray artwork): partly covered pixels are blended with the
@@ -302,13 +288,7 @@ fn render_svg(path: &Path, height: Option<u32>, opt: &resvg::usvg::Options) -> (
 /// sit on selected, black rows) a pixel is either opaque or transparent.
 fn encode(rgba: &[u8], fmt: u8, invert: bool, on_white: bool) -> Vec<u8> {
     match fmt {
-        FMT_MASK4 => {
-            let mut n = Nibbles::new();
-            for p in rgba.as_chunks::<4>().0 {
-                n.push(((p[3] as u32 * 15 + 127) / 255) as u8);
-            }
-            n.finish()
-        }
+        FMT_MASK4 => opendeskphone_svg::mask4(rgba),
         FMT_GRAY2 => {
             let mut n = Nibbles::new();
             for p in rgba.as_chunks::<4>().0 {
@@ -394,7 +374,7 @@ fn main() {
     }
 
     // Icons and art.
-    let mut opt = resvg::usvg::Options::default();
+    let mut opt = usvg::Options::default();
     {
         let db = opt.fontdb_mut();
         for f in fs::read_dir(assets.join("fonts")).unwrap().flatten() {

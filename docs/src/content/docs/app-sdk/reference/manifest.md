@@ -13,6 +13,7 @@ opendeskphone_app_sdk::export_app! {
     kind: AppKind::Background,
     has_idle: true,
     icon: include_bytes!("weather.png"),
+    glyph: opendeskphone_app_sdk::glyph!("weather-glyph.svg"),
     memory_kib: 8192,
 }
 ```
@@ -33,6 +34,7 @@ opendeskphone_app_sdk::export_app! {
 | `icon` | `&[u8]` | `&[]` | PNG data, starting with the PNG signature, at most 256 KiB: `include_bytes!("weather.png")`. |
 | `icon_for` | `&[(PhoneModel, &[u8])]` | `&[]` | Icons by model, each under the rules for `icon`, each model at most once: `&[(PhoneModel::D60, include_bytes!("color.png"))]`. |
 | `phone_icon` | `Option<Icon>` | `None` | A [built-in icon](ui.md#built-in-icons), for a model with no PNG icon: `Some(Icon::AppCalendar)`. |
+| `glyph` | `Glyph` | `Glyph::NONE` | The app in one color, from an SVG file: `opendeskphone_app_sdk::glyph!("weather-glyph.svg")`.  See [Glyph](#glyph). |
 | `memory_kib` | `u32` | `0` | The linear memory limit in KiB.  `0` means 4096 (4 MiB).  Above 16384 (16 MiB) doesn't compile.  Data embedded with `include_bytes!` or `include_str!` counts toward the limit. |
 
 ## Icon selection
@@ -47,6 +49,32 @@ The Applications menu shows the first of these that exists:
 
 A PNG icon is scaled down, never up, to the size of the built-in app icons: 48 by 48 pixels on the color models.
 
+## Glyph
+
+Where the phone draws an app in one color, in the color of what the app is on, it shows the app's glyph instead of the icon.  The home buttons of the D80 are such a place: each button is lit while what it stands for is on, and dimmed while there is nothing to do, and an app's button has the app's glyph over the app's name.
+
+The macro `glyph!` makes the glyph from an SVG file while the app compiles.  The macro is in the SDK's feature `glyph`:
+
+```toml
+[dependencies]
+opendeskphone-app-sdk = { version = "=3.1.0", features = ["glyph"] }
+```
+
+The path is relative to the source file that has the macro, as for `include_bytes!`, and editing the SVG file recompiles the app.  The macro renders the SVG as tall as the phone's status icons, at each of their heights: 13, 15, 22, and 44 pixels.  Only the shape counts: the phone tints the glyph.  The app doesn't compile if the SVG file:
+
+- has text or images,
+- paints in more than one color: leave a hole where another color would be,
+- paints with a gradient or a pattern,
+- is more than twice as wide as it is tall, or
+- renders empty.
+
+The phone shows the first of these that exists:
+
+1. The app's glyph at the height of the model's status icons, or else scaled down from the next taller height.  A glyph is never scaled up.
+2. The built-in icon `phone_icon` if it is a one-color icon, else its [one-color twin](ui.md#built-in-icons).
+3. The one-color twin of the built-in app icon named by `name`.
+4. The built-in icon `apps`.
+
 ## Installation checks
 
 The phone runs these checks in order and reports the first failure:
@@ -60,6 +88,7 @@ The phone runs these checks in order and reports the first failure:
 | The manifest's format number is 1. | `the app's manifest has format N, and this firmware knows format 1`. |
 | `name` follows the rules under [Fields](#fields) and is not `opendeskphone`. | `bad app name: ...`. |
 | Each icon is a PNG of at most 256 KiB, and each model in `icon_for` is a model of the interface's, once. | `bad app icon: ...`. |
+| The glyph has at most 8 masks, each of its own height.  A mask is 1 to 128 pixels tall, at most twice as wide as it is tall, and has four bits of coverage for each of its pixels. | `bad app glyph: ...`. |
 | The code sections total at most 1 MiB.  Data doesn't count. | The component holds more code than the phone compiles. |
 | No built-in app has the same `name`. | `"name" is a built-in app`. |
 | The flash has room for the file and the compiled code, with 2 MiB to spare. | Not enough space. |

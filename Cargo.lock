@@ -2654,7 +2654,20 @@ dependencies = [
 name = "opendeskphone-app-sdk"
 version = "3.1.0"
 dependencies = [
+ "opendeskphone-app-sdk",
+ "opendeskphone-app-sdk-macros",
+ "opendeskphone-svg",
  "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "opendeskphone-app-sdk-macros"
+version = "3.1.0"
+dependencies = [
+ "opendeskphone-svg",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -2832,6 +2845,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "opendeskphone-svg"
+version = "3.1.0"
+dependencies = [
+ "resvg",
+]
+
+[[package]]
 name = "opendeskphone-ui"
 version = "3.1.0"
 dependencies = [
@@ -2840,8 +2860,8 @@ dependencies = [
  "log",
  "opendeskphone-hal",
  "opendeskphone-state",
+ "opendeskphone-svg",
  "png",
- "resvg",
 ]
 
 [[package]]

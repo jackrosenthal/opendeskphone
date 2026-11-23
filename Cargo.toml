@@ -5,6 +5,8 @@ resolver = "3"
 # cargo for every other crate.  Add a crate here when it builds.
 members = [
     "crates/opendeskphone-app-sdk",
+    "crates/opendeskphone-app-sdk-macros",
+    "crates/opendeskphone-svg",
     "crates/opendeskphone",
     "crates/opendeskphone-apps",
     "crates/opendeskphone-bt",

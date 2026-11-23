@@ -30,9 +30,12 @@ let
       fileset = lib.fileset.unions [
         (root + "/${dir}")
         # The SDK (with the interface definition) inherits its package
-        # fields from the firmware workspace.
+        # fields from the firmware workspace.  Its feature `glyph` needs
+        # the macro crate and the renderer.
         (root + "/Cargo.toml")
         (root + "/crates/opendeskphone-app-sdk")
+        (root + "/crates/opendeskphone-app-sdk-macros")
+        (root + "/crates/opendeskphone-svg")
       ];
     };
     cargoRoot = dir;

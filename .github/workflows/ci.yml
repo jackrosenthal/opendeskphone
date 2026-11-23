@@ -454,8 +454,9 @@ jobs:
       contents: read
       id-token: write
     env:
-      # In dependency order: dpma-proto uses dpma-bytes.
-      CRATES: dpma-bytes dpma-proto opendeskphone-app-sdk
+      # The crates are in dependency order: dpma-proto uses dpma-bytes, the
+      # SDK uses its macros, and the macros use the renderer.
+      CRATES: dpma-bytes dpma-proto opendeskphone-svg opendeskphone-app-sdk-macros opendeskphone-app-sdk
     steps:
       - uses: actions/checkout@v7
 

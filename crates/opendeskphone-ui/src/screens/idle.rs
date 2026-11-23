@@ -13,7 +13,7 @@
 
 use super::*;
 use crate::gfx::Rgb;
-use super::dialpad::Look;
+use super::dialpad::{Glyph, Look};
 use crate::IdleSoftkey;
 use opendeskphone_hal::Blinker;
 use opendeskphone_state::{AccountId, Accounts, BlfState, Blink, LampColor, LampState, LineKeyBinding, Network, Registration};
@@ -484,9 +484,9 @@ fn softkey_label(cx: &Cx, key: &IdleSoftkey) -> Option<String> {
     Some(label.to_string())
 }
 
-/// Returns the icon of a home button on the touch screen, which is one of
-/// the skin's, and how the button looks.
-fn home_button<'a>(cx: &'a Cx, key: &IdleSoftkey) -> (&'a str, Look) {
+/// Returns what a home button on the touch screen shows with its label,
+/// and how the button looks.
+fn home_button<'a>(cx: &'a Cx, key: &IdleSoftkey) -> (Glyph<'a>, Look) {
     let icon = match key {
         IdleSoftkey::CallLog => "calllog",
         IdleSoftkey::Contacts => "contacts",
@@ -498,23 +498,26 @@ fn home_button<'a>(cx: &'a Cx, key: &IdleSoftkey) -> (&'a str, Look) {
         IdleSoftkey::Redial => "phone-out",
         IdleSoftkey::Voicemail => "voicemail",
         IdleSoftkey::Theme => "brightness",
-        IdleSoftkey::App(name) => app_icon(cx, name),
+        IdleSoftkey::App(name) => return (app_glyph(cx, name), Look::Plain),
     };
     let look = match key {
         IdleSoftkey::Dnd if cx.st.features.dnd => Look::On,
         IdleSoftkey::Redial if calls::last_placed(cx).is_none() => Look::Off,
         _ => Look::Plain,
     };
-    (icon, look)
+    (Glyph::Icon(icon), look)
 }
 
-/// Picks a one-color icon for an app's home button, so that the button
-/// draws it in its label's color as the other buttons draw theirs.
-fn app_icon<'a>(cx: &'a Cx, name: &str) -> &'a str {
+/// Picks a one-color picture for an app's home button, so that the
+/// button draws it in its label's color as the other buttons draw theirs.
+fn app_glyph<'a>(cx: &'a Cx, name: &str) -> Glyph<'a> {
     let app = cx.st.apps.installed.iter().find(|a| a.name == name);
+    if let Some(mask) = app.and_then(|a| a.glyph.as_ref()) {
+        return Glyph::Mask(mask);
+    }
     let named = app.map(|a| crate::icons::twin(&a.icon).unwrap_or(&a.icon));
     let by_name = crate::icons::twin(&format!("app-{name}"));
-    named.into_iter().chain(by_name).find(|n| cx.th.icon(n).is_some()).unwrap_or("apps")
+    Glyph::Icon(named.into_iter().chain(by_name).find(|n| cx.th.icon(n).is_some()).unwrap_or("apps"))
 }
 
 /// Touch: the rows the home buttons are in, and how many are in each: at

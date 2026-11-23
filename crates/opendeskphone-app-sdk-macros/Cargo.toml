@@ -1,0 +1,19 @@
+[package]
+name = "opendeskphone-app-sdk-macros"
+description = "The procedural macros of opendeskphone-app-sdk, which re-exports them"
+# The SDK pins this crate to its own version, so the two are published
+# together.
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+opendeskphone-svg = { path = "../opendeskphone-svg", version = "=3.1.0" }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", default-features = false, features = ["parsing", "printing", "proc-macro"] }

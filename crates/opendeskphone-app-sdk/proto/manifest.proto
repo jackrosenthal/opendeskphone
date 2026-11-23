@@ -46,6 +46,7 @@ message Manifest {
   // Icons for particular models of phone; a phone shows its model's, if
   // there is one, else `icon`.
   repeated ModelIcon icon_for = 12;
+  Glyph glyph = 14;
 
   // Not for an app's section, where the phone ignores it: in the record
   // the phone keeps of an app ("app.pb" in the app's directory), the
@@ -82,6 +83,23 @@ message ModelIcon {
   bytes icon = 2;
   // The model's name in an earlier form.
   reserved 1;
+}
+
+// A glyph holds the same picture at several heights, in one mask for
+// each.  It has at most 8 masks, and no two of them have the same height.
+message Glyph {
+  repeated GlyphMask masks = 1;
+}
+
+// A mask is 1 to 128 pixels tall and at most twice as wide as it is tall.
+// Its `alpha` holds four bits of coverage for each pixel, from 0 for none
+// to 15 for full, in rows from the top.  The high nibble of each byte comes
+// first, and the last byte is padded, so `alpha` is
+// ceil(width * height / 2) bytes long.
+message GlyphMask {
+  uint32 width = 1;
+  uint32 height = 2;
+  bytes alpha = 3;
 }
 
 enum PhoneModel {

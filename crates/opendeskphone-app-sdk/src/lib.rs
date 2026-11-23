@@ -234,8 +234,8 @@ pub mod prelude {
 ///
 /// `app` comes first; `name` and `display_name` must be given; the other
 /// fields may be: `id`, `description`, `kind`, `has_idle`, `hidden`, `icon`,
-/// `icon_for`, `phone_icon`, and `memory_kib`.  A field the phone would
-/// refuse does not compile.
+/// `icon_for`, `phone_icon`, `glyph`, and `memory_kib`.  A field the phone
+/// would refuse does not compile.
 ///
 /// When the app starts, the macro has a panic of the app written to the
 /// phone's log, with the place in the code, before the phone stops the
@@ -287,6 +287,34 @@ macro_rules! export_app {
         );
     };
 }
+
+/// Makes the manifest's `glyph` from an SVG file while the app compiles:
+///
+/// ```ignore
+/// glyph: opendeskphone_app_sdk::glyph!("weather-glyph.svg"),
+/// ```
+///
+/// A glyph is the app's picture in one color.  Where the phone draws the
+/// app in the color of what the app is on, e.g., on the D80's home buttons,
+/// it shows the glyph instead of the icon, so only the picture's shape
+/// counts.  The SVG file must paint in one color, with holes where another
+/// color would be, and have no text and no images.  The macro renders it
+/// at the height of the status icons of each of the phone's skins.
+///
+/// The path is relative to the file that has the macro, as for
+/// `include_bytes!`, and editing the SVG file recompiles the app.  A file
+/// that cannot be a glyph does not compile, and the error says why.
+#[cfg(feature = "glyph")]
+#[macro_export]
+macro_rules! glyph {
+    ($file:literal $(,)?) => {
+        $crate::__glyph!($crate, $file)
+    };
+}
+
+#[cfg(feature = "glyph")]
+#[doc(hidden)]
+pub use opendeskphone_app_sdk_macros::glyph as __glyph;
 
 /// Text for a failed PBX request, for an error screen: the server's
 /// message, or that the server could not be reached and why.

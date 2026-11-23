@@ -55,10 +55,34 @@ pub struct Manifest {
     /// One of the phone's icons, for an app without an icon, e.g.,
     /// `Some(Icon::AppCalendar)`.
     pub phone_icon: Option<Icon>,
+    /// The macro `glyph!` makes this from an SVG file, and the default is
+    /// [`Glyph::NONE`].
+    pub glyph: Glyph,
     /// The most memory the app may have, in KiB.  The default (0) is
     /// 4 MiB, and the phone gives no app more than 16 MiB.
     pub memory_kib: u32,
 }
+
+/// The section holds a glyph as the message `Glyph` of
+/// `proto/manifest.proto`, which sets its limits and its format.
+#[derive(Clone, Copy, Debug)]
+pub struct Glyph {
+    pub masks: &'static [GlyphMask],
+}
+
+impl Glyph {
+    pub const NONE: Glyph = Glyph { masks: &[] };
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GlyphMask {
+    pub width: u32,
+    pub height: u32,
+    pub alpha: &'static [u8],
+}
+
+/// `proto/manifest.proto` sets this limit.
+pub const MAX_GLYPH_MASKS: usize = 8;
 
 /// The largest icon.
 pub const MAX_ICON_BYTES: usize = 256 << 10;
@@ -116,6 +140,21 @@ const fn string_len(s: &str) -> usize {
 /// A `Text` message: the text is the first field of it.
 const fn text_len(text: &str) -> usize {
     string_len(text)
+}
+
+const fn mask_len(m: &GlyphMask) -> usize {
+    let alpha = if m.alpha.is_empty() { 0 } else { delimited_len(m.alpha.len()) };
+    number_len(m.width as u64) + number_len(m.height as u64) + alpha
+}
+
+const fn glyph_len(g: &Glyph) -> usize {
+    let mut n = 0;
+    let mut i = 0;
+    while i < g.masks.len() {
+        n += delimited_len(mask_len(&g.masks[i]));
+        i += 1;
+    }
+    n
 }
 
 /// A cursor over the section being written.
@@ -203,6 +242,7 @@ impl Manifest {
         icon: &[],
         icon_for: &[],
         phone_icon: None,
+        glyph: Glyph::NONE,
         memory_kib: 0,
     };
 
@@ -247,6 +287,36 @@ impl Manifest {
             }
             i += 1;
         }
+        let masks = self.glyph.masks;
+        assert!(
+            masks.len() <= MAX_GLYPH_MASKS,
+            "export_app!: `glyph` has more than 8 masks"
+        );
+        let mut i = 0;
+        while i < masks.len() {
+            let m = masks[i];
+            assert!(
+                m.height >= 1 && m.height <= 128,
+                "export_app!: a mask of `glyph` is not 1 to 128 pixels tall"
+            );
+            assert!(
+                m.width <= 2 * m.height,
+                "export_app!: a mask of `glyph` is more than twice as wide as it is tall"
+            );
+            assert!(
+                m.alpha.len() as u64 == (m.width as u64 * m.height as u64).div_ceil(2),
+                "export_app!: a mask of `glyph` does not have (width * height).div_ceil(2) bytes of coverage"
+            );
+            let mut j = 0;
+            while j < i {
+                assert!(
+                    masks[j].height != m.height,
+                    "export_app!: `glyph` has two masks of one height"
+                );
+                j += 1;
+            }
+            i += 1;
+        }
         self
     }
 
@@ -276,6 +346,9 @@ impl Manifest {
         while i < self.icon_for.len() {
             n += delimited_len(model_icon_len(&self.icon_for[i]));
             i += 1;
+        }
+        if !self.glyph.masks.is_empty() {
+            n += delimited_len(glyph_len(&self.glyph));
         }
         n
     }
@@ -308,6 +381,21 @@ impl Manifest {
             let m = &self.icon_for[i];
             out = out.open(12, model_icon_len(m)).bytes(2, m.1).number(3, model_number(m.0));
             i += 1;
+        }
+        if !self.glyph.masks.is_empty() {
+            out = out.open(14, glyph_len(&self.glyph));
+            let mut i = 0;
+            while i < self.glyph.masks.len() {
+                let m = &self.glyph.masks[i];
+                out = out
+                    .open(1, mask_len(m))
+                    .number(1, m.width as u64)
+                    .number(2, m.height as u64);
+                if !m.alpha.is_empty() {
+                    out = out.bytes(3, m.alpha);
+                }
+                i += 1;
+            }
         }
         assert!(out.at == N, "the manifest's section has another length");
         out.bytes

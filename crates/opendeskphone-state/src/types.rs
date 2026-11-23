@@ -1416,6 +1416,23 @@ impl std::fmt::Debug for Picture {
     }
 }
 
+/// A mask holds a picture in one color as coverage alone, and whoever
+/// draws it picks the color.  Its `alpha` has the format of `GlyphMask` in
+/// the SDK's `proto/manifest.proto`.  A mask prints as its size, not its
+/// pixels.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct Mask {
+    pub width: u16,
+    pub height: u16,
+    pub alpha: Arc<[u8]>,
+}
+
+impl std::fmt::Debug for Mask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Mask({}x{})", self.width, self.height)
+    }
+}
+
 /// When an app runs (stock manifest `type`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AppKind {
@@ -1447,6 +1464,10 @@ pub struct AppInfo {
     /// (empty: it has none).
     #[serde(skip)]
     pub icon_png: Picture,
+    /// This is the app's glyph as the phone draws it, which the app
+    /// manager picks from the manifest's masks.
+    #[serde(skip)]
+    pub glyph: Option<Mask>,
     pub running: bool,
 }
 

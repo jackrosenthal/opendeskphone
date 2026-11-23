@@ -233,6 +233,16 @@ fn blend(dst: Rgb, src: Rgb, a: u32, max: u32) -> Rgb {
     ch(16) | ch(8) | ch(0)
 }
 
+/// Iterates over the pixels of a picture that has four bits a pixel, as
+/// (column, row, value).
+fn nibbles(w: i32, h: i32, data: &[u8]) -> impl Iterator<Item = (i32, i32, u32)> + '_ {
+    let pixels = (0..h).flat_map(move |row| (0..w).map(move |col| (col, row)));
+    pixels.zip(0usize..).map(move |((col, row), n)| {
+        let byte = data[n / 2];
+        (col, row, u32::from(if n.is_multiple_of(2) { byte >> 4 } else { byte & 15 }))
+    })
+}
+
 impl Canvas {
     /// A canvas for a `width` x `height` screen; `gray` reduces every pixel
     /// to four levels.
@@ -528,20 +538,11 @@ impl Canvas {
         let (w, h) = (icon.width(), icon.height());
         let data = icon.bytes();
         match icon.rec.fmt {
-            FMT_MASK4 | FMT_GRAY2 => {
-                let mask = icon.rec.fmt == FMT_MASK4;
-                let tint = self.color(tint);
-                let mut n = 0usize;
-                for row in 0..h {
-                    for col in 0..w {
-                        let byte = data[n / 2];
-                        let v = if n.is_multiple_of(2) { byte >> 4 } else { byte & 15 };
-                        n += 1;
-                        if mask {
-                            self.put_blend(x + col, y + row, tint, v as u32, 15);
-                        } else if v < 4 {
-                            self.put_blend(x + col, y + row, GRAY[v as usize], 1, 1);
-                        }
+            FMT_MASK4 => self.mask4(x, y, w, h, data, tint),
+            FMT_GRAY2 => {
+                for (col, row, v) in nibbles(w, h, data) {
+                    if v < 4 {
+                        self.put_blend(x + col, y + row, GRAY[v as usize], 1, 1);
                     }
                 }
             }
@@ -568,6 +569,19 @@ impl Canvas {
     /// Draws an icon centered in `r`.
     pub fn icon_in(&mut self, icon: Icon, r: IRect, tint: Rgb) {
         self.icon(icon, r.x + (r.w - icon.width()) / 2, r.y + (r.h - icon.height()) / 2, tint);
+    }
+
+    /// Draws a mask of `w` by `h` pixels in `tint`, with its top-left at
+    /// (`x`, `y`).  `alpha` has the format of `opendeskphone_state::Mask`,
+    /// and nothing is drawn if it is too short for the size.
+    pub fn mask4(&mut self, x: i32, y: i32, w: i32, h: i32, alpha: &[u8], tint: Rgb) {
+        if w <= 0 || h <= 0 || alpha.len() < (w as usize * h as usize).div_ceil(2) {
+            return;
+        }
+        let tint = self.color(tint);
+        for (col, row, v) in nibbles(w, h, alpha) {
+            self.put_blend(x + col, y + row, tint, v, 15);
+        }
     }
 
     /// Draws raw RGBA pixels (app images) with their top-left at (`x`, `y`).

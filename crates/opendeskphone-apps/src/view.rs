@@ -342,6 +342,9 @@ pub trait Shell: Send {
     fn close(&mut self, app: &str, kind: WindowKind);
     /// Size of the idle-screen area offered to apps.
     fn idle_size(&self) -> Size;
+    /// Returns the height in pixels at which the phone draws an app's
+    /// glyph.
+    fn glyph_height(&self) -> u16;
 }
 
 #[cfg(test)]

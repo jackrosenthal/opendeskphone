@@ -93,11 +93,26 @@ pub(crate) enum Look {
     Off,
 }
 
-/// A button of the touch screens in `r`: `icon` (one of the skin's, or
-/// [`KEYPAD`]; none if empty or unknown) and `label` (none if empty), the icon above the label where
-/// the button is tall enough for both and beside it where it is not.  It
-/// is a region that is `hit`, unless its look is [`Look::Off`].
-pub(crate) fn control(c: &mut Canvas, th: &Theme, r: IRect, icon: &str, label: &str, look: Look, hit: Hit) {
+/// A [`control`] draws this with its label, in the label's color.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Glyph<'a> {
+    /// The name is one of the skin's one-color icons or [`KEYPAD`], and any
+    /// other name draws nothing.
+    Icon(&'a str),
+    Mask(&'a opendeskphone_state::Mask),
+}
+
+impl<'a> From<&'a str> for Glyph<'a> {
+    fn from(name: &'a str) -> Glyph<'a> {
+        Glyph::Icon(name)
+    }
+}
+
+/// Draws a button of the touch screens in `r`, with `icon` above `label`
+/// where the button is tall enough for both and beside it where it is not.
+/// A button with an empty label shows only its icon.  The button is a
+/// region that is `hit` unless its look is [`Look::Off`].
+pub(crate) fn control<'a>(c: &mut Canvas, th: &Theme, r: IRect, icon: impl Into<Glyph<'a>>, label: &str, look: Look, hit: Hit) {
     let dim = crate::gfx::mix(th.sk_bg, th.sk_fg, 3);
     let (fill, edge, fg): (Rgb, Option<Rgb>, Rgb) = match look {
         // (The roles of every screen's buttons.)
@@ -122,18 +137,22 @@ pub(crate) fn control(c: &mut Canvas, th: &Theme, r: IRect, icon: &str, label: &
         let f = th.font(Font::Bold);
         if f.width(label) > w { th.font(Font::Small) } else { f }
     };
-    // The icon's size, and how it is drawn: one of the skin's, or the
-    // dial pad's, which is drawn here.
-    let glyph: Option<(i32, i32)> = match icon {
-        KEYPAD => Some((th.icon, th.icon)),
-        name => th.icon(name).map(|i| (i.width(), i.height())),
+    let icon = icon.into();
+    let size: Option<(i32, i32)> = match icon {
+        Glyph::Icon(KEYPAD) => Some((th.icon, th.icon)),
+        Glyph::Icon(name) => th.icon(name).map(|i| (i.width(), i.height())),
+        Glyph::Mask(m) => Some((i32::from(m.width), i32::from(m.height))),
     };
-    let draw = |c: &mut Canvas, x: i32, y: i32| match (icon, th.icon(icon)) {
-        (KEYPAD, _) => keypad_icon(c, th, x, y, fg),
-        (_, Some(i)) => c.icon(i, x, y, fg),
-        _ => {}
+    let draw = |c: &mut Canvas, x: i32, y: i32| match icon {
+        Glyph::Icon(KEYPAD) => keypad_icon(c, th, x, y, fg),
+        Glyph::Icon(name) => {
+            if let Some(i) = th.icon(name) {
+                c.icon(i, x, y, fg);
+            }
+        }
+        Glyph::Mask(m) => c.mask4(x, y, i32::from(m.width), i32::from(m.height), &m.alpha, fg),
     };
-    match glyph {
+    match size {
         Some((w, h)) if label.is_empty() => draw(c, r.x + (r.w - w) / 2, r.y + (r.h - h) / 2),
         Some((w, h)) if r.h >= h + th.line_h + th.pad => {
             let f = font_for(inner.w);

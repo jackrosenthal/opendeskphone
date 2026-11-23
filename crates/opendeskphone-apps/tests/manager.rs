@@ -587,6 +587,32 @@ fn an_installed_app_carries_its_icon_and_its_data() {
     assert_eq!(r.ui.image_names("myprobe"), ["pic.png"]);
 }
 
+/// The phone keeps an installed app's glyph in its record of the app, and
+/// publishes the glyph at the height of the rig's status icons.
+#[test]
+fn an_installed_apps_glyph_is_had_as_tall_as_the_status_icons() {
+    let dir = temp_dir("glyph");
+    let mut r = rig();
+    let mask = |w: u16, h: u16| opendeskphone_state::Mask {
+        width: w,
+        height: h,
+        alpha: vec![0xff; (usize::from(w) * usize::from(h)).div_ceil(2)].into(),
+    };
+    let glyph = |r: &Rig, name: &str| {
+        let apps = r.store.get::<opendeskphone_state::Apps>();
+        apps.installed.iter().find(|a| a.name == name).unwrap().glyph.clone()
+    };
+    let taller = variant(&dir.0, "probe", "taller", |m| m.glyph = vec![mask(13, 13), mask(44, 44)]);
+    let shorter = variant(&dir.0, "probe", "shorter", |m| m.glyph = vec![mask(13, 13)]);
+    r.mgr.install(&taller, None).unwrap();
+    r.mgr.install(&shorter, None).unwrap();
+    assert_eq!(glyph(&r, "taller"), Some(mask(22, 22)));
+    assert_eq!(glyph(&r, "shorter"), None);
+    assert_eq!(glyph(&r, "contacts"), None);
+    let record = std::fs::read(r.nvdata.join("opendeskphone/wasmapps/taller").join(manifest::RECORD)).unwrap();
+    assert_eq!(Manifest::from_record(&record).unwrap().glyph, [mask(13, 13), mask(44, 44)]);
+}
+
 #[test]
 fn stock_javascript_apps_on_nvdata_are_skipped() {
     let mut r = rig();
