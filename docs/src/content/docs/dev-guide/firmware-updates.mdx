@@ -17,11 +17,7 @@ A record in the `ctrl` partition selects the bank that the boot loader starts; t
 
 ## Installation from stock firmware
 
-To install Open Desk Phone on a phone running stock firmware, follow [Installation](/#installation).  Stock firmware writes the image to the inactive bank and stays in the other bank.
-
-:::caution[The first boot from stock firmware has no trial]
-Stock firmware records no trial boot, so nothing returns the phone to stock firmware if the installed image fails to start.  From stock firmware, install only released images.  Test development builds from a working Open Desk Phone installation with [`dphone ramboot`](test-builds.md#ram-boot).
-:::
+To install Open Desk Phone on a phone running stock firmware, follow [Installation](/#installation).
 
 ## Provisioned firmware
 
@@ -109,6 +105,8 @@ A stock firmware image installed from Open Desk Phone gets no trial, because sto
 
 ## Bank management
 
+The Digium D40 thru D70 have two firmware banks, A and B.  The Digium D80 utilizes the original partition layout from the stock Android system, and has only a single bank.
+
 ### `dphone update status`
 
 ```sh
@@ -152,55 +150,3 @@ dphone update abandon
 ```
 
 `abandon` cancels a trial, e.g., for a faulty image just installed, before or after the reboot: the command selects the bank that the phone would roll back to and removes the trial record, so that another image can be installed.  If the phone runs the abandoned image, reboot afterward.
-
-## Return to stock firmware
-
-- If stock firmware is still in the other bank, [switch to that bank](#dphone-update-switch-bank).
-- Otherwise, install a stock firmware image for the phone's model through the web interface, which asks for confirmation, or with `dphone update install`.
-
-Stock firmware has no command to select the other bank, so returning from stock firmware to Open Desk Phone takes another [installation from stock firmware](#installation-from-stock-firmware), even with an Open Desk Phone image in the other bank.
-
-## The D80
-
-A D80 has no firmware banks.  It has one kernel and one root file system, and a recovery, a second small system that installs an image and restarts into it.  This page's sections on banks, trial boots, and the web interface do not apply to a D80.  For how the recovery works, see [The D80's recovery](building.md#the-d80s-recovery).
-
-To install an image:
-
-```sh
-ssh root@192.0.2.20 dphone update install - < 3_1_0_D80_firmware.eff
-ssh root@192.0.2.20 dphone reboot
-```
-
-`dphone update install` takes a file, standard input, or a URL, as on the other models.  The command installs nothing itself:
-
-1. It stores the image's package in nvdata.  The package needs that much free space: about 40 MB for an Open Desk Phone image, and about 200 MB for a stock image.
-2. It checks that the package is signed with the key that the recovery accepts.
-3. It writes the recovery that the package brings to the recovery partition.
-4. It sets the boot loader to start the recovery at the next restart.
-
-After the reboot, the recovery shows the Open Desk Phone logo and a progress bar, installs the package, and restarts the phone into the new image.
-
-:::caution[A D80 has no trial boot]
-The recovery overwrites the installed firmware, and there is no other firmware to return to.  If the new image does not start, the phone needs its eMMC rewritten from outside.
-:::
-
-`dphone update status` shows what the next restart starts, the package that waits, and the result of the last installation:
-
-```text
-running from:   /dev/mmcblk0p5 (the installed firmware)
-next restart:   the recovery (bootcmd "booti mmc3 recovery")
-left to install: /cache/recovery/update.zip (39597415 bytes)
-last install:   none recorded
-```
-
-The recovery knows nvdata as `/cache`.  When the recovery does not install a package, it restarts into the installed firmware, and its log is in `/nvdata/recovery/last_log`.
-
-To take a package back before the restart that would install it:
-
-```sh
-dphone update abandon
-```
-
-### Return to stock firmware on a D80
-
-Install a stock D80 image with `dphone update install`.  `dphone` makes the stock recovery from the stock package and writes it to the recovery partition, and the stock recovery installs the stock firmware.  The stock recovery image that `dphone` writes holds the same files as the vendor's, compressed differently.  Stock firmware replaces it with the vendor's own image when it starts.

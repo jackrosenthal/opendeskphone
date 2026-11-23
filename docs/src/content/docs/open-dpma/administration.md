@@ -109,29 +109,23 @@ firmware=fw-d65
 
 To move the phones back, set `version` and `file` to the stock image.  Then [reconfigure](#configuration-changes) the phones, or wait for each phone to restart.
 
-- **Use separate templates for a mixed fleet.**  Every phone in a section follows the section's entries, whatever firmware the phone runs.  Phones that stay on stock firmware need a template whose `firmware` names the stock image, or no entry for the model.
-- **Watch the firmware package.**  The package applies to every phone section without `firmware`, so a new image in the package directory reaches all of those phones.
-- **Exempt individual phones** with [`opendeskphone_ignore_provisioned_firmware`](opendeskphone-options.md#opendeskphone_ignore_provisioned_firmware).
-
 An Open Desk Phone phone does not retry an image that failed to install or was rolled back until the entry names a different image.  Such an image may explain a phone that still runs the previous firmware after a firmware change.  To inspect the phone's firmware banks, see [`dphone update status`](../dev-guide/firmware-updates.mdx#dphone-update-status).
 
-### The D80's stock firmware {#d80-stock-migration}
+:::note[Migrating the Digium D80 from stock firmware to Open Desk Phone]
+Migrating the Digium D40 thru D70 can from stock firmware to Open Desk Phone is
+straightforward, as the firmware package is fully compatible with the built-in
+updater in the stock firmware.
 
-A D80 running stock firmware cannot install an Open Desk Phone image through the ordinary hand-off: the stock updater verifies the image's signature against a key built into the updater, the stock recovery verifies the package inside the image against its own keys, and neither key belongs to Open Desk Phone.  A stock phone therefore refuses the image from the package directory with a signature error.
+However, with the Digium D80 (which the stock firmware is based on Android),
+it's a little more complicated, as a new recovery partition needs flashed on
+the phone before the firmware is downloaded.  Open DPMA detects stock firmware
+migrating to Open Desk Phone, and handles this automatically using the phone's
+built-in web server.  However, this means that the phone's IP address (at TCP
+port 80) must be reachable from the Asterisk server.
 
-While `d80_stock_firmware_migration` is on (the default), the module re-keys such a phone instead.  The stock firmware executes the value of the provisionable `lan_port_mode` setting as root, without validating it, as part of a shell command in its config daemon.  The module places a small script in that setting and uploads the script and the image's parts to the phone.  The script:
-
-1. writes the recovery image from the Open Desk Phone package over the stock recovery (the second partition of the eMMC),
-2. replaces `update-firmware.sh` with a copy containing the Open Desk Phone signing key, and installs the Open Desk Phone certificate into `otacerts.zip`, and
-3. restores `lan_port_mode` to a plain value.
-
-The module then posts the package's image to the stock updater through `update_firmware.cgi`.  The re-keyed updater accepts the signature, hands the package to the recovery, and restarts the phone; the Open Desk Phone recovery installs it.  When the phone reconnects, it identifies itself with an Open Desk Phone user agent and is offered firmware like any other Open Desk Phone phone.  For as long as a phone is on stock firmware with the migration enabled, its document offers no firmware (which it could only refuse) and carries the setting that runs the script.  Every step of the migration is idempotent, so an interrupted migration retries the next time the phone requests its configuration.
-
-- **Only the D80 migrates this way.**  The stock firmware of the other models has no such hole, so their Open Desk Phone images install through the ordinary hand-off ([Migration between stock firmware and Open Desk Phone](#firmware-migration)).
-- **The phone must be reachable over HTTP.**  Both the staging and the hand-off go to the phone's web server (port 80), at the address named by the phone's SIP contact.
-- **The stock `otapassphrase` stays on the phone.**  Open Desk Phone images for the D80 are encrypted with it, just like the stock ones.
-- **The web password is not used.**  The module uploads through the stock web server's unauthenticated upload endpoint and posts the image to the unauthenticated firmware upload, exactly as the stock firmware does.
-- **Set `d80_stock_firmware_migration=no`** to turn all of this off.  A stock D80 then receives the ordinary document, firmware offer included, and refuses the image at every offer.
+In case you want to disable the migration check in Open DPMA, add
+`d80_stock_firmware_migration=no` to the phone's config.
+:::
 
 ## App data
 

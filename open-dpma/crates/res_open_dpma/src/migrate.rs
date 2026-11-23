@@ -1,58 +1,38 @@
-//! Migrates a phone from the stock firmware to Open Desk Phone.
+//! Migrates a D80 from the stock firmware to Open Desk Phone.
 //!
-//! A stock D80 refuses an Open Desk Phone image in two places: the stock
-//! updater (`/system/bin/update-firmware.sh`) verifies the image's
-//! signature against a key built into the updater, and the stock recovery
-//! verifies the package inside the image against its own keys.  Neither
-//! key is ours.  The stock firmware also executes the value of the
-//! provisionable `lan_port_mode` setting as root, without validating it,
-//! as part of a shell command in its config daemon (`dphonecored`).  This
-//! module uses that behavior to replace the phone's signing keys with
-//! ours remotely, so that the ordinary firmware hand-off can then install
-//! Open Desk Phone:
+//! Prior to installing Open Desk Phone on stock firmware, the phone needs re-keyed to accept Open
+//! Desk Phone's signing keys instead of Digium's.
 //!
-//! 1. The configuration document for a stock phone contains the payload
-//!    in `lan_port_mode` (`auto;sh /data/digium/tmp/odp-migrate.sh`) and
-//!    no firmware offer, since a stock phone could only refuse our image.
-//! 2. Before the document reaches the phone, the server uploads the
-//!    payload script, the recovery image, the replacement updater script,
-//!    and the Open Desk Phone certificate to the phone through the stock
-//!    web server's unauthenticated upload.  The payload script writes our
-//!    recovery over the stock one, replaces `update-firmware.sh` with a
-//!    version containing our signing key, and then restores
-//!    `lan_port_mode`.  The stock `otapassphrase` is left in place,
-//!    because Open Desk Phone images are encrypted with it.
-//! 3. The server posts the image to the stock updater
-//!    (`update_firmware.cgi`, unauthenticated).  The re-keyed updater
-//!    accepts the image's signature and hands the package to the
-//!    recovery, which is ours by then, and the recovery installs it.
-//!    When the phone reconnects, it uses an Open Desk Phone user agent
-//!    and is served like any other phone.
+//! During provisioning, Open DPMA detects the stock firmware (version <3) when it's installing Open
+//! Desk Phone (version >=3).  When this is detected:
+//! 1. Open DPMA uploads several files to the phone using upload_file.cgi:
+//!    - odp-recovery.img: The new recovery image, extracted from the firmware.
+//!    - odp-otacerts.zip: Open Desk Phone's OTA certificates.
+//!    - odp-update-firmware.sh: A modified version of the phone's update-firmware.sh which does not
+//!      check the package's certificates.
+//!    - odp-migrate.sh: A shell script to the phone that will flash the recovery image,
+//!      replace /system/bin/update-firmware.sh with odp-update-firmware.sh, and replace
+//!      /system/security/otacerts.zip with odp-otacerts.zip.
+//! 2. A configuration payload with `lan_port_mode` set to
+//!    `auto;sh /data/digium/tmp/odp-migrate.sh` is sent to the phone.  The stock firmware
+//!    conveniently executes this script for us.
+//! 3. The server posts the image to the stock updater (`update_firmware.cgi`).  The modified updater
+//!    then accepts the image, and hands the package to the recovery, and the recovery installs it.
 //!
-//! Every step is idempotent: if the migration is interrupted, it retries
-//! the next time the phone requests its configuration.  Only the D80
-//! migrates, since only its stock firmware has the command injection.
-//! The migration can be disabled entirely with `d80_stock_firmware_migration`.
+//! If `d80_stock_firmware_migration` is set to `no`, Open DPMA will never attempt this migration.
 
 use dpma_ast::bformat;
 use dpma_ast::dpma_bytes::ByteSlice;
 use dpma_ast::dpma_log;
 use eff::EffReader;
 use opendeskphone_recovery::{sig, zip};
-use rsa::pkcs8::{DecodePrivateKey, EncodePublicKey, LineEnding};
-use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-/// The private key that signs Open Desk Phone packages.  It signs the
-/// image handed to the stock updater, and the re-keyed updater script
-/// embeds its public half.
-const OTA_KEY: &str = include_str!("../../../../crates/opendeskphone-image/keys/d80-ota.key.pem");
-/// The certificate for [`OTA_KEY`], installed into the phone's
-/// `otacerts.zip`.
+/// The certificate installed into the phone's `otacerts.zip`.
 const OTA_CERTIFICATE: &str =
     include_str!("../../../../crates/opendeskphone-image/keys/d80-ota.x509.pem");
 
@@ -203,7 +183,7 @@ fn build(image: &[u8]) -> Result<Kit, String> {
     }
     // Re-keying a phone for a stock image would hand it Digium firmware;
     // only an Open Desk Phone image (version 3 and up) may be migrated.
-    if !is_open_version(&header.version) {
+    if !is_odp_version(&header.version) {
         return Err(format!(
             "{} is not an Open Desk Phone version",
             header.version
@@ -240,7 +220,7 @@ fn build(image: &[u8]) -> Result<Kit, String> {
     let mut recovery = recovery;
     recovery.resize(RECOVERY_PARTITION_SIZE, 0);
 
-    let update_script = update_firmware_script(&public_key_pem()?);
+    let update_script = update_firmware_script();
     let payload_script = payload_script();
     let otacerts = zip::write(&[zip::FileEntry {
         name: "d80-ota.x509.pem",
@@ -261,23 +241,12 @@ fn build(image: &[u8]) -> Result<Kit, String> {
 
 /// Whether a version string (such as `3_1_0`) is an Open Desk Phone
 /// version.
-fn is_open_version(version: &str) -> bool {
+fn is_odp_version(version: &str) -> bool {
     let mut it = version.trim().split(['_', '.']);
     match it.next().and_then(|m| m.parse::<u32>().ok()) {
         Some(major) => major >= 3,
         None => false,
     }
-}
-
-/// The public half of [`OTA_KEY`] in PEM form (`-----BEGIN PUBLIC
-/// KEY-----`), as embedded in the re-keyed updater script for
-/// `openssl dgst -verify` to read.
-fn public_key_pem() -> Result<String, String> {
-    let key =
-        RsaPrivateKey::from_pkcs8_pem(OTA_KEY).map_err(|e| format!("the signing key: {e}"))?;
-    RsaPublicKey::from(&key)
-        .to_public_key_pem(LineEnding::LF)
-        .map_err(|e| format!("the signing key's public half: {e}"))
 }
 
 /// Returns a kit if the phone behind this transaction should be migrated:
@@ -628,29 +597,13 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-// ---------------------------------------------------------------------------
-// What runs on the phone
-// ---------------------------------------------------------------------------
-
-/// Builds the replacement for the stock `/system/bin/update-firmware.sh`.
-/// It is the stock script with the Open Desk Phone public key in place of
-/// Digium's, so that `openssl dgst -sha256 -verify` accepts our images,
-/// and with the package staged where our recovery reads it: `/cache`,
-/// where `dphone` leaves packages, rather than the stock
-/// `/data/digium/firmware`, which the recovery does not mount.  The stock
-/// `otapassphrase` still decrypts the image.
-fn update_firmware_script(public_key: &str) -> Vec<u8> {
-    let public_key = public_key.trim_end();
-    format!(
-        r#"#!/system/bin/sh
+fn update_firmware_script() -> Vec<u8> {
+    r#"#!/system/bin/sh
 PATH=/system/bin
 TMP=/data/digium/firmware
 LOG='log -p v -t update-firmware.sh'
 
 rm $TMP/update.zip;
-
-# The Open Desk Phone signing key, in place of Digium's.
-echo -n "{public_key}" > $TMP/pubkey
 
 $LOG "Updating firmware using $1";
 if [ "PK" = "`busybox head -c 2 $1`" ]; then
@@ -661,26 +614,10 @@ if [ "PK" = "`busybox head -c 2 $1`" ]; then
   /system/bin/rm $1
 else
   $LOG "Decrypting OTA update";
-  busybox tail -c +101 $1 | openssl enc -d -aes-256-cbc -pass file:/system/etc/otapassphrase > $TMP/decrypted_signed;
+  busybox tail -c +101 $1 | openssl enc -d -aes-256-cbc -pass file:/system/etc/otapassphrase | busybox head -c -256 > $TMP/decrypted;
 
   # Remove the original file to reduce the number of free bytes needed for a firmware update
   /system/bin/rm $1
-
-  # Remove the last 256 bytes and save as the signature
-  busybox head -c -256 $TMP/decrypted_signed > $TMP/decrypted
-
-  busybox tail -c 256 $TMP/decrypted_signed > $TMP/signature
-
-  # Check the signature
-  openssl dgst -sha256 -verify $TMP/pubkey -signature $TMP/signature $TMP/decrypted
-  if [ $? -ne 0 ]; then
-      $LOG "Failed to verify firmware file signature"
-      exit 1
-  fi
-
-  # This part is no longer needed
-  /system/bin/rm $TMP/decrypted_signed
-  /system/bin/rm $TMP/signature
 
   # dump the third 100 bytes into the model number file
   busybox tail -c +201 $TMP/decrypted | busybox head -c 100 > $TMP/decrypted_model_number;
@@ -713,9 +650,7 @@ if [ "x${{2}}" = "xreset" ]; then
 fi
 /sbin/uboot_env -m bootcmd='booti mmc3 recovery'
 /system/bin/service call power 12 i32 0 s16 "firmware_update" i32 0 || reboot recovery
-"#
-    )
-    .into_bytes()
+"#.into()
 }
 
 /// Builds the script that the `lan_port_mode` payload runs.  It is safe
@@ -727,9 +662,6 @@ fi
 fn payload_script() -> Vec<u8> {
     format!(
         r#"#!/system/bin/sh
-# Open Desk Phone: re-key a stock D80 for Open Desk Phone firmware.
-# Uploaded by the Open DPMA server.  The stock config daemon runs this
-# script as root via the unvalidated lan_port_mode setting.
 PATH=/system/bin:/sbin
 TMP=/data/digium/tmp
 LOG=$TMP/odp-migrate.log
