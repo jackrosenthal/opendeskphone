@@ -320,7 +320,7 @@ fn migration_document(tx: &Transaction, phone: &[u8]) -> Vec<u8> {
         &mut buf,
         &dir,
         &tx.model,
-        crate::migrate::payload_setting(),
+        crate::d80_migrate::payload_setting(),
     );
     buf
 }
@@ -351,7 +351,7 @@ pub fn handle_config(tx: Arc<Transaction>) -> i32 {
     match phone_for_token(&tx) {
         None => set_error(&tx, errors::msg::INVALID_TOKEN),
         Some(phone) => {
-            let migrating = crate::migrate::plan(&tx);
+            let migrating = crate::d80_migrate::plan(&tx);
             let doc = match &migrating {
                 Some(_) => migration_document(&tx, &phone),
                 None => config_document(&tx, &phone),
@@ -360,8 +360,8 @@ pub fn handle_config(tx: Arc<Transaction>) -> i32 {
             // runs it arrives, so the upload (a POST to the phone's web
             // server) happens here, before the reply.
             if let Some(kit) = &migrating {
-                match crate::migrate::phone_ip(&tx) {
-                    Some(ip) => crate::migrate::stage(&tx.mac, ip, kit),
+                match crate::d80_migrate::phone_ip(&tx) {
+                    Some(ip) => crate::d80_migrate::stage(&tx.mac, ip, kit),
                     None => dpma_log!(
                         "Migration of {:#?}: the address of the phone is not known, so nothing is uploaded",
                         String::from_utf8_lossy(&tx.mac)
@@ -405,7 +405,7 @@ pub fn handle_verify(tx: Arc<Transaction>) -> i32 {
             // download is what uploads the migration file, and a phone
             // whose installation failed has the migration document
             // already.
-            if crate::migrate::plan(&tx).is_none() {
+            if crate::d80_migrate::plan(&tx).is_none() {
                 set_digest(&tx, &config_document(&tx, &phone));
             }
         }

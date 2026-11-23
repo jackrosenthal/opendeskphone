@@ -1956,7 +1956,7 @@ mod devtest {
                 &mut out,
                 &dir,
                 model,
-                crate::migrate::payload_setting(),
+                crate::d80_migrate::payload_setting(),
             ),
             _ => super::get_config(&a.argv[2], &mut out, &dir, model),
         };

@@ -20,7 +20,7 @@ pub mod devtest;
 pub mod firmware;
 pub mod method;
 pub mod method_api;
-pub mod migrate;
+pub mod d80_migrate;
 pub mod phone_main;
 pub mod pjsip;
 pub mod request;
