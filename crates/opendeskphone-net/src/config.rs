@@ -180,8 +180,7 @@ pub fn stock_power_mw(model: &str) -> u32 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NetConfig {
     pub ifaces: IfaceNames,
-    /// `ENETCFG_MAC` from `/nvdata/etc/enet.cfg`.  `None` leaves whatever
-    /// the kernel assigned.
+    /// `None` leaves whatever the kernel assigned.
     pub mac: Option<MacAddr>,
     /// Model name as stock writes it, e.g., `D60`.
     pub model: String,

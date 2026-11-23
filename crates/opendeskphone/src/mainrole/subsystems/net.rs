@@ -50,6 +50,7 @@ use tokio::time::Instant;
 use super::SharedConfig;
 use crate::diag::Output;
 use crate::mainrole::Context;
+use crate::model::Family;
 
 /// Seconds without an address before falling back to the plain configuration.
 pub const FALLBACK_SECS: u64 = 150;
@@ -148,9 +149,8 @@ pub fn start_with_fallback(
 ) -> NetHandle {
     ctx.store.set_health(Subsystem::Net, HealthStatus::Starting);
     let mac = read_mac(ctx, config.as_ref());
-    match mac {
-        Some(m) => info!("net: MAC {}", m.bare_hex()),
-        None => warn!("net: no ENETCFG_MAC in enet.cfg; keeping the kernel's random MAC"),
+    if let Some(m) = mac {
+        info!("net: MAC {}", m.bare_hex());
     }
     ctx.store.update::<opendeskphone_state::System, _>(|s| s.mac = mac.map(|m| m.0));
 
@@ -185,7 +185,35 @@ async fn sim_task(mut rx: mpsc::Receiver<Cmd>) {
     }
 }
 
+/// The D40 thru D70 store their MAC address in nvdata's `etc/enet.cfg`,
+/// and their kernels assign a random one.  On other models, the kernel
+/// assigns the correct one.
 fn read_mac(ctx: &Context, config: Option<&SharedConfig>) -> Option<MacAddr> {
+    let mac = match ctx.model.family() {
+        Family::Old | Family::New => {
+            let mac = enet_cfg_mac(ctx, config);
+            if mac.is_none() {
+                warn!("net: no ENETCFG_MAC in enet.cfg; keeping the kernel's random MAC");
+            }
+            mac
+        }
+        // The simulator's interfaces are the host's.
+        _ if ctx.sim => None,
+        _ => {
+            let ifaces = plain_config(ctx, None).ifaces;
+            let name = ifaces.conduit.unwrap_or(ifaces.lan);
+            let mac = kernel_mac(&name);
+            if mac.is_none() {
+                warn!("net: {name} has no MAC address");
+            }
+            mac
+        }
+    };
+    // The simulator needs an identity too (DPMA is keyed by MAC).
+    mac.or(ctx.sim.then_some(MacAddr([0x00, 0x0f, 0xd3, 0x00, 0x00, 0x01])))
+}
+
+fn enet_cfg_mac(ctx: &Context, config: Option<&SharedConfig>) -> Option<MacAddr> {
     if let Some(mac) = config
         .and_then(|c| c.lock().ok().and_then(|s| s.nvdata().mac().ok().flatten()))
     {
@@ -193,11 +221,14 @@ fn read_mac(ctx: &Context, config: Option<&SharedConfig>) -> Option<MacAddr> {
     }
     // Without the config crate (it failed, or safe mode found it broken),
     // read the one line we need directly.
-    let from_file = std::fs::read_to_string(ctx.paths.nvdata.join("etc/enet.cfg"))
+    std::fs::read_to_string(ctx.paths.nvdata.join("etc/enet.cfg"))
         .ok()
-        .and_then(|text| opendeskphone_net::parse_enet_cfg_mac(&text));
-    // The simulator needs an identity too (DPMA is keyed by MAC).
-    from_file.or(ctx.sim.then_some(MacAddr([0x00, 0x0f, 0xd3, 0x00, 0x00, 0x01])))
+        .and_then(|text| opendeskphone_net::parse_enet_cfg_mac(&text))
+}
+
+fn kernel_mac(name: &str) -> Option<MacAddr> {
+    let text = std::fs::read_to_string(format!("/sys/class/net/{name}/address")).ok()?;
+    MacAddr::parse(text.trim()).filter(MacAddr::is_valid_unicast)
 }
 
 /// The plainest configuration: standalone `lan`, DHCP, no VLAN, PC jack down.

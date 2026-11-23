@@ -69,7 +69,6 @@ impl EnetCfg {
         }
     }
 
-    /// `ENETCFG_MAC`, the only place the phone's MAC address is stored.
     pub fn mac(&self) -> Option<[u8; 6]> {
         parse_mac(self.get("ENETCFG_MAC")?)
     }

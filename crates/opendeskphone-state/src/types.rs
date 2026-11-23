@@ -246,7 +246,6 @@ pub struct System {
     pub model: Model,
     pub version: FirmwareVersion,
     pub phase: Phase,
-    /// From `ENETCFG_MAC` in `/nvdata/etc/enet.cfg`.
     pub mac: Option<[u8; 6]>,
     pub hostname: String,
     /// The wall clock has been set by SNTP (not merely restored).
