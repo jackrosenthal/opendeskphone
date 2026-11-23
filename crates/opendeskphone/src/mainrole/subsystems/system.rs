@@ -178,10 +178,21 @@ pub async fn write_config<T: Send + 'static>(
     let config = config.clone();
     tokio::task::spawn_blocking(move || {
         let mut store = config.lock().map_err(|_| CommandError::Failed("configuration store poisoned".into()))?;
-        op(&mut store).map_err(|e| CommandError::Failed(e.to_string()))
+        op(&mut store).map_err(command_error)
     })
     .await
     .unwrap_or_else(|e| Err(CommandError::Failed(format!("configuration write did not finish: {e}"))))
+}
+
+/// A change the store turns away (a frozen setting, or one that is not
+/// stock's) is refused, as a change on a read-only image is: nothing was
+/// merged, so it is not the failed merge that `ConfigInfo::error` reports.
+fn command_error(e: opendeskphone_config::ConfigError) -> CommandError {
+    use opendeskphone_config::ConfigError;
+    match e {
+        ConfigError::Frozen(_) | ConfigError::NotAStockSetting(_) => CommandError::Denied(e.to_string()),
+        e => CommandError::Failed(e.to_string()),
+    }
 }
 
 async fn network_domain(store: Store, net: NetHandle) {
@@ -417,5 +428,39 @@ async fn confirm_trial_when_healthy(ctx: Context) {
             ctx.store.heartbeat(Subsystem::Core);
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opendeskphone_config::{ConfigStore, Nvdata};
+    use opendeskphone_state::ConfigInfo;
+
+    #[tokio::test]
+    async fn a_refused_change_is_not_a_configuration_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = Context::standalone(
+            crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")),
+            crate::model::Model::D60,
+        );
+        ctx.sim = true;
+        let nv = Nvdata::new(dir.path().join("nvdata"));
+        nv.ensure_layout().unwrap();
+        let store = ConfigStore::open(nv, opendeskphone_config::Model::D60, dir.path().join("tmp")).unwrap();
+        let config: SharedConfig = Arc::new(Mutex::new(store));
+        tokio::spawn(config_domain(ctx.clone(), Some(config.clone()), ConfigHub::default()));
+        // The domain takes commands once its task has run.
+        tokio::task::yield_now().await;
+        let set = |id: &str, value: &str| Command::SetSettings { settings: vec![(id.into(), value.into())] };
+
+        // The image's default ringtone is frozen in the base layer.
+        let r = ctx.store.send(set("default_ringtone", "Acheron")).await;
+        assert!(matches!(r, Err(CommandError::Denied(_))), "{r:?}");
+        let r = ctx.store.send(set("opendeskphone_theme", "dusk")).await;
+        assert!(matches!(r, Err(CommandError::Denied(_))), "{r:?}");
+        assert_eq!(ctx.store.get::<ConfigInfo>().error, "");
+        assert_eq!(ctx.store.send(set("active_ringtone", "Acheron")).await, Ok(Reply::Done));
+        assert_eq!(config.lock().unwrap().get("active_ringtone").as_deref(), Some("Acheron"));
     }
 }
