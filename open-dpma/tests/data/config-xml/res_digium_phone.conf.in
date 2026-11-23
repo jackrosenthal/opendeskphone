@@ -210,6 +210,7 @@ opendeskphone_idle_softkeys=call_log, app:parking
 opendeskphone_idle_softkeys=menu,info
 opendeskphone_idle_softkeys=app:two words
 opendeskphone_idle_softkeys=menu,call_log,dnd
+opendeskphone_idle_softkeys=voicemail
 opendeskphone_theme=two words
 opendeskphone_theme= Deep-Sea
 opendeskphone_palette_file=wall.txtpb

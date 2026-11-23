@@ -363,16 +363,30 @@ async fn idle_softkeys() {
     let (status, v) = call(&p, &l, "ConfigService/SetIdleSoftkeys", json!({ "softkeys": list })).await;
     assert_eq!(status, 200, "{v}");
     assert_eq!(v["idleSoftkeys"]["softkeys"], list);
-    // The functions, then the phone's apps; a softkey in effect whose app
-    // the phone does not have (absent, or switched off) is still listed.
+    // The functions, then the phone's apps but the contacts and voicemail
+    // apps; a softkey in effect whose app the phone does not have (absent,
+    // or switched off) is still listed.
     p.store.update::<st::Apps, _>(|a| {
-        a.installed.push(st::AppInfo { name: "queues".into(), display_name: "Queues".into(), ..Default::default() })
+        for (name, display_name) in [("queues", "Queues"), ("voicemail", "Voicemail"), ("contacts", "Contacts")] {
+            a.installed.push(st::AppInfo { name: name.into(), display_name: display_name.into(), ..Default::default() });
+        }
     });
     let (_, v) = call(&p, &l, "ConfigService/GetIdleSoftkeys", json!({})).await;
     let choices = v["idleSoftkeys"]["choices"].as_array().unwrap();
-    assert_eq!(choices[8], json!({ "softkey": { "app": { "name": "queues" } }, "label": "Queues (app)" }));
-    assert_eq!(choices[9], json!({ "softkey": { "app": { "name": "parking" } }, "label": "parking" }));
-    assert_eq!(choices.len(), 10);
+    assert_eq!(choices[8], json!({ "softkey": { "function": "FUNCTION_VOICEMAIL" }, "label": "Voicemail" }));
+    assert_eq!(choices[9], json!({ "softkey": { "app": { "name": "queues" } }, "label": "Queues (app)" }));
+    assert_eq!(choices[10], json!({ "softkey": { "app": { "name": "parking" } }, "label": "parking" }));
+    assert_eq!(choices.len(), 11);
+    // A softkey in effect for the voicemail or the contacts app keeps its
+    // entry, labeled as the other apps are.
+    let apps = json!([{ "app": { "name": "voicemail" } }, { "app": { "name": "contacts" } }]);
+    let (_, v) = call(&p, &l, "ConfigService/SetIdleSoftkeys", json!({ "softkeys": apps })).await;
+    let choices = v["idleSoftkeys"]["choices"].as_array().unwrap();
+    assert_eq!(choices[10], json!({ "softkey": { "app": { "name": "voicemail" } }, "label": "Voicemail (app)" }));
+    assert_eq!(choices[11], json!({ "softkey": { "app": { "name": "contacts" } }, "label": "Contacts (app)" }));
+    assert_eq!(choices.len(), 12);
+    let (_, v) = call(&p, &l, "ConfigService/SetIdleSoftkeys", json!({ "softkeys": list })).await;
+    assert_eq!(v["idleSoftkeys"]["softkeys"], list);
     assert_eq!(v["idleSoftkeys"]["source"], "SETTING_SOURCE_LOCAL");
     assert!(std::fs::read_to_string(&settings).unwrap().contains(
         "idle_softkeys {\n  function: FUNCTION_MENU\n}\nidle_softkeys {\n  app {\n    name: \"parking\"\n  }\n}\nidle_softkeys {\n  function: FUNCTION_DND\n}\n"

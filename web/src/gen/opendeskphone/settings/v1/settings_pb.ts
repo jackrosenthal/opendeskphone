@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file opendeskphone/settings/v1/settings.proto.
  */
 export const file_opendeskphone_settings_v1_settings: GenFile = /*@__PURE__*/
-  fileDesc("CihvcGVuZGVza3Bob25lL3NldHRpbmdzL3YxL3NldHRpbmdzLnByb3RvEhlvcGVuZGVza3Bob25lLnNldHRpbmdzLnYxIu8DChVPcGVuRGVza1Bob25lU2V0dGluZ3MSGAoLc3NoX2VuYWJsZWQYASABKAhIAIgBARIoChtpZ25vcmVfcHJvdmlzaW9uZWRfZmlybXdhcmUYAiABKAhIAYgBARIbCg5zZXJpYWxfY29uc29sZRgDIAEoCEgCiAEBEhwKD21ldHJpY3NfZW5hYmxlZBgEIAEoCEgDiAEBEj0KDWlkbGVfc29mdGtleXMYBSADKAsyJi5vcGVuZGVza3Bob25lLnNldHRpbmdzLnYxLklkbGVTb2Z0a2V5EkMKDWRpc2FibGVkX2FwcHMYBiABKAsyJy5vcGVuZGVza3Bob25lLnNldHRpbmdzLnYxLkRpc2FibGVkQXBwc0gEiAEBEhIKBXRoZW1lGAcgASgJSAWIAQESPQoKdGhlbWVfc3luYxgIIAEoCzIkLm9wZW5kZXNrcGhvbmUuc2V0dGluZ3MudjEuVGhlbWVTeW5jSAaIAQFCDgoMX3NzaF9lbmFibGVkQh4KHF9pZ25vcmVfcHJvdmlzaW9uZWRfZmlybXdhcmVCEQoPX3NlcmlhbF9jb25zb2xlQhIKEF9tZXRyaWNzX2VuYWJsZWRCEAoOX2Rpc2FibGVkX2FwcHNCCAoGX3RoZW1lQg0KC190aGVtZV9zeW5jIl4KCVRoZW1lU3luYxIMCgR1c2VyGAEgASgJEhIKBXRoZW1lGAIgASgJSACIAQESDwoHdmVyc2lvbhgDIAEoBBIUCgxjaGFuZ2VkX3VuaXgYBCABKARCCAoGX3RoZW1lIhMKA0FwcBIMCgRuYW1lGAEgASgJIuwCCgtJZGxlU29mdGtleRJDCghmdW5jdGlvbhgBIAEoDjIvLm9wZW5kZXNrcGhvbmUuc2V0dGluZ3MudjEuSWRsZVNvZnRrZXkuRnVuY3Rpb25IABItCgNhcHAYAiABKAsyHi5vcGVuZGVza3Bob25lLnNldHRpbmdzLnYxLkFwcEgAIt4BCghGdW5jdGlvbhIYChRGVU5DVElPTl9VTlNQRUNJRklFRBAAEhUKEUZVTkNUSU9OX0NBTExfTE9HEAESFQoRRlVOQ1RJT05fQ09OVEFDVFMQAhITCg9GVU5DVElPTl9TVEFUVVMQAxIRCg1GVU5DVElPTl9NRU5VEAQSEQoNRlVOQ1RJT05fQVBQUxAFEhAKDEZVTkNUSU9OX0RORBAGEhQKEEZVTkNUSU9OX0ZPUldBUkQQBxITCg9GVU5DVElPTl9SRURJQUwQCBISCg5GVU5DVElPTl9USEVNRRAJQggKBmFjdGlvbiI8CgxEaXNhYmxlZEFwcHMSLAoEYXBwcxgBIAMoCzIeLm9wZW5kZXNrcGhvbmUuc2V0dGluZ3MudjEuQXBwYgZwcm90bzM");
+  fileDesc("CihvcGVuZGVza3Bob25lL3NldHRpbmdzL3YxL3NldHRpbmdzLnByb3RvEhlvcGVuZGVza3Bob25lLnNldHRpbmdzLnYxIu8DChVPcGVuRGVza1Bob25lU2V0dGluZ3MSGAoLc3NoX2VuYWJsZWQYASABKAhIAIgBARIoChtpZ25vcmVfcHJvdmlzaW9uZWRfZmlybXdhcmUYAiABKAhIAYgBARIbCg5zZXJpYWxfY29uc29sZRgDIAEoCEgCiAEBEhwKD21ldHJpY3NfZW5hYmxlZBgEIAEoCEgDiAEBEj0KDWlkbGVfc29mdGtleXMYBSADKAsyJi5vcGVuZGVza3Bob25lLnNldHRpbmdzLnYxLklkbGVTb2Z0a2V5EkMKDWRpc2FibGVkX2FwcHMYBiABKAsyJy5vcGVuZGVza3Bob25lLnNldHRpbmdzLnYxLkRpc2FibGVkQXBwc0gEiAEBEhIKBXRoZW1lGAcgASgJSAWIAQESPQoKdGhlbWVfc3luYxgIIAEoCzIkLm9wZW5kZXNrcGhvbmUuc2V0dGluZ3MudjEuVGhlbWVTeW5jSAaIAQFCDgoMX3NzaF9lbmFibGVkQh4KHF9pZ25vcmVfcHJvdmlzaW9uZWRfZmlybXdhcmVCEQoPX3NlcmlhbF9jb25zb2xlQhIKEF9tZXRyaWNzX2VuYWJsZWRCEAoOX2Rpc2FibGVkX2FwcHNCCAoGX3RoZW1lQg0KC190aGVtZV9zeW5jIl4KCVRoZW1lU3luYxIMCgR1c2VyGAEgASgJEhIKBXRoZW1lGAIgASgJSACIAQESDwoHdmVyc2lvbhgDIAEoBBIUCgxjaGFuZ2VkX3VuaXgYBCABKARCCAoGX3RoZW1lIhMKA0FwcBIMCgRuYW1lGAEgASgJIoQDCgtJZGxlU29mdGtleRJDCghmdW5jdGlvbhgBIAEoDjIvLm9wZW5kZXNrcGhvbmUuc2V0dGluZ3MudjEuSWRsZVNvZnRrZXkuRnVuY3Rpb25IABItCgNhcHAYAiABKAsyHi5vcGVuZGVza3Bob25lLnNldHRpbmdzLnYxLkFwcEgAIvYBCghGdW5jdGlvbhIYChRGVU5DVElPTl9VTlNQRUNJRklFRBAAEhUKEUZVTkNUSU9OX0NBTExfTE9HEAESFQoRRlVOQ1RJT05fQ09OVEFDVFMQAhITCg9GVU5DVElPTl9TVEFUVVMQAxIRCg1GVU5DVElPTl9NRU5VEAQSEQoNRlVOQ1RJT05fQVBQUxAFEhAKDEZVTkNUSU9OX0RORBAGEhQKEEZVTkNUSU9OX0ZPUldBUkQQBxITCg9GVU5DVElPTl9SRURJQUwQCBISCg5GVU5DVElPTl9USEVNRRAJEhYKEkZVTkNUSU9OX1ZPSUNFTUFJTBAKQggKBmFjdGlvbiI8CgxEaXNhYmxlZEFwcHMSLAoEYXBwcxgBIAMoCzIeLm9wZW5kZXNrcGhvbmUuc2V0dGluZ3MudjEuQXBwYgZwcm90bzM");
 
 /**
  * Settings that only Open Desk Phone has.  Stored on the phone in protobuf
@@ -71,14 +71,16 @@ export type OpenDeskPhoneSettings = Message<"opendeskphone.settings.v1.OpenDeskP
 
   /**
    * The idle screen's softkeys, in order.  Default (also when there are
-   * none here): Call Log, Contacts, Status, Menu, Apps, DND, Forward, and,
-   * on the color models (D60, D62, D65, D80), Theme.  The softkeys of the
-   * "idle" keymap state in the XML configuration are not used.  In this file, one entry per softkey:
+   * none here): on the D80, Call Log, Contacts, Voicemail, Redial, DND,
+   * Forward, Apps, and Menu; on the other models, Call Log, Contacts,
+   * Status, Menu, Apps, DND, Forward, and, on the color models (D60, D62,
+   * D65), Theme.  The softkeys of the "idle" keymap state in the XML
+   * configuration are not used.  In this file, one entry per softkey:
    *   idle_softkeys { function: FUNCTION_CALL_LOG }
    *   idle_softkeys { app { name: "parking" } }
    * The provisioned form is the XML configuration's own, a comma-separated
    * value of call_log, contacts, status, menu, apps, dnd, forward, redial,
-   * theme, and app:<name>:
+   * theme, voicemail, and app:<name>, in which an unknown name is skipped:
    * <setting id="opendeskphone_idle_softkeys" value="call_log,contacts,menu"/>.
    *
    * @generated from field: repeated opendeskphone.settings.v1.IdleSoftkey idle_softkeys = 5;
@@ -319,6 +321,13 @@ export enum IdleSoftkey_Function {
    * @generated from enum value: FUNCTION_THEME = 9;
    */
   THEME = 9,
+
+  /**
+   * This key does what the Messages key does.
+   *
+   * @generated from enum value: FUNCTION_VOICEMAIL = 10;
+   */
+  VOICEMAIL = 10,
 }
 
 /**

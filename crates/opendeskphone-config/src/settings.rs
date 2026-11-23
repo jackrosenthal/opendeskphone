@@ -144,12 +144,13 @@ pub enum IdleFunction {
     /// The theme selector.  Only the color models have themes; on the
     /// others the softkey is not shown.
     Theme = 9,
+    Voicemail = 10,
 }
 
 impl IdleFunction {
-    pub const ALL: [IdleFunction; 9] = {
+    pub const ALL: [IdleFunction; 10] = {
         use IdleFunction::*;
-        [CallLog, Contacts, Status, Menu, Apps, Dnd, Forward, Redial, Theme]
+        [CallLog, Contacts, Status, Menu, Apps, Dnd, Forward, Redial, Voicemail, Theme]
     };
 
     /// The function's name in the provisioned (XML) list.
@@ -164,6 +165,7 @@ impl IdleFunction {
             IdleFunction::Forward => "forward",
             IdleFunction::Redial => "redial",
             IdleFunction::Theme => "theme",
+            IdleFunction::Voicemail => "voicemail",
         }
     }
 
@@ -273,16 +275,16 @@ impl OpenDeskPhoneSettings {
     }
 }
 
-/// The idle softkeys of `model` when none are set: Call Log, Contacts,
-/// Status, Menu, Apps, DND, Forward, and, on the color models (which have
-/// themes), Theme.
+/// The D80's defaults are the home buttons that the touch skin shows
+/// before the phone has a configuration (`IdleSoftkey::touch_defaults` in
+/// opendeskphone-ui), so the two lists must stay the same.
 pub fn default_idle_softkeys(model: crate::Model) -> Vec<IdleSoftkey> {
     use IdleFunction::*;
-    [CallLog, Contacts, Status, Menu, Apps, Dnd, Forward, Theme]
-        .into_iter()
-        .filter(|f| f.on_model(model))
-        .map(IdleSoftkey::Function)
-        .collect()
+    let keys: &[IdleFunction] = match model {
+        crate::Model::D80 => &[CallLog, Contacts, Voicemail, Redial, Dnd, Forward, Apps, Menu],
+        _ => &[CallLog, Contacts, Status, Menu, Apps, Dnd, Forward, Theme],
+    };
+    keys.iter().copied().filter(|f| f.on_model(model)).map(IdleSoftkey::Function).collect()
 }
 
 /// The idle screen's softkeys in effect, where they came from, and whether
@@ -292,26 +294,27 @@ pub struct IdleSoftkeys {
     pub keys: Vec<IdleSoftkey>,
     pub source: SettingSource,
     pub locked: bool,
+    pub skipped: Vec<String>,
 }
 
 /// Parse the provisioned idle softkey list, which is the XML
 /// configuration's comma-separated value (`call_log,contacts,app:parking`):
 /// function names ([`IdleFunction::name`]) and `app:<name>`.  Blank items
-/// are skipped; an unknown name is an error that names it.
-pub fn parse_idle_softkeys(list: &str) -> Result<Vec<IdleSoftkey>, String> {
-    list.split(',')
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(|item| {
-            if let Some(f) = IdleFunction::ALL.into_iter().find(|f| f.name() == item) {
-                Ok(IdleSoftkey::Function(f))
-            } else if let Some(app) = item.strip_prefix("app:").filter(|name| valid_app_name(name)) {
-                Ok(IdleSoftkey::App(app.to_owned()))
-            } else {
-                Err(format!("unknown softkey {item:?}"))
-            }
-        })
-        .collect()
+/// are skipped, and so are items that name no softkey, which are returned
+/// beside the softkeys.
+pub fn parse_idle_softkeys(list: &str) -> (Vec<IdleSoftkey>, Vec<String>) {
+    let mut keys = Vec::new();
+    let mut skipped = Vec::new();
+    for item in list.split(',').map(str::trim).filter(|item| !item.is_empty()) {
+        if let Some(f) = IdleFunction::ALL.into_iter().find(|f| f.name() == item) {
+            keys.push(IdleSoftkey::Function(f));
+        } else if let Some(app) = item.strip_prefix("app:").filter(|name| valid_app_name(name)) {
+            keys.push(IdleSoftkey::App(app.to_owned()));
+        } else {
+            skipped.push(item.to_owned());
+        }
+    }
+    (keys, skipped)
 }
 
 /// Setting IDs a provisioning server uses for a static IPv4 arrangement:
@@ -492,14 +495,15 @@ mod tests {
         let f = IdleSoftkey::Function;
         let app = |name: &str| IdleSoftkey::App(name.to_owned());
         let names = parse_idle_softkeys;
-        assert_eq!(names("call_log, contacts,,app:parking ,dnd").unwrap(), [f(CallLog), f(Contacts), app("parking"), f(Dnd)]);
-        assert_eq!(names("").unwrap(), []);
-        assert_eq!(names("menu,lunch").unwrap_err(), "unknown softkey \"lunch\"");
-        assert!(names("app:").is_err() && names("app:a b").is_err());
+        let skipped = |items: &[&str]| items.iter().map(|i| i.to_string()).collect::<Vec<_>>();
+        assert_eq!(names("call_log, contacts,,app:parking ,dnd"), (vec![f(CallLog), f(Contacts), app("parking"), f(Dnd)], skipped(&[])));
+        assert_eq!(names(""), (vec![], skipped(&[])));
+        assert_eq!(names("menu,lunch"), (vec![f(Menu)], skipped(&["lunch"])));
+        assert_eq!(names("app:, voicemail ,app:a b"), (vec![f(Voicemail)], skipped(&["app:", "app:a b"])));
         // Stock's keymap actions are not softkey names.
-        assert!(names("info").is_err() && names("missed_or_call_log").is_err());
+        assert_eq!(names("info,missed_or_call_log"), (vec![], skipped(&["info", "missed_or_call_log"])));
         let all = IdleFunction::ALL.map(IdleFunction::name).join(",");
-        assert_eq!(names(&all).unwrap(), IdleFunction::ALL.map(f));
+        assert_eq!(names(&all), (IdleFunction::ALL.map(f).to_vec(), skipped(&[])));
     }
 
     #[test]

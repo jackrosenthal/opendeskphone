@@ -146,12 +146,9 @@ fn ui_config(ctx: &Context, cfg: Option<&Config>) -> UiConfig {
     if let Some(v) = cfg.setting_num::<u8>("contrast") {
         out.contrast = v;
     }
-    // (With none configured, the D80 keeps its own home buttons: the
-    // configuration's default softkeys are those of a phone with physical buttons.)
     let softkeys = cfg.idle_softkeys();
-    if softkeys.source != opendeskphone_config::SettingSource::Default || !ctx.store.model().is_touch() {
-        out.idle_softkeys = idle_softkeys(&softkeys.keys);
-    }
+    warn_of_skipped_softkeys(&softkeys.skipped);
+    out.idle_softkeys = idle_softkeys(&softkeys.keys);
     // The voicemail app reaches the server with its application account;
     // without one, the Messages key calls the voicemail number.
     out.voicemail_app_account = cfg.appconfig("voicemail").is_some_and(|app| app.child("account").is_some());
@@ -197,6 +194,19 @@ fn dial_plan(plan: &str) -> Option<DialPlan> {
         .ok()
 }
 
+fn warn_of_skipped_softkeys(skipped: &[String]) {
+    // This also runs every minute, so each name gets one warning.
+    static WARNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut warned = WARNED.lock().unwrap();
+    for item in skipped {
+        if !warned.contains(item) {
+            warned.truncate(15);
+            warned.push(item.clone());
+            log::warn!("opendeskphone_idle_softkeys: {item:?} is skipped: it names no softkey");
+        }
+    }
+}
+
 /// The configured idle softkeys as the UI's.
 fn idle_softkeys(keys: &[opendeskphone_config::IdleSoftkey]) -> Vec<opendeskphone_ui::IdleSoftkey> {
     use opendeskphone_config::{IdleFunction, IdleSoftkey};
@@ -211,6 +221,7 @@ fn idle_softkeys(keys: &[opendeskphone_config::IdleSoftkey]) -> Vec<opendeskphon
             IdleSoftkey::Function(IdleFunction::Forward) => opendeskphone_ui::IdleSoftkey::Forward,
             IdleSoftkey::Function(IdleFunction::Redial) => opendeskphone_ui::IdleSoftkey::Redial,
             IdleSoftkey::Function(IdleFunction::Theme) => opendeskphone_ui::IdleSoftkey::Theme,
+            IdleSoftkey::Function(IdleFunction::Voicemail) => opendeskphone_ui::IdleSoftkey::Voicemail,
             IdleSoftkey::App(name) => opendeskphone_ui::IdleSoftkey::App(name.clone()),
         })
         .collect()
@@ -419,24 +430,16 @@ mod tests {
         Config::from_merged(opendeskphone_config::xml::Element::parse(xml).unwrap(), ctx.model.into(), None)
     }
 
-    /// With no softkeys configured the D80 has its own home buttons, and
-    /// the models with physical buttons the configuration's default softkeys;
-    /// configured softkeys are the softkeys of either.
     #[test]
-    fn the_d80_has_its_own_home_buttons_until_softkeys_are_configured() {
+    fn the_d80s_default_softkeys_are_its_home_buttons() {
         use opendeskphone_ui::IdleSoftkey;
         let dir = tempfile::tempdir().unwrap();
-        let ctx = |model| Context::standalone(crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")), model);
-        let (d80, d65) = (ctx(crate::model::Model::D80), ctx(crate::model::Model::D65));
+        let d80 = Context::standalone(
+            crate::paths::Paths::new(dir.path().join("nvdata"), dir.path().join("run")),
+            crate::model::Model::D80,
+        );
         assert_eq!(ui_config(&d80, None).idle_softkeys, IdleSoftkey::touch_defaults());
         assert_eq!(ui_config(&d80, Some(&config(&d80, "<config/>"))).idle_softkeys, IdleSoftkey::touch_defaults());
-        let keyed = ui_config(&d65, Some(&config(&d65, "<config/>"))).idle_softkeys;
-        assert_eq!(keyed[..3], [IdleSoftkey::CallLog, IdleSoftkey::Contacts, IdleSoftkey::Status]);
-        assert!(!keyed.contains(&IdleSoftkey::Voicemail));
-        let set = "<config><setting id=\"opendeskphone_idle_softkeys\" value=\"menu,redial\"/></config>";
-        for ctx in [&d80, &d65] {
-            assert_eq!(ui_config(ctx, Some(&config(ctx, set))).idle_softkeys, [IdleSoftkey::Menu, IdleSoftkey::Redial]);
-        }
     }
 
     /// The UI is told whether the voicemail app can reach the server (it

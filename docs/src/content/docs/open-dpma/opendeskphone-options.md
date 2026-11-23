@@ -102,9 +102,9 @@ The DNS servers for the static address.
 
 The idle screen softkeys, from the left.
 
-- **Value:** softkeys, separated by commas: functions from the table below, or `app:<name>` to open an app.  A line with an unknown softkey is skipped.
+- **Value:** softkeys, separated by commas: functions from the table below, or `app:<name>` to open an app.  A line with an unknown softkey is skipped.  A phone provisioned by another server skips an unknown softkey and keeps the rest of the list.
 - **Repeatable:** each occurrence appends softkeys.  A softkey listed twice appears once.
-- **Default:** `call_log,contacts,status,menu,apps,dnd,forward`, then `theme` on the color models (D60, D62, D65, and D80).
+- **Default:** `call_log,contacts,voicemail,redial,dnd,forward,apps,menu` on the D80.  On the other models, `call_log,contacts,status,menu,apps,dnd,forward`, then `theme` on the color models (D60, D62, and D65).
 
 | Function | Softkey |
 | --- | --- |
@@ -117,6 +117,9 @@ The idle screen softkeys, from the left.
 | `forward` | The call forwarding menu. |
 | `redial` | Redial. |
 | `theme` | The theme selector.  Color models only. |
+| `voicemail` | Voicemail, as the Messages key opens it: the Voicemail app when the app has its account on the server, or else a call to the voicemail number. |
+
+Use `voicemail` rather than `app:voicemail`, which opens the Voicemail app even when the app has no account to reach the server with.
 
 Example:
 

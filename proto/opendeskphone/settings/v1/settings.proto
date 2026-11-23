@@ -40,14 +40,16 @@ message OpenDeskPhoneSettings {
   // setting, which turns web configuration on and off.
   optional bool metrics_enabled = 4;
   // The idle screen's softkeys, in order.  Default (also when there are
-  // none here): Call Log, Contacts, Status, Menu, Apps, DND, Forward, and,
-  // on the color models (D60, D62, D65, D80), Theme.  The softkeys of the
-  // "idle" keymap state in the XML configuration are not used.  In this file, one entry per softkey:
+  // none here): on the D80, Call Log, Contacts, Voicemail, Redial, DND,
+  // Forward, Apps, and Menu; on the other models, Call Log, Contacts,
+  // Status, Menu, Apps, DND, Forward, and, on the color models (D60, D62,
+  // D65), Theme.  The softkeys of the "idle" keymap state in the XML
+  // configuration are not used.  In this file, one entry per softkey:
   //   idle_softkeys { function: FUNCTION_CALL_LOG }
   //   idle_softkeys { app { name: "parking" } }
   // The provisioned form is the XML configuration's own, a comma-separated
   // value of call_log, contacts, status, menu, apps, dnd, forward, redial,
-  // theme, and app:<name>:
+  // theme, voicemail, and app:<name>, in which an unknown name is skipped:
   // <setting id="opendeskphone_idle_softkeys" value="call_log,contacts,menu"/>.
   repeated IdleSoftkey idle_softkeys = 5;
   // The built-in apps that are switched off.  Such an app is not in the
@@ -137,6 +139,8 @@ message IdleSoftkey {
     // The theme selector.  Only the color models (D60, D62, D65, D80)
     // have themes; on the others the softkey is not shown.
     FUNCTION_THEME = 9;
+    // This key does what the Messages key does.
+    FUNCTION_VOICEMAIL = 10;
   }
   // What the softkey does.  An entry with neither is skipped.
   oneof action {

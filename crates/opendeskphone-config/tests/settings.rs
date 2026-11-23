@@ -330,8 +330,9 @@ fn provisioned_ssh_keys_combine_with_local_ones() {
     assert_eq!(s3.ssh_authorized_keys().unwrap(), [KEY_LOCAL]);
 }
 
-/// The default softkeys end with the theme selector on the models that
-/// have themes (the color ones), and with Forward on the others.
+/// Except on the D80, the default softkeys end with the theme selector on
+/// the models that have themes (the color ones), and with Forward on the
+/// others.
 #[test]
 fn default_idle_softkeys_by_model() {
     use opendeskphone_config::IdleFunction::*;
@@ -343,11 +344,14 @@ fn default_idle_softkeys_by_model() {
         let mut s = ConfigStore::open(nv, model, dir.path().join("tmp")).unwrap();
         let keys = s.config().idle_softkeys().keys;
         let color = matches!(model, Model::D60 | Model::D62 | Model::D65 | Model::D80);
-        assert_eq!(keys[..7], common, "{model:?}");
-        if color {
+        if model == Model::D80 {
+            let home = [CallLog, Contacts, Voicemail, Redial, Dnd, Forward, Apps, Menu].map(IdleSoftkey::Function);
+            assert_eq!(keys, home);
+        } else if color {
+            assert_eq!(keys[..7], common, "{model:?}");
             assert_eq!(keys[7..], [IdleSoftkey::Function(Theme)], "{model:?}: Theme after Forward");
         } else {
-            assert_eq!(keys.len(), 7, "{model:?}: no theme selector");
+            assert_eq!(keys, common, "{model:?}: no theme selector");
         }
         // A list that names it is the list on every model (a gray
         // model's screen leaves the softkey out).
@@ -393,17 +397,29 @@ fn idle_softkeys_sources() {
     assert_eq!((c.idle_softkeys().source, c.idle_softkeys().locked), (SettingSource::Local, false));
     assert!(nv.read_string(FILE).unwrap().unwrap().contains("idle_softkeys {\n  function: FUNCTION_DND\n}\nidle_softkeys {\n  app {\n    name: \"queues\"\n  }\n}\n"));
 
-    // A provisioned list that does not parse counts as not set, and so
+    // A provisioned list with no softkey in it counts as not set, and so
     // does a local list with nothing in it.
-    s.apply_fetched(r#"<config><setting id="opendeskphone_idle_softkeys" value="menu,lunch"/></config>"#).unwrap();
-    assert_eq!(s.config().idle_softkeys().keys, local);
+    s.apply_fetched(r#"<config><setting id="opendeskphone_idle_softkeys" value="lunch,app:"/></config>"#).unwrap();
+    let c = s.config();
+    assert_eq!((c.idle_softkeys().keys, c.idle_softkeys().skipped), (local.to_vec(), vec!["lunch".to_owned(), "app:".to_owned()]));
     s.apply_fetched(r#"<config><setting id="opendeskphone_idle_softkeys" value="menu, apps"/></config>"#).unwrap();
     let c = s.update_opendeskphone_settings(|d| d.set_idle_softkeys(&[])).unwrap();
     assert_eq!(c.idle_softkeys().keys, [f(Menu), f(Apps)]);
 
-    // Frozen by the server: the local list has no effect.
+    // An unknown name in a provisioned list is skipped, and the rest is
+    // the list.
+    s.apply_fetched(r#"<config><setting id="opendeskphone_idle_softkeys" value="menu,lunch"/></config>"#).unwrap();
+    let c = s.config().idle_softkeys();
+    assert_eq!((c.keys, c.source, c.skipped), (vec![f(Menu)], SettingSource::Provisioned, vec!["lunch".to_owned()]));
+
+    // Frozen by the server: the local list has no effect, also when the
+    // server's list names something unknown.
     s.update_opendeskphone_settings(|d| d.set_idle_softkeys(&[f(Dnd)])).unwrap();
     s.apply_fetched(r#"<config><setting id="opendeskphone_idle_softkeys" value="call_log" conflict="freeze"/></config>"#).unwrap();
+    let c = s.config();
+    assert_eq!(c.idle_softkeys().keys, [f(CallLog)]);
+    assert_eq!((c.idle_softkeys().source, c.idle_softkeys().locked), (SettingSource::Provisioned, true));
+    s.apply_fetched(r#"<config><setting id="opendeskphone_idle_softkeys" value="call_log,lunch" conflict="freeze"/></config>"#).unwrap();
     let c = s.config();
     assert_eq!(c.idle_softkeys().keys, [f(CallLog)]);
     assert_eq!((c.idle_softkeys().source, c.idle_softkeys().locked), (SettingSource::Provisioned, true));

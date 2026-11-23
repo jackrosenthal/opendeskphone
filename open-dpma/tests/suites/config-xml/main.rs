@@ -208,7 +208,7 @@ const OPENDESKPHONE_SETTINGS: &str = concat!(
     "<setting id=\"opendeskphone_static_gateway\" value=\"192.0.2.1\" conflict=\"freeze\" />\n",
     "<setting id=\"opendeskphone_static_dns\" value=\"192.0.2.1,192.0.2.2,192.0.2.4\" conflict=\"freeze\" />\n",
     "<setting id=\"opendeskphone_disabled_apps\" value=\"calendar,parking,queues\" conflict=\"freeze\" />\n",
-    "<setting id=\"opendeskphone_idle_softkeys\" value=\"call_log,app:parking,menu,dnd\" conflict=\"freeze\" />\n",
+    "<setting id=\"opendeskphone_idle_softkeys\" value=\"call_log,app:parking,menu,dnd,voicemail\" conflict=\"freeze\" />\n",
     "<setting id=\"opendeskphone_theme\" value=\"deep-sea\" conflict=\"freeze\" />\n",
 );
 const OPENDESKPHONE_KEYS: &str = concat!(

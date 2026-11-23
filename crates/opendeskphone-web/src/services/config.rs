@@ -162,12 +162,14 @@ fn function_label(function: IdleFunction) -> &'static str {
         IdleFunction::Forward => "Forward",
         IdleFunction::Redial => "Redial",
         IdleFunction::Theme => "Theme",
+        IdleFunction::Voicemail => "Voicemail",
     }
 }
 
 /// The softkeys in effect and every softkey the phone offers: the
 /// functions the model has (the theme selector only on a color model),
-/// then an entry per app (the contacts app is "contacts").
+/// then an entry per app but the contacts and voicemail apps, which the
+/// functions of those names stand for.
 fn idle_softkeys(app: &App, cfg: &opendeskphone_config::Config) -> pb::IdleSoftkeys {
     let set = cfg.idle_softkeys();
     let choice =
@@ -178,19 +180,22 @@ fn idle_softkeys(app: &App, cfg: &opendeskphone_config::Config) -> pb::IdleSoftk
         functions.map(|f| choice(&IdleSoftkey::Function(f), function_label(f))).collect();
     // The apps the phone has (one that is switched off is not among them).
     let apps = app.store.get::<st::Apps>();
-    for a in apps.installed.iter().filter(|a| a.name != "contacts") {
-        let label = if a.display_name.is_empty() { &a.name } else { &a.display_name };
+    let app_label = |a: &st::AppInfo| format!("{} (app)", if a.display_name.is_empty() { &a.name } else { &a.display_name });
+    for a in apps.installed.iter().filter(|a| !matches!(a.name.as_str(), "contacts" | "voicemail")) {
         let key = IdleSoftkey::App(a.name.clone());
-        choices.push(choice(&key, &format!("{label} (app)")));
+        choices.push(choice(&key, &app_label(a)));
         offered.push(key);
     }
-    // A softkey in effect for an app the phone does not have keeps its
-    // entry (the phone does not show it).
+    // A softkey in effect for an app that is not offered keeps its entry:
+    // one for the contacts or the voicemail app, labeled as the other apps
+    // are, and one for an app the phone does not have (the phone does not
+    // show it), labeled with the app's name.
     for key in &set.keys {
         if let IdleSoftkey::App(name) = key
             && !offered.contains(key)
         {
-            choices.push(choice(key, name));
+            let label = apps.installed.iter().find(|a| &a.name == name).map(app_label).unwrap_or_else(|| name.clone());
+            choices.push(choice(key, &label));
             offered.push(key.clone());
         }
     }

@@ -487,25 +487,24 @@ impl Config {
     /// The idle screen's softkeys.  The sources combine as for the other
     /// Open Desk Phone settings: a frozen provisioned list wins, then the local
     /// list, then an ordinary provisioned list; with none of those, the
-    /// model's default list ([`settings::default_idle_softkeys`]).  A provisioned
-    /// list that does not parse counts as not set.  The `idle` keymap
-    /// state is not used: a DPMA server sends one to every phone, whatever
-    /// its administrator set, so it does not count as a list that was set.
+    /// model's default list ([`settings::default_idle_softkeys`]).  A
+    /// provisioned list with no softkey left counts as not set.  The `idle`
+    /// keymap state is not used: a DPMA server sends one to every phone,
+    /// whatever its administrator set, so it does not count as a list that
+    /// was set.
     pub fn idle_softkeys(&self) -> IdleSoftkeys {
         let id = settings::PROVISIONED_IDLE_SOFTKEYS;
-        let provisioned = self.setting(id).and_then(|l| settings::parse_idle_softkeys(l).ok()).filter(|k| !k.is_empty());
+        let (provisioned, skipped) = self.setting(id).map(settings::parse_idle_softkeys).unwrap_or_default();
+        let provisioned = Some(provisioned).filter(|k| !k.is_empty());
         let frozen = provisioned.is_some() && self.setting_frozen(id);
         let local = Some(self.settings.local_idle_softkeys()).filter(|k| !k.is_empty());
-        match (provisioned, local) {
-            (Some(keys), _) if frozen => IdleSoftkeys { keys, source: SettingSource::Provisioned, locked: true },
-            (_, Some(keys)) => IdleSoftkeys { keys, source: SettingSource::Local, locked: false },
-            (Some(keys), None) => IdleSoftkeys { keys, source: SettingSource::Provisioned, locked: false },
-            (None, None) => IdleSoftkeys {
-                keys: settings::default_idle_softkeys(self.model),
-                source: SettingSource::Default,
-                locked: false,
-            },
-        }
+        let (keys, source, locked) = match (provisioned, local) {
+            (Some(keys), _) if frozen => (keys, SettingSource::Provisioned, true),
+            (_, Some(keys)) => (keys, SettingSource::Local, false),
+            (Some(keys), None) => (keys, SettingSource::Provisioned, false),
+            (None, None) => (settings::default_idle_softkeys(self.model), SettingSource::Default, false),
+        };
+        IdleSoftkeys { keys, source, locked, skipped }
     }
 
     /// The built-in apps that are switched off (default: none): such an
