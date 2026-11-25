@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <img alt="The D40, D50, D60, D65, and D70 running Open Desk Phone, at their true relative sizes" src=".github/readme/phones.webp">
+  <img alt="The D40, D50, D60, D65, D70, and D80 running Open Desk Phone, at their true relative sizes" src=".github/readme/phones.webp">
 </p>
 
 Open Desk Phone is open-source firmware that replaces the stock firmware on the Digium D40, D45, D50, D60, D62, D65, and D70 desk phones.  Open Desk Phone can be installed as an ordinary firmware update over stock firmware.  Open Desk Phone is not affiliated with or endorsed by Digium or Sangoma.

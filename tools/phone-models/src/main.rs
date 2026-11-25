@@ -1,4 +1,4 @@
-//! Builds the 3D models of the D40, D50, D60, D65, and D70 that the
+//! Builds the 3D models of the D40, D50, D60, D65, D70, and D80 that the
 //! documentation's homepage turns: one binary glTF file per model, and
 //! `models.json`, which lists the models in the order the page shows them.
 //!
@@ -58,13 +58,16 @@ fn lcd(p: &screens::Picture) -> Vec<u8> {
 }
 
 fn screen_png(model: ModelId, p: &screens::Picture) -> Vec<u8> {
-    let color = matches!(model, ModelId::D60 | ModelId::D65);
+    let color = matches!(model, ModelId::D60 | ModelId::D65 | ModelId::D80);
     png(p.width, p.height, false, &if color { p.rgb.clone() } else { lcd(p) })
 }
 
-/// The legends' picture, cut down to the inked part, and that part's box
-/// on the face (the panel's units).
-fn legends_png(p: &Panel, fonts: &Path) -> Result<(Vec<u8>, [f64; 4]), String> {
+/// The legends' picture, cut down to the inked part; none for a panel
+/// without legends.
+fn legends_png(p: &Panel, fonts: &Path) -> Result<Option<phone::Print>, String> {
+    if p.keys.iter().all(|k| k.legend.is_none()) {
+        return Ok(None);
+    }
     let pic = legends::rasterize(&legends::svg(p, LEGEND_PX, false), fonts)?;
     let (w, h) = (pic.width as usize, pic.height as usize);
     let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
@@ -84,7 +87,7 @@ fn legends_png(p: &Panel, fonts: &Path) -> Result<(Vec<u8>, [f64; 4]), String> {
     let [ex0, ey0, _, _] = p.extent();
     let unit = |v: usize| v as f64 / LEGEND_PX;
     let bx = [ex0 + unit(x0), ey0 + unit(y0), ex0 + unit(x1), ey0 + unit(y1)];
-    Ok((png((x1 - x0) as u32, (y1 - y0) as u32, true, &px), bx))
+    Ok(Some(phone::Print { png: png((x1 - x0) as u32, (y1 - y0) as u32, true, &px), at: bx }))
 }
 
 /// The page rocker's print over the rocker's own color, cut to the key's
@@ -121,13 +124,12 @@ fn main() -> Result<(), String> {
         let theme = match model {
             ModelId::D60 => "tides",
             ModelId::D65 => "harbor",
+            ModelId::D80 => "aurora",
             _ => "",
         };
         let shots = screens::idle(model, theme);
-        let (legends, legends_box) = legends_png(&p, &fonts)?;
         let tex = phone::Textures {
-            legends,
-            legends_box,
+            legends: legends_png(&p, &fonts)?,
             rocker: rocker_png(&p, &fonts)?,
             screen: screen_png(model, &shots.main),
             side_screen: shots.side.as_ref().map(|s| screen_png(model, s)),

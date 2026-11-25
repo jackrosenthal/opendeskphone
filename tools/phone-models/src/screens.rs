@@ -34,6 +34,7 @@ pub fn idle(model: ModelId, theme: &str) -> Screens {
         ModelId::D60 => Model::D60,
         ModelId::D65 => Model::D65,
         ModelId::D70 => Model::D70,
+        ModelId::D80 => Model::D80,
     };
     let mut hal = Hal::sim(model);
     let sim = hal.sim.clone().expect("the simulator");

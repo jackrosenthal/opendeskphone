@@ -409,6 +409,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "opendeskphone-svg"
+version = "3.1.0"
+dependencies = [
+ "resvg",
+]
+
+[[package]]
 name = "opendeskphone-ui"
 version = "3.1.0"
 dependencies = [
@@ -417,8 +424,8 @@ dependencies = [
  "log",
  "opendeskphone-hal",
  "opendeskphone-state",
+ "opendeskphone-svg",
  "png",
- "resvg",
 ]
 
 [[package]]

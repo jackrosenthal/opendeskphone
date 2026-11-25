@@ -10,7 +10,7 @@
 //! across, y toward the back, z up).
 
 use crate::geom::{self, Mesh, P2, V3, v3};
-use crate::panel::{Fill, Key, Panel, Parts};
+use crate::panel::{Fill, Key, NEW_FACE, NEW_UNIT_MM, Panel, Parts};
 use std::f64::consts::PI;
 
 pub const TILT_DEG: f64 = 50.0;
@@ -90,11 +90,16 @@ pub fn srgb_bytes(c: [f64; 3]) -> [u8; 3] {
     })
 }
 
+/// A picture printed over part of the face: a PNG file, and the box the
+/// picture covers (the panel's units: x0, y0, x1, y1).
+pub struct Print {
+    pub png: Vec<u8>,
+    pub at: [f64; 4],
+}
+
 /// The pictures the model's materials use, as PNG files.
 pub struct Textures {
-    pub legends: Vec<u8>,
-    /// The legends' box on the face (the panel's units: x0, y0, x1, y1).
-    pub legends_box: [f64; 4],
+    pub legends: Option<Print>,
     pub rocker: Option<Vec<u8>>,
     pub screen: Vec<u8>,
     pub side_screen: Option<Vec<u8>>,
@@ -372,21 +377,24 @@ impl Builder<'_> {
         self.bar(m, c - along * (long / 2.0), c + along * (long / 2.0), v3(1.0, 0.0, 0.0), wide, high, 0.8);
     }
 
-    /// The new family's stand (D60, D65): one bent sheet in the shape of a
+    /// The stand of the D60, D65, and D80: one bent sheet in the shape of a
     /// tent, two plates the same width meeting at a rounded ridge a little
     /// above the middle of the body's back.  The front plate lies against
     /// the body's back, with two slots; the back plate drops to the desk
     /// behind.  Each plate's lower part is open, a window between two side
     /// bars, and each plate ends in a rail along the desk that joins the
     /// side bars, with a rubber foot at each end.  `body`: the face's box,
-    /// x0, y0 (bottom), x1, y1 (top), in face millimeters.
-    fn tent(&mut self, [x0, y0, x1, y1]: [f64; 4], desk_z: f64, m: usize, m_pad: usize) {
+    /// x0, y0 (bottom), x1, y1 (top), in face millimeters; the stand is
+    /// centered under the box's bottom edge.
+    fn tent(&mut self, [x0, y0, x1, _]: [f64; 4], desk_z: f64, m: usize, m_pad: usize) {
         const T: f64 = 3.0; // the sheet's thickness
         const BAR: f64 = 13.0; // the side bars' and the rails' width
-        let (w, h) = (x1 - x0, y1 - y0);
+        // One stand for every model: sized for the D60's and D65's face.
+        let [fx0, fy0, fx1, fy1] = NEW_FACE;
+        let (w, h) = ((fx1 - fx0) * NEW_UNIT_MM, (fy1 - fy0) * NEW_UNIT_MM);
         let cx = (x0 + x1) / 2.0;
-        // Narrower than the body, so that from the front the body hides the
-        // stand.
+        // Narrower than the D60's and D65's body, so that from the front the
+        // body hides the stand.
         let half = 0.30 * w;
         let (outer, inner) = (-BODY_T - T, -BODY_T + 0.3);
         let ridge = y0 + 0.56 * h;
@@ -720,6 +728,27 @@ pub fn build(p: &Panel, tex: Textures) -> Model {
             }
             (top, bottom, left, right) = (y0, y1, x0, x1);
         }
+        Parts::Touch(t) => {
+            let [x0, y0, x1, y1, r] = t.face;
+            let pts = b.rrect(x0, y0, x1 - x0, y1 - y0, [r; 4]);
+            b.prism(pts, -BODY_T, 0.0, m_body, 2.2, 4);
+            let pts = b.face(&t.cradle);
+            b.prism(pts, -BODY_T + 1.5, WING_Z, m_body, 2.0, 4);
+            for &[x, y, w, h] in &t.grille {
+                let pts = b.rrect(x, y, w, h, [w / 2.0 - 0.01; 4]);
+                b.prism(pts, WING_Z - 0.2, WING_Z + 0.15, m_cup, 0.0, 0);
+            }
+            let i = t.glass_inset;
+            let pts = b.rrect(x0 + i, y0 + i, x1 - x0 - 2.0 * i, y1 - y0 - 2.0 * i, [r - i; 4]);
+            b.prism(pts, -1.0, panel_z, m_gloss, 0.5, 3);
+            let m_screen = screen(&mut b, "screen", tex.screen.clone(), 1.0);
+            b.plane(p.display, panel_z + 0.03, m_screen);
+            let [mx, my, mw, mh] = t.mwi;
+            let m_mwi = b.material(mat("message lamp", [0.5, 0.02, 0.02], 0.25).emit([1.0, 0.07, 0.04], 2.2));
+            let pts = b.rrect(mx, my - 2.2, mw, mh + 3.5, [1.5; 4]);
+            b.prism(pts, -3.5, panel_z + 0.25, m_mwi, 0.3, 3);
+            (top, bottom, left, right) = (y0, y1, x0, x1);
+        }
         Parts::Old(o) => {
             let pts = b.face(&o.body);
             b.prism(pts, -BODY_T, 0.0, m_body, 2.2, 4);
@@ -800,13 +829,14 @@ pub fn build(p: &Panel, tex: Textures) -> Model {
     }
 
     // The legends, as one print floating on the key tops.
-    b.images.push(tex.legends);
-    let mut legends = mat("legends", [1.0; 3], 0.6);
-    legends.base_texture = Some(b.images.len() - 1);
-    legends.casts_shadow = false;
-    let m_legends = b.material(legends);
-    let [ex0, ey0, ex1, ey1] = tex.legends_box;
-    b.plane([ex0, ey0, ex1 - ex0, ey1 - ey0], panel_z + KEY_H + 0.04, m_legends);
+    if let Some(Print { png, at: [ex0, ey0, ex1, ey1] }) = tex.legends {
+        b.images.push(png);
+        let mut legends = mat("legends", [1.0; 3], 0.6);
+        legends.base_texture = Some(b.images.len() - 1);
+        legends.casts_shadow = false;
+        let m_legends = b.material(legends);
+        b.plane([ex0, ey0, ex1 - ex0, ey1 - ey0], panel_z + KEY_H + 0.04, m_legends);
+    }
 
     let mouth = b.handset(m_handset, m_cup);
 

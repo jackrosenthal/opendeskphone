@@ -1,4 +1,4 @@
-//! The front panels of the D40, D50, D60, D65, and D70, as data.
+//! The front panels of the D40, D50, D60, D65, D70, and D80, as data.
 //!
 //! The layouts are those of `web/src/lib/phones.ts` (the drawing the web
 //! interface's Screen page uses, corrected against front photographs).
@@ -12,6 +12,9 @@
 //! - Old (D40, D50, D70): `oldFamily()` in phones.ts.  The drawing has no
 //!   physical scale; one unit is taken as 0.36 mm, which gives the D40, D50,
 //!   and D70 the datasheet's widths (8.25, 10.5, and 12.5 inches).
+//! - Touch (D80): measured from a retailer's front photograph, whose pixels
+//!   are the units.  One unit is 0.229 mm, which gives the datasheet's
+//!   width and height (22.5 and 20.8 cm).  The D80 has no keys.
 
 pub type P2 = (f64, f64);
 
@@ -22,10 +25,11 @@ pub enum ModelId {
     D60,
     D65,
     D70,
+    D80,
 }
 
 impl ModelId {
-    pub const ALL: [ModelId; 5] = [ModelId::D40, ModelId::D50, ModelId::D60, ModelId::D65, ModelId::D70];
+    pub const ALL: [ModelId; 6] = [ModelId::D40, ModelId::D50, ModelId::D60, ModelId::D65, ModelId::D70, ModelId::D80];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -34,6 +38,7 @@ impl ModelId {
             ModelId::D60 => "D60",
             ModelId::D65 => "D65",
             ModelId::D70 => "D70",
+            ModelId::D80 => "D80",
         }
     }
 }
@@ -100,9 +105,23 @@ pub struct OldParts {
     pub mwi: Vec<P2>,
 }
 
+pub struct TouchParts {
+    /// The body's box (x0, y0, x1, y1) and the corners' radius.
+    pub face: [f64; 5],
+    /// The glass's inset from the body's edge.
+    pub glass_inset: f64,
+    /// The cradle's outline: left of the body, and under the body's left
+    /// edge.
+    pub cradle: Vec<P2>,
+    /// The speaker's slots in the cradle: x, y, w, h.
+    pub grille: Vec<[f64; 4]>,
+    pub mwi: [f64; 4],
+}
+
 pub enum Parts {
     New(NewParts),
     Old(OldParts),
+    Touch(TouchParts),
 }
 
 pub struct Panel {
@@ -126,8 +145,9 @@ pub struct Panel {
 }
 
 impl Panel {
+    /// Black, on the tent stand: the new family, and the D80.
     pub fn is_new(&self) -> bool {
-        matches!(self.parts, Parts::New(_))
+        matches!(self.parts, Parts::New(_) | Parts::Touch(_))
     }
 
     /// The box the legends cover (units): the whole outline of the phone's
@@ -135,6 +155,7 @@ impl Panel {
     pub fn extent(&self) -> [f64; 4] {
         match &self.parts {
             Parts::New(n) => n.face,
+            Parts::Touch(t) => [t.face[0], t.face[1], t.face[2], t.face[3]],
             Parts::Old(o) => {
                 let (lo, hi) = x_range(&o.body);
                 [lo, o.housing_box[1], hi, o.body_bottom]
@@ -265,6 +286,10 @@ fn path(start: P2, segs: &[Seg]) -> Vec<P2> {
 
 // ------------------------------------------------------------ new family
 
+/// The new family's face (x0, y0, x1, y1), and one unit in millimeters.
+pub const NEW_FACE: [f64; 4] = [268.0, 112.0, 758.0, 715.0];
+pub const NEW_UNIT_MM: f64 = 95.2 / 303.0;
+
 fn new_family(line_keys: usize, rocker: bool) -> Panel {
     let mut keys = Vec::new();
     let line_pos = [(655.0, 168.0), (697.0, 190.0), (655.0, 215.0), (697.0, 240.0), (655.0, 265.0), (697.0, 289.0)];
@@ -303,12 +328,12 @@ fn new_family(line_keys: usize, rocker: bool) -> Panel {
     }
     Panel {
         parts: Parts::New(NewParts {
-            face: [268.0, 112.0, 758.0, 715.0],
+            face: NEW_FACE,
             split: 411.0,
             mwi: [678.0, 112.0, 28.0, 6.0],
             nav_disc: [648.0, 514.0, 37.0],
         }),
-        unit_mm: 95.2 / 303.0,
+        unit_mm: NEW_UNIT_MM,
         center: (410.0, 410.0),
         keys,
         display: [312.0, 155.0, 303.0, 303.0 * 272.0 / 480.0],
@@ -702,6 +727,49 @@ fn old_family(
     }
 }
 
+// ------------------------------------------------------------------- D80
+
+/// The D80: a glass slab around an upright 7-inch 800x1280 display, and a
+/// cradle at the slab's left that bulges out past the handset.
+fn d80() -> Panel {
+    const UNIT: f64 = 0.229;
+    let diag = 7.0 * 25.4 / UNIT;
+    let (dw, dh) = (diag * 800.0 / 800f64.hypot(1280.0), diag * 1280.0 / 800f64.hypot(1280.0));
+    let cradle = path(
+        (380.0, 200.0),
+        &[
+            Seg::L((100.0, 200.0)),
+            Seg::Q((70.0, 200.0), (63.0, 290.0)),
+            Seg::Q((20.0, 380.0), (8.0, 580.0)),
+            Seg::Q((4.0, 690.0), (50.0, 800.0)),
+            Seg::Q((78.0, 845.0), (130.0, 870.0)),
+            Seg::Q((170.0, 905.0), (230.0, 910.0)),
+            Seg::L((380.0, 910.0)),
+        ],
+    );
+    let (lo, hi) = x_range(&cradle);
+    Panel {
+        parts: Parts::Touch(TouchParts {
+            face: [354.0, 61.0, 990.0, 947.0, 29.0],
+            glass_inset: 3.0,
+            cradle,
+            grille: [(52.0, 470.0, 50.0), (62.0, 450.0, 90.0), (72.0, 440.0, 110.0)].map(|(x, y, h)| [x, y, 5.0, h]).to_vec(),
+            mwi: [862.0, 61.0, 38.0, 6.0],
+        }),
+        unit_mm: UNIT,
+        center: (500.0, 500.0),
+        keys: Vec::new(),
+        display: [672.0 - dw / 2.0, 501.0 - dh / 2.0, dw, dh],
+        side: None,
+        wing: [lo, 200.0, hi, 910.0],
+        cups: Vec::new(),
+        handset: [82.0, 48.0, 223.0, 893.0],
+        bars: Vec::new(),
+        bar_splits: Vec::new(),
+        lines: Vec::new(),
+    }
+}
+
 const TWO: &[&[&str]] = &[&["msgs", "xfer"], &["redial", "hold"]];
 const THREE: &[&[&str]] = &[&["msgs", "xfer", "conf"], &["redial", "hold", "info"]];
 
@@ -712,5 +780,6 @@ pub fn panel(model: ModelId) -> Panel {
         ModelId::D60 => new_family(2, false),
         ModelId::D65 => new_family(6, true),
         ModelId::D70 => old_family(model, 6, THREE, false, Some(&["apps", "dir", "menu"]), Some("status"), Some(Wing::Display)),
+        ModelId::D80 => d80(),
     }
 }
