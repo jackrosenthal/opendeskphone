@@ -310,7 +310,7 @@ fn read_file(path: &std::path::Path) -> Vec<u8> {
 /// Counts how often the firmware check asks what is running.
 struct CountingInstaller(std::sync::atomic::AtomicUsize);
 impl opendeskphone_dpma::firmware::FirmwareInstaller for CountingInstaller {
-    fn running_image(&self) -> Result<opendeskphone_dpma::firmware::ImageSum, String> {
+    fn running_image(&self) -> Result<opendeskphone_dpma::firmware::ImageChecksum, String> {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Err("test".into())
     }

@@ -478,10 +478,9 @@ mod tests {
         assert!(opendeskphone_recovery::sig::has_footer(&mut std::io::Cursor::new(&z), z.len() as u64));
         let mut archive = opendeskphone_recovery::zip::Archive::open(std::io::Cursor::new(&z), z.len() as u64).unwrap();
         assert_eq!(archive.read("recovery.img", RECOVERY_PARTITION).unwrap(), recovery);
-        // The checksum in the metadata at the start is the one the
-        // recovery records from the archive's directory once installed.
-        let (name, metadata) = opendeskphone_recovery::zip::read_first(&z[..], 4096).unwrap();
-        assert_eq!(name, opendeskphone_recovery::METADATA_ENTRY);
+        // The checksum in the metadata is the one the recovery records from
+        // the archive's directory once installed.
+        let metadata = archive.read(opendeskphone_recovery::METADATA_ENTRY, 4096).unwrap();
         let checksum = opendeskphone_recovery::package_checksum(&archive).unwrap();
         assert!(String::from_utf8(metadata).unwrap().contains(&format!("\nopendeskphone-checksum={checksum}\n")));
         assert!(package(&boot, &recovery, b"not squashfs", b"\x7fELF", "3_1_0", KEY, CERT).is_err());

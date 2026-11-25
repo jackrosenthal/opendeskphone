@@ -1,7 +1,7 @@
 //! The flash side of a provisioned firmware update, over
 //! `opendeskphone-update`.
 
-use crate::firmware::{FirmwareInstaller, ImageSum, InstallError};
+use crate::firmware::{FirmwareInstaller, ImageChecksum, InstallError, checksum_of};
 use opendeskphone_hal::Mtd;
 use opendeskphone_state::{Model, Store};
 use opendeskphone_update::{UpdateError, Updater, bank, ctrl};
@@ -27,12 +27,12 @@ impl FirmwareInstaller for MtdInstaller {
     /// reading the whole image back from flash, so it is trusted without
     /// reading 45 MiB of flash at every check.  A D80 has no `ctrl`: its
     /// recovery records the checksum of the image it installed.
-    fn running_image(&self) -> Result<ImageSum, String> {
+    fn running_image(&self) -> Result<ImageChecksum, String> {
         #[cfg(feature = "d80")]
         if self.model.is_touch() {
             let places = opendeskphone_update::d80::Places::for_own_dir(&self.own_dir);
             let checksum = opendeskphone_update::d80::installed(&places).ok_or("the recovery has recorded no image that it installed")?;
-            return ImageSum::parse(&checksum).ok_or_else(|| format!("the recovery's record of the image it installed is not a checksum: {checksum}"));
+            return checksum.parse().map_err(|()| format!("the recovery's record of the image it installed is not a checksum: {checksum}"));
         }
         let mut mtd = self.mtd.lock().map_err(|_| "flash lock poisoned".to_string())?;
         let parts = mtd.partitions().map_err(|e| e.to_string())?;
@@ -42,7 +42,7 @@ impl FirmwareInstaller for MtdInstaller {
         let header = record.sides[running.index() as usize]
             .header()
             .ok_or("the running bank has no valid header in ctrl")?;
-        Ok(ImageSum::of(&header))
+        Ok(checksum_of(&header))
     }
 
     fn install(&self, image: &mut dyn Read) -> Result<(), InstallError> {

@@ -41,9 +41,8 @@
 //! the package was installed, and leaves the result in
 //! `recovery/last_install` ([`status`]).  Of a package it installed, it
 //! records the checksum in `recovery/installed` ([`installed`]), which
-//! provisioning compares with the checksum of the image that it offers
-//! ([`checksum_from_start`]).  There is no trial boot: a D80 has no other
-//! system to return to.
+//! provisioning compares with the checksum of the image that it offers.
+//! There is no trial boot: a D80 has no other system to return to.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -318,21 +317,6 @@ fn leave(package: &Path, recovery: &[u8], places: &Places, progress: &mut dyn Fn
         let _ = std::fs::remove_file(&command_file);
     }
     result
-}
-
-/// The checksum of a D80 image's package (`opendeskphone_recovery::checksum`),
-/// from its start, as a download has it: what the metadata, the package's
-/// first file, says.  A package that does not say, as stock firmware's,
-/// is named by the CRC-32 and the length of its metadata, and zeros for
-/// the root file system, which no package of ours has.
-pub fn checksum_from_start<R: Read>(package: R) -> Result<String> {
-    let (name, metadata) = zip::read_first(package, 4096).map_err(image)?;
-    if name != opendeskphone_recovery::METADATA_ENTRY {
-        return Err(image(format!("the package starts with {name}, not its metadata")));
-    }
-    let key = format!("{}=", opendeskphone_recovery::CHECKSUM_KEY);
-    let said = String::from_utf8_lossy(&metadata).lines().find_map(|line| line.strip_prefix(&key).map(|c| c.trim().to_string()));
-    Ok(said.unwrap_or_else(|| opendeskphone_recovery::checksum(!eff::crc::crc(&metadata), metadata.len() as u64, 0, 0)))
 }
 
 /// The checksum of the package that the recovery last installed, which is
@@ -611,24 +595,5 @@ mod tests {
         let banks = Options { allow_unbootable_other: true, ..Options::default() };
         let refused = on_d80(&mut flash, &own, &places).options(banks).install_eff(&image[..]).unwrap_err();
         assert!(refused.to_string().contains("no firmware banks"), "{refused}");
-    }
-
-    #[test]
-    fn a_package_is_named_by_the_checksum_its_metadata_states() {
-        let starting_with = |metadata: &str| {
-            zip::write(&[
-                FileEntry { name: opendeskphone_recovery::METADATA_ENTRY, data: metadata.as_bytes(), executable: false },
-                FileEntry { name: "boot.img", data: &[1; 100], executable: false },
-            ])
-            .unwrap()
-        };
-        let ours = starting_with("pre-device=model80\nopendeskphone-checksum=0a1b2c3d-100-0e0f1011-200\n");
-        assert_eq!(checksum_from_start(&ours[..]).unwrap(), "0a1b2c3d-100-0e0f1011-200");
-        // Stock firmware's states none, and is named so that it is never
-        // taken for one of ours.
-        let stock = starting_with("post-build=Digium/digium_model80/model80:4.4.2/1_12_14/1_12_14:eng/dev-keys\npre-device=model80\n");
-        assert!(checksum_from_start(&stock[..]).unwrap().ends_with("-00000000-0"));
-        let no_metadata = zip::write(&[FileEntry { name: "boot.img", data: &[1; 100], executable: false }]).unwrap();
-        assert!(checksum_from_start(&no_metadata[..]).unwrap_err().to_string().contains("not its metadata"));
     }
 }

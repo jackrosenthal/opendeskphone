@@ -109,8 +109,8 @@ static CHECKSUMS: Mutex<Option<ChecksumCache>> = Mutex::new(None);
 /// The `checksum` attribute for a `<firmware>` entry whose file is `file`
 /// in the local directory `dir`, with its leading space, or nothing.
 ///
-/// The attribute states the CRCs and sizes of the image's kernel and root
-/// file system (see [`dpma_proto::firmware`]), so that a phone which
+/// The attribute identifies the image (see [`dpma_proto::firmware`]), so
+/// that a phone which
 /// compares firmware by checksum sees that it already runs the image
 /// without fetching it.  The official DPMA has no such attribute, and the
 /// stock firmware does not read it.
@@ -142,8 +142,8 @@ pub fn checksum_attr(dir: &[u8], file: &[u8]) -> Vec<u8> {
         _ => {
             let sum = std::fs::File::open(&path)
                 .ok()
-                .and_then(dpma_proto::firmware::ImageChecksum::read)
-                .map(|c| c.to_string());
+                .and_then(|file| dpma_proto::firmware::Image::read(file).ok())
+                .map(|image| image.checksum.to_string());
             if sum.is_none() {
                 log::debug!(
                     "{} is not a readable firmware image; no checksum is given for it",

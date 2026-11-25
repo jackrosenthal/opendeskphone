@@ -37,7 +37,6 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
-opendeskphone-recovery = { path = "../opendeskphone-recovery" }
 opendeskphone-hal = { path = "../opendeskphone-hal" }
 opendeskphone-update = { path = "../opendeskphone-update" }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "test-util"] }

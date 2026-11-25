@@ -10,7 +10,7 @@ mod https;
 
 use common::TempFiles;
 use opendeskphone_dpma::firmware::{
-    Attempt, FetchError, FirmwareSource, ImageSum, Outcome, Policy, Runner,
+    checksum_of, Attempt, FetchError, FirmwareSource, ImageChecksum, Outcome, Policy, Runner,
 };
 use opendeskphone_dpma::install::MtdInstaller;
 use opendeskphone_hal::Hal;
@@ -50,10 +50,10 @@ fn kernel(seed: u32) -> Vec<u8> {
 }
 
 /// An EFF for `model` labeled `version`, with contents chosen by `seed`.
-fn image(model: &str, version: &str, seed: u32) -> (Vec<u8>, ImageSum) {
+fn image(model: &str, version: &str, seed: u32) -> (Vec<u8>, ImageChecksum) {
     let (k, r) = (kernel(seed), prng(seed + 100, 2 * BLOCK + 17));
     let ota = eff::ota::pack(&k, &r, "now", &format!("{version}_{model}_firmware.bin")).unwrap();
-    let sum = ImageSum::of(&eff::ota::Ota::parse(&ota).unwrap().header.app);
+    let sum = checksum_of(&eff::ota::Ota::parse(&ota).unwrap().header.app);
     (eff::envelope::pack(&EffHeader::new(model, version).unwrap(), &ota, [7; 8]).unwrap(), sum)
 }
 
@@ -104,7 +104,7 @@ struct Rig {
     mtd: Arc<Mutex<Box<dyn opendeskphone_hal::Mtd>>>,
     source: Arc<FakeSource>,
     files: TempFiles,
-    running: ImageSum,
+    running: ImageChecksum,
     /// The EFF of the image in the running bank.
     running_eff: Vec<u8>,
     dir: std::path::PathBuf,
@@ -283,7 +283,7 @@ fn stock_image_is_installed_when_provisioned() {
 fn checksum_attribute_avoids_the_fetch_but_is_not_trusted_to_flash() {
     let r = Rig::new();
     // Equal to the running image: nothing is fetched.
-    let same = format!("checksum=\"{}\" ", r.running.to_text());
+    let same = format!("checksum=\"{}\" ", r.running);
     assert_eq!(r.run(&config("7", "http://pbx/fw.eff", &same)), Outcome::Keep);
     assert_eq!(r.opens(), 0);
     // A stale attribute says "different", but the image at the URL is the

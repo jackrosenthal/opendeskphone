@@ -114,52 +114,6 @@ impl<R: Read + Seek> Archive<R> {
     }
 }
 
-/// The first file of an archive that is read from its start, as a
-/// download is: the file's name and contents, which must be no longer than
-/// `limit`.  Little more than the file is read.
-pub fn read_first<R: Read>(mut stream: R, limit: usize) -> Result<(String, Vec<u8>), String> {
-    let io = |e: std::io::Error| format!("reading the archive: {e}");
-    let mut local = [0u8; 30];
-    stream.read_exact(&mut local).map_err(io)?;
-    if &local[..4] != b"PK\x03\x04" {
-        return Err("not a zip archive".into());
-    }
-    let (flags, method, crc) = (u16_at(&local, 6), u16_at(&local, 8), u32_at(&local, 14) as u32);
-    let (compressed, size) = (u32_at(&local, 18), u32_at(&local, 22));
-    let (name_len, extra) = (u16_at(&local, 26) as usize, u16_at(&local, 28) as usize);
-    let mut name = vec![0u8; name_len + extra];
-    stream.read_exact(&mut name).map_err(io)?;
-    name.truncate(name_len);
-    let name = String::from_utf8_lossy(&name).into_owned();
-    // With bit 3, the CRC and the sizes follow the file, as a writer that
-    // streams has them.
-    let described_after = flags & 8 != 0;
-    if !described_after && (size > limit as u64 || compressed > limit as u64 + 1024) {
-        return Err(format!("{name} is {size} bytes, more than the {limit} it may be"));
-    }
-    let data = match (method, described_after) {
-        (0, false) => {
-            let mut data = vec![0u8; size as usize];
-            stream.read_exact(&mut data).map_err(io)?;
-            data
-        }
-        // Deflated data ends with its last block, so what is read past it
-        // is not taken for part of it.
-        (8, _) => {
-            let window = if described_after { limit as u64 + 1024 } else { compressed };
-            let mut packed = Vec::new();
-            stream.take(window).read_to_end(&mut packed).map_err(io)?;
-            miniz_oxide::inflate::decompress_to_vec_with_limit(&packed, limit)
-                .map_err(|_| format!("{name}: its compressed data is damaged, or more than {limit} bytes"))?
-        }
-        (other, _) => return Err(format!("{name}: stored in a way (method {other}, flags {flags:#x}) that is not read here")),
-    };
-    if !described_after && (data.len() as u64 != size || !eff::crc::crc(&data) != crc) {
-        return Err(format!("{name}: its contents do not fit the archive's checksum of them"));
-    }
-    Ok((name, data))
-}
-
 /// One file of a zip archive.
 pub struct FileEntry<'a> {
     pub name: &'a str,
@@ -303,33 +257,5 @@ mod tests {
         z.extend_from_slice(&[0, 0]);
         let len = z.len() as u64;
         assert_eq!(Archive::open(std::io::Cursor::new(&z), len).unwrap().read("f", 1000).unwrap(), data);
-    }
-
-    #[test]
-    fn the_first_file_is_read_from_a_stream() {
-        let z = write(&[FileEntry { name: "m", data: b"pre-device=x\n", executable: false }, FileEntry { name: "b", data: &[7; 5000], executable: false }])
-            .unwrap();
-        assert_eq!(read_first(&z[..], 100).unwrap(), ("m".to_string(), b"pre-device=x\n".to_vec()));
-        assert!(read_first(&z[..], 4).unwrap_err().contains("more than"));
-        let mut damaged = z.clone();
-        damaged[31] ^= 1;
-        assert!(read_first(&damaged[..], 100).unwrap_err().contains("checksum"));
-
-        // Deflated, with the CRC and the sizes after the data (flag bit 3),
-        // as the stock package has its metadata; the next file follows.
-        let data = b"post-build=Digium/digium_model80\npre-device=model80\n";
-        let packed = miniz_oxide::deflate::compress_to_vec(data, 6);
-        let mut s = b"PK\x03\x04".to_vec();
-        for w in [20u16, 8, 8, 0, 33] {
-            s.extend_from_slice(&w.to_le_bytes());
-        }
-        s.extend_from_slice(&[0; 12]);
-        s.extend_from_slice(&[1, 0, 0, 0]);
-        s.extend_from_slice(b"m");
-        s.extend_from_slice(&packed);
-        s.extend_from_slice(b"PK\x07\x08");
-        s.extend_from_slice(&[0xee; 5000]);
-        assert_eq!(read_first(&s[..], 4096).unwrap(), ("m".to_string(), data.to_vec()));
-        assert!(read_first(&b"not a zip archive, and long enough to be read"[..], 4096).is_err());
     }
 }

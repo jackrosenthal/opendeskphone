@@ -15,12 +15,12 @@ pub mod apps;
 pub mod auth;
 pub mod avahi;
 pub mod config;
+pub mod d80_migrate;
 #[cfg(feature = "devtest")]
 pub mod devtest;
 pub mod firmware;
 pub mod method;
 pub mod method_api;
-pub mod d80_migrate;
 pub mod phone_main;
 pub mod pjsip;
 pub mod request;

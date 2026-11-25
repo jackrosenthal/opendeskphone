@@ -14,6 +14,7 @@ cbc.workspace = true
 dpma-bytes.workspace = true
 getrandom.workspace = true
 md-5.workspace = true
+miniz_oxide.workspace = true
 log.workspace = true
 rsa.workspace = true
 serde.workspace = true

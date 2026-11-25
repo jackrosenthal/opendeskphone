@@ -12,7 +12,7 @@
 //! order, and the reboot, but compares **images, not labels**: the
 //! provisioned image is the same as the running one when the kernel CRC
 //! and size and the root filesystem CRC and size all match
-//! ([`ImageSum`]).  The running side comes from the running bank's header
+//! ([`ImageChecksum`]).  The running side comes from the running bank's header
 //! in `ctrl`; the provisioned side from the first few hundred bytes of the
 //! URL (the OTA header at the start of the decrypted EFF), or from an
 //! optional `checksum` attribute on the entry.  A D80 has a boot image and
@@ -37,43 +37,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// What identifies a firmware image: the checksums and sizes of its two
-/// components, as its OTA header and the `ctrl` record carry them.  Two
-/// images are the same exactly when all four values are equal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ImageSum {
-    pub kernel_crc: u32,
-    pub kernel_size: u32,
-    pub rootfs_crc: u32,
-    pub rootfs_size: u32,
-}
+/// components.  Two images are the same exactly when all four values are
+/// equal.
+pub use dpma_proto::firmware::ImageChecksum;
 
-impl ImageSum {
-    pub fn of(h: &eff::AppHeader) -> ImageSum {
-        ImageSum {
-            kernel_crc: h.kernel_crc,
-            kernel_size: h.kernel_size,
-            rootfs_crc: h.rootfs_crc,
-            rootfs_size: h.rootfs_size,
-        }
-    }
-
-    /// The text form, also the value of the optional `checksum` attribute:
-    /// `<kernel CRC>-<kernel size>-<rootfs CRC>-<rootfs size>`, CRCs as
-    /// eight lowercase hex digits, sizes in decimal bytes.
-    pub fn to_text(&self) -> String {
-        format!("{:08x}-{}-{:08x}-{}", self.kernel_crc, self.kernel_size, self.rootfs_crc, self.rootfs_size)
-    }
-
-    pub fn parse(text: &str) -> Option<ImageSum> {
-        let mut f = text.trim().split('-');
-        let sum = ImageSum {
-            kernel_crc: u32::from_str_radix(f.next()?, 16).ok()?,
-            kernel_size: f.next()?.parse().ok()?,
-            rootfs_crc: u32::from_str_radix(f.next()?, 16).ok()?,
-            rootfs_size: f.next()?.parse().ok()?,
-        };
-        f.next().is_none().then_some(sum)
-    }
+/// The checksum of the image whose OTA header (or `ctrl` record) is `h`.
+pub fn checksum_of(h: &eff::AppHeader) -> ImageChecksum {
+    ImageChecksum { kernel_crc: h.kernel_crc, kernel_size: h.kernel_size, rootfs_crc: h.rootfs_crc, rootfs_size: h.rootfs_size }
 }
 
 /// One `<firmware>` or `<public_firmware>` element.
@@ -84,7 +54,7 @@ pub struct FirmwareEntry {
     pub version: String,
     pub url: String,
     /// The optional `checksum` attribute, when present and well formed.
-    pub checksum: Option<ImageSum>,
+    pub checksum: Option<ImageChecksum>,
 }
 
 /// The firmware entries of a fetched configuration.
@@ -97,7 +67,7 @@ pub fn entries(config: &[u8]) -> (Vec<FirmwareEntry>, Vec<FirmwareEntry>) {
                 model: xml::attr(t, "model").unwrap_or_default(),
                 version: xml::attr(t, "version").unwrap_or_default(),
                 url: xml::attr(t, "url").unwrap_or_default(),
-                checksum: xml::attr(t, "checksum").and_then(|c| ImageSum::parse(&c)),
+                checksum: xml::attr(t, "checksum").and_then(|c| c.parse().ok()),
             })
             .collect::<Vec<_>>()
     };
@@ -110,7 +80,7 @@ pub fn entries(config: &[u8]) -> (Vec<FirmwareEntry>, Vec<FirmwareEntry>) {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Provisioned {
     pub version: String,
-    pub checksum: Option<ImageSum>,
+    pub checksum: Option<ImageChecksum>,
     /// The server's URL first, then the public fallbacks.
     pub urls: Vec<String>,
 }
@@ -127,35 +97,15 @@ pub fn select(firmwares: &[FirmwareEntry], public: &[FirmwareEntry], model: &str
 pub struct ImageInfo {
     pub model: String,
     pub version: String,
-    pub sum: ImageSum,
+    pub sum: ImageChecksum,
 }
 
-/// Reads just the headers of an EFF stream: the label, the salt block,
-/// the four inner fields, and the OTA header, 676 bytes in all, or a D80's
-/// package's metadata.  The streaming decryptor reads a buffer ahead, so a
-/// few kilobytes are taken from the stream; the caller then drops it,
-/// which ends the transfer.
+/// Reads the start of an EFF stream, a few hundred bytes
+/// ([`dpma_proto::firmware::Image::read`]); the caller then drops the
+/// stream, which ends the transfer.
 pub fn peek(stream: &mut dyn Read) -> Result<ImageInfo, String> {
-    let mut eff = eff::EffReader::new(stream).map_err(|e| format!("not a firmware image: {e}"))?;
-    let header = eff.header().clone();
-    let mut ota = [0u8; eff::ota::OTA_HEADER_LEN];
-    let cut_short = |e: std::io::Error| format!("firmware image is cut short: {e}");
-    eff.read_exact(&mut ota[..4]).map_err(cut_short)?;
-    // A D80's image carries an Android OTA package: a zip archive.
-    #[cfg(feature = "d80")]
-    if ota[..4] == *b"PK\x03\x04" {
-        let checksum = opendeskphone_update::d80::checksum_from_start((&ota[..4]).chain(&mut eff))
-            .map_err(|e| format!("not a firmware image: {e}"))?;
-        let sum = ImageSum::parse(&checksum).ok_or_else(|| format!("not a firmware image: its checksum {checksum} is not one"))?;
-        return Ok(ImageInfo { model: header.model.trim().to_string(), version: header.version.trim().to_string(), sum });
-    }
-    eff.read_exact(&mut ota[4..]).map_err(cut_short)?;
-    let ota = eff::OtaHeader::parse(&ota).map_err(|e| format!("not a firmware image: {e}"))?;
-    Ok(ImageInfo {
-        model: header.model.trim().to_string(),
-        version: header.version.trim().to_string(),
-        sum: ImageSum::of(&ota.app),
-    })
+    let image = dpma_proto::firmware::Image::read(stream)?;
+    Ok(ImageInfo { model: image.model, version: image.version, sum: image.checksum })
 }
 
 /// Why a download could not start.
@@ -198,7 +148,7 @@ pub trait FirmwareInstaller: Send + Sync + 'static {
     /// What the running image is: the running bank's header in `ctrl`, or
     /// on a D80 the recovery's record.  An error means it cannot be known
     /// (RAM boot, no valid record).
-    fn running_image(&self) -> Result<ImageSum, String>;
+    fn running_image(&self) -> Result<ImageChecksum, String>;
     /// Installs the EFF read from `image` for the next boot.  On error the
     /// running firmware stays the one that boots.
     fn install(&self, image: &mut dyn Read) -> Result<(), InstallError>;
@@ -254,7 +204,7 @@ impl Policy {
 /// The image last tried, kept across boots: the loop guard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attempt {
-    pub sum: ImageSum,
+    pub sum: ImageChecksum,
     /// It was written and selected, and the phone rebooted into it.
     pub installed: bool,
     /// Why it is not tried again.
@@ -267,14 +217,14 @@ impl Attempt {
         let text = String::from_utf8_lossy(&std::fs::read(file).ok()?).into_owned();
         let mut lines = text.lines();
         let mut first = lines.next()?.split_whitespace();
-        let sum = ImageSum::parse(first.next()?)?;
+        let sum = first.next()?.parse().ok()?;
         let installed = first.next()? == "installed";
         Some(Attempt { sum, installed, note: lines.next().unwrap_or("").to_string() })
     }
 
     fn save(&self, file: &Path) {
         let text =
-            format!("{} {}\n{}\n", self.sum.to_text(), if self.installed { "installed" } else { "failed" }, self.note);
+            format!("{} {}\n{}\n", self.sum, if self.installed { "installed" } else { "failed" }, self.note);
         if let Err(e) = write_atomic(file, text.as_bytes()) {
             log::warn!("dpma: cannot record the firmware attempt: {e}");
         }
@@ -288,7 +238,7 @@ pub enum Outcome {
     /// provisioned image is the one running.
     Keep,
     /// Installed; the reboot has been requested.
-    Installed(ImageSum),
+    Installed(ImageChecksum),
     /// The provisioned image is one that already failed to install, or
     /// was installed without becoming the running image.
     GaveUp(String),
@@ -404,13 +354,13 @@ impl Runner {
                     format!(
                         "provisioned firmware {} ({}) was installed but did not become the running image; not installing it again",
                         provisioned.version,
-                        info.sum.to_text()
+                        info.sum
                     )
                 } else {
                     format!(
                         "provisioned firmware {} ({}) failed to install before ({}); not trying it again",
                         provisioned.version,
-                        info.sum.to_text(),
+                        info.sum,
                         a.note
                     )
                 };
@@ -425,8 +375,8 @@ impl Runner {
             log::info!(
                 "dpma: provisioned firmware {} ({}) differs from the running image ({}); updating",
                 provisioned.version,
-                info.sum.to_text(),
-                running.to_text()
+                info.sum,
+                running
             );
             return self.install(&url, &provisioned.version, &info);
         }
@@ -509,13 +459,10 @@ mod tests {
     fn parses_entries_and_checksum() {
         let cfg = b"<config><firmwares>\n<firmware model=\"D60\" version=\"2_9_28\" url=\"http://pbx/a.eff\" network_id=\"n\" checksum=\"0a1b2c3d-1500000-ffffffff-39321600\" />\n<firmware model=\"D40\" version=\"2_9_26\" url=\"http://pbx/b.eff\" checksum=\"junk\"/></firmwares>\n<public_firmwares><public_firmware model=\"D60\" version=\"2_9_28\" url=\"http://dl/a.eff\"/></public_firmwares></config>";
         let (f, p) = entries(cfg);
-        let sum = ImageSum { kernel_crc: 0x0a1b2c3d, kernel_size: 1_500_000, rootfs_crc: 0xffff_ffff, rootfs_size: 39_321_600 };
+        let sum = ImageChecksum { kernel_crc: 0x0a1b2c3d, kernel_size: 1_500_000, rootfs_crc: 0xffff_ffff, rootfs_size: 39_321_600 };
         assert_eq!(f[0].checksum, Some(sum));
-        assert_eq!(ImageSum::parse(&sum.to_text()), Some(sum));
         assert_eq!(f[1].checksum, None, "a malformed checksum is as good as none");
         assert_eq!(p, vec![fw("D60", "2_9_28", "http://dl/a.eff")]);
-        assert_eq!(ImageSum::parse("1-2-3"), None);
-        assert_eq!(ImageSum::parse("1-2-3-4-5"), None);
     }
 
     #[test]
@@ -529,21 +476,6 @@ mod tests {
         assert_eq!(select(&[fw("D60", "4", "")], &[], "D60"), None);
         // The model comparison is exact, like stock's.
         assert_eq!(select(&[fw("d60", "4", "http://x")], &[], "D60"), None);
-    }
-
-    #[cfg(feature = "d80")]
-    #[test]
-    fn a_d80_image_is_known_by_its_package_checksum() {
-        use opendeskphone_recovery::zip::{FileEntry, write};
-        let metadata = b"pre-device=model80\nopendeskphone-checksum=0a1b2c3d-100-0e0f1011-200\n";
-        let package = write(&[
-            FileEntry { name: opendeskphone_recovery::METADATA_ENTRY, data: metadata, executable: false },
-            FileEntry { name: "rootfs.img", data: &[0; 3000], executable: false },
-        ])
-        .unwrap();
-        let image = eff::envelope::pack(&eff::envelope::EffHeader::new("D80", "3_1_0").unwrap(), &package, [9; 8]).unwrap();
-        let sum = ImageSum::parse("0a1b2c3d-100-0e0f1011-200").unwrap();
-        assert_eq!(peek(&mut &image[..]).unwrap(), ImageInfo { model: "D80".into(), version: "3_1_0".into(), sum });
     }
 
     #[test]
