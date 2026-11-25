@@ -15,19 +15,19 @@ cd opendeskphone
 
 ## Firmware images
 
-Each model has a flake output `eff-<model>`, where the model is `d40`, `d45`, `d50`, `d60`, `d62`, `d65`, or `d70`.  From the root of the repository:
+Each model has a flake output `eff-<model>`, where the model is `d40`, `d45`, `d50`, `d60`, `d62`, `d65`, `d70`, or `d80`.  From the root of the repository:
 
 ```sh
 nix build .#eff-d60
 ```
 
-The `result` link points to the image in the Nix store, named `<version>_<model>_firmware.eff`, e.g., `3_0_0_D60_firmware.eff`.  The version is the workspace version in the root `Cargo.toml`.  `nix build .#all` builds the images of all seven models into one directory.
+The `result` link points to the image in the Nix store, named `<version>_<model>_firmware.eff`, e.g., `3_0_0_D60_firmware.eff`.  The version is the workspace version in the root `Cargo.toml`.  `nix build .#all` builds the images of the D40 thru D70 into one directory.
 
 :::note[Nix builds only what git tracks]
 A flake in a git repository sees only the files that git tracks, including uncommitted changes to those files.  A new file is invisible to the build until `git add`.
 :::
 
-The kernel, the root file system, and the `dphone` binary are the same for these seven models.  The images differ only in the device tree attached to the kernel and in the model name in the image header.
+The kernel, the root file system, and the `dphone` binary are the same for the D40 thru D70.  The images differ only in the device tree attached to the kernel and in the model name in the image header.
 
 The D80's image is built differently: see [The D80's image](#the-d80s-image).
 
@@ -94,10 +94,9 @@ The EFF that wraps the package ends with a second signature, stored inside the e
 
 The image build takes four more files from the stock D80 image, which Nix downloads from the vendor (`nix/d80-firmware.nix`): the firmware of the voice processor, the firmware and the settings file of the Wi-Fi module, and the patch file of the Bluetooth module.
 
-Two things about installing the package are not settled:
+A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither key, so the stock recovery refuses the package.  While `d80_stock_firmware_migration` is on, the Open DPMA module [replaces such a phone's recovery](../open-dpma/administration.md#firmware-migration) with the recovery built here, which installs the package.
 
-- **The first installation.**  A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither key, so the stock recovery refuses it.  While `d80_stock_firmware_migration` is on, the Open DPMA module [re-keys such a phone](../open-dpma/administration.md#firmware-migration) instead.
-- **Updates from the web interface and from provisioning.**  Only `dphone update install` leaves a package for the recovery.  The web interface and a DPMA server's firmware entries refuse on a D80.
+Updates from the web interface and from provisioning are not settled.  Only `dphone update install` leaves a package for the recovery.  The web interface and a DPMA server's firmware entries refuse on a D80.
 
 ### The D80's recovery
 
@@ -256,7 +255,7 @@ The flake's checks skip nothing except the [network namespace tests](#network-na
 | `nix build .#checks.x86_64-linux.opendeskphone-d80` | Builds the `dphone` binary with the D80's touch skin, and fails if the binary lacks the skin. |
 | `nix flake check` | Runs every check, and builds both kernels, the utilities, and both `dphone` binaries. |
 
-CI (`.github/workflows/ci.yml`) also uploads the image of every model as a workflow artifact named `firmware-<model>`, so a pushed branch's images need no local build.  The D80's EFF image, OTA package, and recovery image are the artifact `d80-image`.  A release does not include them.
+CI (`.github/workflows/ci.yml`) also uploads the image of every model as a workflow artifact named `firmware-<model>`, so a pushed branch's images need no local build.  The D80's EFF image, OTA package, and recovery image are the artifact `d80-image`.  A release includes the EFF image.
 
 The Open DPMA tests run in containers against each supported Asterisk version: `cargo xtask ci` in `open-dpma/`; see `open-dpma/README.md`.
 

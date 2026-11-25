@@ -11,7 +11,7 @@
 #
 # Each image is uploaded as a workflow artifact, `firmware-<model>`.  The
 # D80's, which `d80` builds whole, is the artifact `d80-image`: its EFF,
-# the Android OTA package inside it, and its recovery image.  It is not
+# the Android OTA package inside it, and its recovery image.  Its EFF is
 # among the images of a release.
 #
 # The DPMA module for Asterisk (open-dpma/) is built, linted, and tested for
@@ -391,7 +391,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [model, checks, open-dpma-fmt, open-dpma-test]
+    needs: [model, d80, checks, open-dpma-fmt, open-dpma-test]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -407,13 +407,21 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: d80-image
+          path: d80-image
+
+      - name: The D80's image
+        run: mv d80-image/*_D80_firmware.eff dist/
+
       # The images are named <X_Y_Z>_<MODEL>_firmware.eff after the version
-      # they were built with: exactly the seven of the tag's version.
+      # they were built with: exactly the eight of the tag's version.
       - name: The tag names the version of every image
         working-directory: dist
         run: |
           version="$(echo "${GITHUB_REF_NAME#v}" | tr . _)"
-          expected="$(printf '%s\n' "$version"_D{40,45,50,60,62,65,70}_firmware.eff)"
+          expected="$(printf '%s\n' "$version"_D{40,45,50,60,62,65,70,80}_firmware.eff)"
           test "$(printf '%s\n' * | LC_ALL=C sort)" = "$expected"
 
       # The modules were built from the same commit, so they have the same

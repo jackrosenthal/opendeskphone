@@ -23,7 +23,7 @@
   <img alt="The D40, D50, D60, D65, D70, and D80 running Open Desk Phone, at their true relative sizes" src=".github/readme/phones.webp">
 </p>
 
-Open Desk Phone is open-source firmware that replaces the stock firmware on the Digium D40, D45, D50, D60, D62, D65, and D70 desk phones.  Open Desk Phone can be installed as an ordinary firmware update over stock firmware.  Open Desk Phone is not affiliated with or endorsed by Digium or Sangoma.
+Open Desk Phone is open-source firmware that replaces the stock firmware on the Digium D40, D45, D50, D60, D62, D65, D70, and D80 desk phones.  Open Desk Phone can be installed as an ordinary firmware update over stock firmware.  Open Desk Phone is not affiliated with or endorsed by Digium or Sangoma.
 
 On Asterisk, phones can be provisioned over DPMA.  Open Desk Phone includes an [open-source DPMA re-write](#open-dpma) in this repository.  Without DPMA provisioning, Open Desk Phone can work like a standard SIP phone, with accounts added in the web interface.
 
@@ -49,7 +49,7 @@ asterisk -rx 'module reload'
 asterisk -rx 'digium_phones reconfigure all'
 ```
 
-Phones install Open Desk Phone when they fetch the new configuration.
+Phones install Open Desk Phone when they fetch the new configuration.  A D80 on stock firmware installs Open Desk Phone only from [Open DPMA](#open-dpma), which must reach the phone's web server on TCP port 80.
 
 ## Open DPMA
 
@@ -93,7 +93,7 @@ systemctl restart asterisk
   </picture>
 </p>
 
-Open Desk Phone includes a web interface in the firmware which manages calls, Bluetooth headsets (D65), alarms, apps, and firmware, and can mirror the phone screen, with keys you can click to operate the phone.
+Open Desk Phone includes a web interface in the firmware which manages calls, Bluetooth headsets (D65 and D80), alarms, apps, and firmware, and can mirror the phone screen, with keys you can click to operate the phone.
 
 ## Apps
 

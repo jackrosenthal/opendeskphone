@@ -5,7 +5,7 @@ description: Open firmware for the Digium D-series desk phones, and Open DPMA, t
 
 import PhoneTurntable from '../../components/PhoneTurntable.astro';
 
-Open Desk Phone is open-source firmware for the Digium D40, D45, D50, D60, D62, D65, and D70 desk phones: a mainline Linux kernel and a phone application written in Rust.
+Open Desk Phone is open-source firmware for the Digium D40, D45, D50, D60, D62, D65, D70, and D80 desk phones: a mainline Linux kernel and a phone application written in Rust.
 
 <PhoneTurntable />
 
@@ -14,7 +14,7 @@ Open Desk Phone is an independent project and is not affiliated with or endorsed
 ## Features
 
 - **Apps.**  Apps are WebAssembly components that target the phone's [app interface](app-sdk/index.md).  Each app runs in a sandbox with only the phone interfaces that the app's code calls.  With Open DPMA, apps can store data on the PBX that every phone shares.  The stock firmware's JavaScript apps do not run on Open Desk Phone.
-- **Themes.**  On the D60, D62, and D65, a theme pairs a wallpaper with a color palette for every screen.  With Open DPMA, a user's theme follows the user to other phones and survives a factory reset.
+- **Themes.**  On the D60, D62, D65, and D80, a theme pairs a wallpaper with a color palette for every screen.  With Open DPMA, a user's theme follows the user to other phones and survives a factory reset.
 - **Web interface.**  Beyond the stock settings, the web interface manages calls, Bluetooth devices, and alarms, and mirrors the phone's screen.
 - **Shell access.**  A root shell is available over SSH, on a serial console on the EHS port, and in the web interface.
 
@@ -22,7 +22,7 @@ Open Desk Phone is an independent project and is not affiliated with or endorsed
 
 Download the image for the phone's model, `<version>_<model>_firmware.eff` (e.g., `3_0_0_D65_firmware.eff`), from the [releases page](https://github.com/jackrosenthal/opendeskphone/releases).  A phone rejects an image built for another model.
 
-The images use the stock firmware's image format, so stock firmware installs Open Desk Phone as a firmware update, from the phone's web interface or through DPMA provisioning.
+The images use the stock firmware's image format, so stock firmware installs Open Desk Phone as a firmware update, from the phone's web interface or through DPMA provisioning.  The D80 is the exception: the D80's stock firmware installs only the vendor's images, so a D80 installs Open Desk Phone only through DPMA provisioning by [Open DPMA](open-dpma/index.md).
 
 ### Web interface
 
