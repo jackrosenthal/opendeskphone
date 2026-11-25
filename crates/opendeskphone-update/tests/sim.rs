@@ -62,7 +62,7 @@ fn install_on_the_hal_sim_at_real_geometry() {
 
         let cmdline = "console=ttyAMA0,115200n8 root=/dev/mtdblock6 rootfstype=jffs2 ro";
         let done = Updater::new(hal.mtd.as_mut(), model, cmdline, tempfile::tempdir().unwrap().path()).install_eff(&eff[..]).unwrap();
-        assert_eq!((done.bank, done.previous), (Bank::B, Bank::A));
+        assert!(matches!(done.target, opendeskphone_update::Target::Bank { bank: Bank::B, previous: Bank::A, .. }), "{:?}", done.target);
 
         // Independent reading of the raw partition contents.
         let k1 = sim.mtd_contents("k1").unwrap();

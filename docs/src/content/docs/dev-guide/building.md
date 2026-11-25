@@ -86,7 +86,7 @@ The package's script writes two partitions, and `dphone` writes the recovery's b
 | `mmcblk0p6` | 512 MiB | `/cache` | nvdata, on the ext4 file system that stock made.  Not written by the package.  A package to install waits here, in `recovery/`. |
 | `mmcblk0p4` | The rest | `/data` | Not used.  The stock firmware's settings stay. |
 
-The package contains `boot.img`, `rootfs.img`, the script that writes them (`META-INF/com/google/android/updater-script`), and the program that runs the script (`update-binary`).  The program is the stock package's own, because a recovery runs whatever program a package brings.  The package also contains `recovery.img`, which the script does not write: a recovery does not replace itself while it runs.
+The package contains `boot.img`, `rootfs.img`, the script that writes them (`META-INF/com/google/android/updater-script`), and the program that runs the script (`update-binary`).  The package's first file, `META-INF/com/android/metadata`, carries the CRC-32 and size of `boot.img` and `rootfs.img` as `opendeskphone-checksum`, which provisioning reads from the start of a download.  The program is the stock package's own, because a recovery runs whatever program a package brings.  The package also contains `recovery.img`, which the script does not write: a recovery does not replace itself while it runs.
 
 The package is signed the way Android's `signapk -w` signs a whole file: the signature (RSA with SHA-1, as in the stock package) and the certificate are in the zip file's comment.  The key and its certificate are `d80-ota.key.pem` and `d80-ota.x509.pem` in `crates/opendeskphone-image/keys`.  The private key is in the repository, so the signature does not show who built a package: anyone can make it.  The signature is provenance, not a gate: the recovery built here installs any package left for it, signed or not.  The stock recovery is different: it verifies the signature against its key list, which has the vendor's key and one other key, and does not have this key.
 
@@ -95,8 +95,6 @@ The EFF that wraps the package ends with a second signature, stored inside the e
 The image build takes four more files from the stock D80 image, which Nix downloads from the vendor (`nix/d80-firmware.nix`): the firmware of the voice processor, the firmware and the settings file of the Wi-Fi module, and the patch file of the Bluetooth module.
 
 A phone that runs stock firmware has the stock recovery, which installs only packages signed with a key in its key list: the vendor's key and one other.  The package built here is signed with neither key, so the stock recovery refuses the package.  While `d80_stock_firmware_migration` is on, the Open DPMA module [replaces such a phone's recovery](../open-dpma/administration.md#firmware-migration) with the recovery built here, which installs the package.
-
-Updates from the web interface and from provisioning are not settled.  Only `dphone update install` leaves a package for the recovery.  The web interface and a DPMA server's firmware entries refuse on a D80.
 
 ### The D80's recovery
 
@@ -108,13 +106,13 @@ nix build .#recovery-d80
 
 The recovery image is the D80's kernel with a ramdisk, 7.3 MiB of the partition's 8 MiB.  The ramdisk holds the recovery program as `/init` (`crates/opendeskphone-recovery`), the shell, and a few utilities.  The kernel runs a ramdisk's `/init` before it mounts a root file system, so the kernel and its command line are the boot image's.
 
-[`dphone update install`](firmware-updates.mdx#dphone-update-install) and the recovery work together as the stock firmware and the stock recovery do, with the same files in the same places:
+An update from [`dphone update install`](firmware-updates.mdx#dphone-update-install), the web interface, or provisioning works with the recovery as the stock firmware and the stock recovery do, with the same files in the same places:
 
 1. `dphone` stores the package in nvdata as `recovery/update.zip`, and names it in `recovery/command`.
 2. `dphone` writes the package's recovery image to `mmcblk0p2`, unless the partition holds that image already.  For a stock package, `dphone` makes the stock recovery image from the package's boot image and recovery patch.
 3. `dphone` sets `bootcmd` to start the recovery.
 4. After the restart, the recovery checks the package's signature, runs the package's `update-binary`, and shows the Open Desk Phone logo with a progress bar.
-5. The recovery writes the result to `recovery/last_install` and its log to `recovery/last_log`, removes the command and an installed package, sets `bootcmd` back, and restarts the phone.
+5. The recovery writes the result to `recovery/last_install` and its log to `recovery/last_log`, removes the command and an installed package, sets `bootcmd` back, and restarts the phone.  For a package that it installed, the recovery also writes the checksum to `recovery/installed`, which provisioning compares with the image that a DPMA server offers.
 
 The recovery restarts into the system in every case, as the stock recovery does on this phone, which has no keys to answer a menu with.  With no command, or when a package is not installed, the screen says so for a few seconds first.  A package that fails after its program has started writing leaves a system that may not start.
 

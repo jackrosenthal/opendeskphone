@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use clap::Subcommand;
 use opendeskphone_hal::Mtd;
 use opendeskphone_hal::phone::PhoneMtd;
-use opendeskphone_update::{Bank, Options, Updater, inspect, select_bank, trial};
+use opendeskphone_update::{Bank, Options, Target, Updater, inspect, select_bank, trial};
 
 /// Where `install` reads the image from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -260,6 +260,8 @@ fn status_d80() -> Result<(), String> {
             Some((package, false)) => crate::outln!("last install:   {package}, NOT installed (the recovery's log: /nvdata/recovery/last_log)"),
             None => crate::outln!("last install:   none recorded"),
         }
+        let installed = opendeskphone_update::d80::installed(&d80_places());
+        crate::outln!("installed image: {}", installed.as_deref().unwrap_or("not recorded by the recovery"));
     }
     #[cfg(not(feature = "d80"))]
     crate::outln!("{}", opendeskphone_update::D80_NOT_HERE);
@@ -269,58 +271,6 @@ fn status_d80() -> Result<(), String> {
 #[cfg(feature = "d80")]
 fn d80_places() -> opendeskphone_update::d80::Places {
     opendeskphone_update::d80::Places::phone(&crate::paths::Paths::default().nvdata)
-}
-
-/// `install` on a D80: the package is left for the recovery.
-#[cfg(feature = "d80")]
-fn install_d80(source: &Source) -> Result<(), String> {
-    use opendeskphone_update::d80;
-    let mut last = String::new();
-    let progress = |phase: &opendeskphone_state::UpdatePhase| {
-        // The length of a stream is not known: no share of it is shown.
-        let text = match phase {
-            opendeskphone_state::UpdatePhase::Receiving { .. } => "Receiving".to_string(),
-            other => format!("{other:?}"),
-        };
-        if text != last {
-            crate::out!("\r{text:<40}");
-            crate::out::flush();
-            last = text;
-        }
-    };
-    let (places, own) = (d80_places(), own_dir());
-    let left = match source {
-        Source::File(path) => {
-            let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            d80::leave_for_recovery(std::io::BufReader::with_capacity(64 * 1024, file), &places, &own, progress)
-        }
-        Source::Stdin => d80::leave_for_recovery(std::io::stdin().lock(), &places, &own, progress),
-        Source::Url(url) => {
-            use opendeskphone_dpma::firmware::FirmwareSource;
-            let stream = opendeskphone_dpma::fetch::HttpSource::new()
-                .open(url, &format!("opendeskphone-update/{}", env!("CARGO_PKG_VERSION")))
-                .map_err(|e| format!("{url}: {}", e.message))?;
-            d80::leave_for_recovery(stream, &places, &own, progress)
-        }
-    }
-    .map_err(|e| format!("\n{e}"))?;
-    crate::outln!();
-    crate::outln!(
-        "version {}{} is left for the recovery to install ({} bytes)",
-        left.version,
-        if left.is_stock { " (stock firmware)" } else { "" },
-        left.package_len
-    );
-    crate::outln!(
-        "the recovery partition {}",
-        match (left.recovery_written, left.is_stock) {
-            (true, true) => "was written with the stock recovery, made from the package",
-            (true, false) => "was written with the package's recovery",
-            (false, _) => "has the package's recovery already",
-        }
-    );
-    crate::outln!("'dphone reboot' to install it; 'dphone update abandon' to take it back");
-    Ok(())
 }
 
 fn switch_bank(bank: Bank) -> Result<(), String> {
@@ -372,30 +322,36 @@ fn abandon() -> Result<(), String> {
     Ok(())
 }
 
-fn install(source: &Source, options: Options) -> Result<(), String> {
-    let model = model().ok_or("model unknown (no digium_board= and no devicetree match)")?;
-    #[cfg(feature = "d80")]
+/// The flash that an update writes: none on a D80, whose updates go to
+/// nvdata and its recovery.
+fn update_flash(model: opendeskphone_state::Model) -> Result<Box<dyn Mtd>, String> {
     if model.is_touch() {
-        if options.target.is_some() || options.allow_unbootable_other {
-            return Err("a D80 has no firmware banks: --bank and --allow-unbootable-other do not apply".into());
-        }
-        return install_d80(source);
+        return Ok(Box::new(opendeskphone_hal::Null("mtd")));
     }
-    let mut mtd = open_mtd()?;
-    let parts = mtd.partitions().map_err(|e| e.to_string())?;
-    if parts.is_empty() {
+    let mtd = open_mtd()?;
+    if mtd.partitions().map_err(|e| e.to_string())?.is_empty() {
         return Err("no MTD partitions".into());
     }
+    Ok(Box::new(mtd))
+}
+
+fn install(source: &Source, options: Options) -> Result<(), String> {
+    let model = model().ok_or("model unknown (no digium_board= and no devicetree match)")?;
+    let mut mtd = update_flash(model)?;
     let mut last = String::new();
-    let updater = Updater::new(&mut mtd, model, &cmdline(), &own_dir()).options(options).progress(|phase| {
-        let text = format!("{phase:?}");
+    let mut updater = Updater::new(mtd.as_mut(), model, &cmdline(), &own_dir()).options(options).progress(|phase| {
+        // The length of a stream that a D80 receives is not known: no share
+        // of it is shown.
+        let text = match phase {
+            opendeskphone_state::UpdatePhase::Receiving { .. } => "Receiving".to_string(),
+            other => format!("{other:?}"),
+        };
         if text != last {
             crate::out!("\r{text:<40}");
             crate::out::flush();
             last = text;
         }
     });
-    let mut updater = updater;
     let installed = match source {
         // A file can be read twice: all of it is checked before the first
         // erase.
@@ -414,19 +370,35 @@ fn install(source: &Source, options: Options) -> Result<(), String> {
     }
     .map_err(|e| format!("\n{e}"))?;
     crate::outln!();
-    crate::outln!(
-        "installed version {} into bank {}{}; bank {} is kept as it was",
-        installed.version,
-        bank_name(installed.bank),
-        if installed.is_stock { " (stock firmware)" } else { "" },
-        bank_name(installed.previous),
-    );
-    if !installed.is_stock {
-        crate::outln!(
-            "trial boot recorded: the phone returns to the kept bank if the new image does not come up healthy"
-        );
+    let stock = if installed.is_stock { " (stock firmware)" } else { "" };
+    match installed.target {
+        Target::Bank { bank, previous, .. } => {
+            crate::outln!(
+                "installed version {}{stock} into bank {}; bank {} is kept as it was",
+                installed.version,
+                bank_name(bank),
+                bank_name(previous),
+            );
+            if !installed.is_stock {
+                crate::outln!(
+                    "trial boot recorded: the phone returns to the kept bank if the new image does not come up healthy"
+                );
+            }
+            crate::outln!("'dphone reboot' to boot it");
+        }
+        Target::Recovery { recovery_written, package_len } => {
+            crate::outln!("version {}{stock} is left for the recovery to install ({package_len} bytes)", installed.version);
+            crate::outln!(
+                "the recovery partition {}",
+                match (recovery_written, installed.is_stock) {
+                    (true, true) => "was written with the stock recovery, made from the package",
+                    (true, false) => "was written with the package's recovery",
+                    (false, _) => "has the package's recovery already",
+                }
+            );
+            crate::outln!("'dphone reboot' to install it; 'dphone update abandon' to take it back");
+        }
     }
-    crate::outln!("'dphone reboot' to boot it");
     Ok(())
 }
 

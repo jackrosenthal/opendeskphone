@@ -78,6 +78,9 @@ export function FirmwareCard() {
   }
   const up = pending.data?.status?.uploaded;
   const working = fw.phase !== UpdatePhase.IDLE && fw.phase !== UpdatePhase.COMPLETE && fw.phase !== UpdatePhase.FAILED;
+  // A D80 receives an upload without knowing its length: the browser's
+  // share of the upload is the progress then.
+  const receiving = fw.phase === UpdatePhase.RECEIVING && sending !== undefined;
   const [from, to] = span[fw.phase] ?? [0, 0];
   const overall = from + ((to - from) * fw.percent) / 100;
 
@@ -115,7 +118,7 @@ export function FirmwareCard() {
             ["Active bank", fw.runningBank !== Bank.UNSPECIFIED ? label(bankNames, fw.runningBank, Bank[fw.runningBank]) : ""],
           ]}
         />
-        {working ? (
+        {working && !receiving ? (
           <Bar fraction={overall} label={<>{label(updatePhaseNames, fw.phase, UpdatePhase[fw.phase])}{fw.incomingVersion && ` · ${version(fw.incomingVersion)}`}</>} />
         ) : fw.phase === UpdatePhase.COMPLETE ? (
           <Alert tone="green" title={`Firmware ${version(fw.incomingVersion)} installed. Reboot to activate.`} />

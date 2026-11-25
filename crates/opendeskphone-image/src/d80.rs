@@ -257,8 +257,10 @@ pub fn updater_script() -> String {
 /// (a recovery runs whatever a package brings under that name).  The
 /// package also carries the recovery image, which its script does not
 /// write: a recovery does not replace itself.  `dphone` writes it, before
-/// it restarts the phone into it.  The package is signed with `key`, and
-/// carries `cert`; see [`sign`].
+/// it restarts the phone into it.  The metadata, the package's first file,
+/// carries the package's checksum, which provisioning reads from the start
+/// of a download.  The package is signed with `key`, and carries `cert`;
+/// see [`sign`].
 pub fn package(boot: &[u8], recovery: &[u8], rootfs: &[u8], update_binary: &[u8], version: &str, key: &str, cert: &str) -> Result<Vec<u8>, String> {
     BootImage::parse(boot)?;
     let ramdisk = BootImage::parse(recovery).map_err(|e| format!("the recovery image: {e}"))?.ramdisk;
@@ -280,14 +282,18 @@ pub fn package(boot: &[u8], recovery: &[u8], rootfs: &[u8], update_binary: &[u8]
     if update_binary.get(..4) != Some(b"\x7fELF") {
         return Err("update-binary is not a program".into());
     }
-    let metadata = format!("post-build=OpenDeskPhone/{DEVICE}/{version}\npre-device={DEVICE}\n");
+    let checksum = opendeskphone_recovery::checksum(!eff::crc::crc(boot), boot.len() as u64, !eff::crc::crc(rootfs), rootfs.len() as u64);
+    let metadata = format!(
+        "post-build=OpenDeskPhone/{DEVICE}/{version}\npre-device={DEVICE}\n{}={checksum}\n",
+        opendeskphone_recovery::CHECKSUM_KEY
+    );
     let script = updater_script();
     let unsigned = zip(&[
-        ZipEntry { name: "META-INF/com/android/metadata", data: metadata.as_bytes(), executable: false },
+        ZipEntry { name: opendeskphone_recovery::METADATA_ENTRY, data: metadata.as_bytes(), executable: false },
         ZipEntry { name: "META-INF/com/google/android/update-binary", data: update_binary, executable: true },
         ZipEntry { name: "META-INF/com/google/android/updater-script", data: script.as_bytes(), executable: false },
-        ZipEntry { name: "rootfs.img", data: rootfs, executable: false },
-        ZipEntry { name: "boot.img", data: boot, executable: false },
+        ZipEntry { name: opendeskphone_recovery::ROOTFS_ENTRY, data: rootfs, executable: false },
+        ZipEntry { name: opendeskphone_recovery::BOOT_ENTRY, data: boot, executable: false },
         ZipEntry { name: opendeskphone_recovery::RECOVERY_ENTRY, data: recovery, executable: false },
     ])?;
     sign(&unsigned, key, cert)
@@ -472,6 +478,12 @@ mod tests {
         assert!(opendeskphone_recovery::sig::has_footer(&mut std::io::Cursor::new(&z), z.len() as u64));
         let mut archive = opendeskphone_recovery::zip::Archive::open(std::io::Cursor::new(&z), z.len() as u64).unwrap();
         assert_eq!(archive.read("recovery.img", RECOVERY_PARTITION).unwrap(), recovery);
+        // The checksum in the metadata at the start is the one the
+        // recovery records from the archive's directory once installed.
+        let (name, metadata) = opendeskphone_recovery::zip::read_first(&z[..], 4096).unwrap();
+        assert_eq!(name, opendeskphone_recovery::METADATA_ENTRY);
+        let checksum = opendeskphone_recovery::package_checksum(&archive).unwrap();
+        assert!(String::from_utf8(metadata).unwrap().contains(&format!("\nopendeskphone-checksum={checksum}\n")));
         assert!(package(&boot, &recovery, b"not squashfs", b"\x7fELF", "3_1_0", KEY, CERT).is_err());
         assert!(package(b"not a boot image", &recovery, &rootfs, b"\x7fELF", "3_1_0", KEY, CERT).is_err());
         assert!(package(&boot, &recovery, &rootfs, b"#!/bin/sh", "3_1_0", KEY, CERT).is_err());

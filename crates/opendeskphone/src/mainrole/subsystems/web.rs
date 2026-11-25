@@ -69,9 +69,9 @@ fn inspect(path: &std::path::Path) -> std::io::Result<FirmwareInfo> {
 
 /// The firmware upload of the phone: the image goes into the spare bank as
 /// it arrives (one erase block in memory at a time; nothing in `/tmp` or
-/// `/run`, which are RAM), is verified there, and stays unselected until
-/// the user confirms the installation.  A bad upload costs the spare
-/// bank's old contents and nothing else.
+/// `/run`, which are RAM), or on a D80 into nvdata, is verified there, and
+/// is not installed until the user confirms the installation.  A bad
+/// upload costs the spare bank's old contents and nothing else.
 struct FlashFirmwareSink(super::system::Flash);
 
 /// The upload's bytes on their way to the updater's thread.
@@ -135,9 +135,12 @@ impl FirmwareSink for FlashFirmwareSink {
     }
 
     fn discard(&self, _path: &std::path::Path) {
-        // The bank keeps what was written; without this it cannot be selected.
+        // Without the staged image the upload cannot be installed.
         if let Ok(mut staged) = super::system::STAGED.lock() {
             *staged = None;
+        }
+        if let Ok(mut mtd) = self.0.mtd.lock() {
+            opendeskphone_update::Updater::new(mtd.as_mut(), self.0.model, "", &self.0.own_dir).discard_staged();
         }
     }
 }

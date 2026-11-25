@@ -1,4 +1,5 @@
-//! Installing an image on a D80: the package is left for the recovery.
+//! Installing an image on a D80, for [`crate::Updater`]: the package is
+//! left for the recovery.
 //!
 //! A D80 has one kernel and one root file system on its eMMC, and no spare
 //! bank to write while the system runs.  Its image is an Android OTA
@@ -6,7 +7,7 @@
 //! recovery: a second small system in the eMMC's second partition, which
 //! the boot loader starts in place of the first when `bootcmd` in its
 //! environment says so (`opendeskphone-recovery`).  So nothing is installed
-//! here.  [`leave_for_recovery`] does what the stock firmware does before
+//! here.  `leave_for_recovery` does what the stock firmware does before
 //! it restarts into its recovery, and one thing more:
 //!
 //! | Step | If power is lost right after |
@@ -33,10 +34,16 @@
 //!   this firmware, and Open Desk Phone does not gate installs on
 //!   signatures.
 //!
+//! A web upload is stored first (`stage`), and left for the recovery
+//! (`commit`) when the user installs it.
+//!
 //! The recovery restarts into the system when it is done, whether or not
 //! the package was installed, and leaves the result in
-//! `recovery/last_install` ([`status`]).  There is no trial boot: a D80 has
-//! no other system to return to.
+//! `recovery/last_install` ([`status`]).  Of a package it installed, it
+//! records the checksum in `recovery/installed` ([`installed`]), which
+//! provisioning compares with the checksum of the image that it offers
+//! ([`checksum_from_start`]).  There is no trial boot: a D80 has no other
+//! system to return to.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -57,6 +64,8 @@ const STOCK_PATCH: &str = "recovery/recovery-from-boot.p";
 const STOCK_RESOURCES: &str = "system/etc/recovery-resource.dat";
 /// What a recovery runs.
 const UPDATE_BINARY: &str = opendeskphone_recovery::install::UPDATE_BINARY;
+/// A web upload's package, while it waits to be installed.
+const STAGED: &str = "staged.zip";
 
 /// Where a D80 has what an update touches.
 #[derive(Clone, Debug)]
@@ -79,22 +88,15 @@ impl Places {
         }
     }
 
+    /// The places on a phone whose own directory in nvdata
+    /// (`/nvdata/opendeskphone`) is `own_dir`.
+    pub fn for_own_dir(own_dir: &Path) -> Places {
+        Places::phone(own_dir.parent().unwrap_or(own_dir))
+    }
+
     fn dir(&self) -> PathBuf {
         self.nvdata.join(command::DIR)
     }
-}
-
-/// A package left for the recovery, which the next restart starts.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Left {
-    /// Version from the EFF's encrypted header.
-    pub version: String,
-    /// The image is stock firmware, and the recovery written is stock's.
-    pub is_stock: bool,
-    /// The recovery partition was written (it had another recovery).
-    pub recovery_written: bool,
-    /// The package's length.
-    pub package_len: u64,
 }
 
 fn image(text: impl Into<String>) -> UpdateError {
@@ -140,36 +142,96 @@ fn size_of(partition: &Path) -> Result<u64> {
     File::open(partition).and_then(|mut f| f.seek(std::io::SeekFrom::End(0))).map_err(at(partition))
 }
 
-/// Takes an EFF image for a D80 from `reader`, stores its package in
-/// nvdata, writes the recovery that the package brings, and has the boot
-/// loader start that recovery at the next restart.  See the module text
-/// for the steps.  `own_dir` is `/nvdata/opendeskphone`, for the update
-/// lock.  On an error the next restart is the system's, as before.
-pub fn leave_for_recovery<R: Read>(reader: R, places: &Places, own_dir: &Path, mut progress: impl FnMut(&UpdatePhase)) -> Result<Left> {
-    let _lock = lock::acquire(own_dir)?;
-    progress(&UpdatePhase::Checking);
-    let mut eff = EffReader::new(reader)?;
+/// An image on its way in: its envelope opened and its label read.
+pub(crate) struct Incoming<R: Read> {
+    eff: EffReader<R>,
+    pub model: String,
+    pub version: String,
+    pub is_stock: bool,
+}
+
+/// Opens an image for a D80, and refuses one for another model.
+pub(crate) fn open<R: Read>(reader: R) -> Result<Incoming<R>> {
+    let eff = EffReader::new(reader)?;
     let header = eff.header().clone();
     if !header.model.trim().eq_ignore_ascii_case("D80") {
         return Err(UpdateError::WrongModel { image: header.model, phone: "D80".into() });
     }
     let is_stock = is_stock_version(&header.version);
-    log::info!("firmware update: {} {}{}", header.model, header.version, if is_stock { " (stock firmware)" } else { "" });
+    Ok(Incoming { eff, model: header.model, version: header.version, is_stock })
+}
 
+/// A package left for the recovery, which the next restart starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Left {
+    /// The recovery partition was written (it had another recovery).
+    pub recovery_written: bool,
+    /// The package's length.
+    pub package_len: u64,
+}
+
+/// Stores an image's package in nvdata, writes the recovery that the
+/// package brings, and has the boot loader start that recovery at the next
+/// restart.  See the module text for the steps.  On an error the next
+/// restart is the system's, and an earlier package left for the recovery
+/// is gone.
+pub(crate) fn leave_for_recovery<R: Read>(incoming: Incoming<R>, places: &Places, progress: &mut dyn FnMut(&UpdatePhase)) -> Result<Left> {
     // No command names a package while the package is being replaced.
     let dir = places.dir();
     std::fs::create_dir_all(&dir).map_err(at(&dir))?;
-    let (command_file, package) = (dir.join(command::COMMAND), dir.join(command::PACKAGE));
+    let command_file = dir.join(command::COMMAND);
     match std::fs::remove_file(&command_file) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(at(&command_file)(e)),
         _ => {}
     }
-    let _ = std::fs::remove_file(&package);
+    let _ = std::fs::remove_file(dir.join(command::PACKAGE));
+    let part = dir.join(command::PACKAGE).with_extension("part");
+    let (package_len, recovery) = receive(incoming, &part, places, progress)?;
+    let recovery_written = leave(&part, &recovery, places, progress).inspect_err(|_| {
+        let _ = std::fs::remove_file(&part);
+    })?;
+    Ok(Left { recovery_written, package_len })
+}
 
-    // The package, as it comes.
-    let part = package.with_extension("part");
+/// Stores an image's package in nvdata to be left for the recovery later
+/// ([`commit`]), as a web upload waits for the user to install it.
+/// Returns the package's length.
+pub(crate) fn stage<R: Read>(incoming: Incoming<R>, places: &Places, progress: &mut dyn FnMut(&UpdatePhase)) -> Result<u64> {
+    let dir = places.dir();
+    std::fs::create_dir_all(&dir).map_err(at(&dir))?;
+    let staged = dir.join(STAGED);
+    let part = staged.with_extension("part");
+    let (package_len, _) = receive(incoming, &part, places, progress)?;
+    std::fs::rename(&part, &staged).map_err(at(&staged))?;
+    Ok(package_len)
+}
+
+/// Leaves a package that [`stage`] stored for the recovery.  The package
+/// is checked again, since the update lock was not held while it waited.
+pub(crate) fn commit(package_len: u64, is_stock: bool, places: &Places, progress: &mut dyn FnMut(&UpdatePhase)) -> Result<Left> {
+    let staged = places.dir().join(STAGED);
+    let mut file = File::open(&staged).map_err(|_| image("the uploaded image is not there any more; upload it again"))?;
+    if file.metadata().map_err(at(&staged))?.len() != package_len {
+        return Err(image("the uploaded image is not the one that was checked; upload it again"));
+    }
+    let recovery = recovery_image(&mut file, package_len, is_stock, places)?;
+    drop(file);
+    let recovery_written = leave(&staged, &recovery, places, progress)?;
+    Ok(Left { recovery_written, package_len })
+}
+
+/// Removes a package that [`stage`] stored.
+pub(crate) fn discard(places: &Places) {
+    let _ = std::fs::remove_file(places.dir().join(STAGED));
+}
+
+/// Receives an image's package into `part`, and checks it.  Returns the
+/// package's length and the recovery that installs it.  On an error `part`
+/// is removed.
+fn receive<R: Read>(incoming: Incoming<R>, part: &Path, places: &Places, progress: &mut dyn FnMut(&UpdatePhase)) -> Result<(u64, Vec<u8>)> {
+    let Incoming { mut eff, is_stock, .. } = incoming;
     let result = (|| {
-        let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&part).map_err(at(&part))?;
+        let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(part).map_err(at(part))?;
         let mut buf = vec![0u8; 256 * 1024];
         let mut len = 0u64;
         loop {
@@ -179,7 +241,7 @@ pub fn leave_for_recovery<R: Read>(reader: R, places: &Places, own_dir: &Path, m
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
             };
-            file.write_all(&buf[..n]).map_err(at(&part))?;
+            file.write_all(&buf[..n]).map_err(at(part))?;
             len += n as u64;
             // The length is not known beforehand: megabytes, not a share.
             progress(&UpdatePhase::Receiving { percent: ((len >> 20) % 100) as u8 });
@@ -195,55 +257,89 @@ pub fn leave_for_recovery<R: Read>(reader: R, places: &Places, own_dir: &Path, m
         let Some(len) = end else {
             return Err(image("the image does not contain a signed package followed by its signature"));
         };
-        file.set_len(len).map_err(at(&part))?;
-        let limit = size_of(&places.recovery)?;
-        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
-        let mut archive = zip::Archive::open(&mut file, len).map_err(image)?;
-        if archive.entry(UPDATE_BINARY).is_none() {
-            return Err(image(format!("the package has no {UPDATE_BINARY}")));
-        }
-        let recovery = if is_stock {
-            let boot = archive.read(STOCK_BOOT, limit).map_err(image)?;
-            let patch = archive.read(STOCK_PATCH, limit).map_err(image)?;
-            let resources = archive.read(STOCK_RESOURCES, limit).map_err(image)?;
-            imgdiff::stock_recovery(&boot, &patch, &resources, limit).map_err(image)?
-        } else {
-            archive.read(opendeskphone_recovery::RECOVERY_ENTRY, limit).map_err(image)?
-        };
-        if recovery.get(..8) != Some(b"ANDROID!") {
-            return Err(image("the package's recovery image is not a boot image"));
-        }
-        file.sync_all().map_err(at(&part))?;
-        drop(file);
+        file.set_len(len).map_err(at(part))?;
+        let recovery = recovery_image(&mut file, len, is_stock, places)?;
+        file.sync_all().map_err(at(part))?;
+        Ok((len, recovery))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(part);
+    }
+    result
+}
 
+/// The recovery that installs a package of `len` bytes: the one that the
+/// package brings, or for a stock package the stock recovery, made from
+/// the package.
+fn recovery_image(file: &mut File, len: u64, is_stock: bool, places: &Places) -> Result<Vec<u8>> {
+    let limit = usize::try_from(size_of(&places.recovery)?).unwrap_or(usize::MAX);
+    let mut archive = zip::Archive::open(file, len).map_err(image)?;
+    if archive.entry(UPDATE_BINARY).is_none() {
+        return Err(image(format!("the package has no {UPDATE_BINARY}")));
+    }
+    let recovery = if is_stock {
+        let boot = archive.read(STOCK_BOOT, limit).map_err(image)?;
+        let patch = archive.read(STOCK_PATCH, limit).map_err(image)?;
+        let resources = archive.read(STOCK_RESOURCES, limit).map_err(image)?;
+        imgdiff::stock_recovery(&boot, &patch, &resources, limit).map_err(image)?
+    } else {
+        archive.read(opendeskphone_recovery::RECOVERY_ENTRY, limit).map_err(image)?
+    };
+    if recovery.get(..8) != Some(b"ANDROID!") {
+        return Err(image("the package's recovery image is not a boot image"));
+    }
+    Ok(recovery)
+}
+
+/// Leaves the package at `package` for the recovery: writes `recovery`,
+/// which installs it, to its partition, moves the package to where the
+/// command names it, and has the boot loader start the recovery.  Returns
+/// whether the recovery partition was written.  On an error no command is
+/// left.
+fn leave(package: &Path, recovery: &[u8], places: &Places, progress: &mut dyn FnMut(&UpdatePhase)) -> Result<bool> {
+    let dir = places.dir();
+    let command_file = dir.join(command::COMMAND);
+    let result = (|| {
+        match std::fs::remove_file(&command_file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(at(&command_file)(e)),
+            _ => {}
+        }
         progress(&UpdatePhase::Committing);
-        let recovery_written = write_recovery(&places.recovery, &recovery)?;
-        std::fs::rename(&part, &package).map_err(at(&package))?;
+        let recovery_written = write_recovery(&places.recovery, recovery)?;
+        let left = dir.join(command::PACKAGE);
+        std::fs::rename(package, &left).map_err(at(&left))?;
         write_whole(&command_file, command::install_command().as_bytes())?;
         File::open(&dir).and_then(|d| d.sync_all()).map_err(at(&dir))?;
         env::set_bootcmd(&places.disk, env::BOOT_RECOVERY)
             .map_err(|e| UpdateError::Layout(format!("the boot loader's environment: {e}")))?;
-        Ok(Left { version: header.version.clone(), is_stock, recovery_written, package_len: len })
+        Ok(recovery_written)
     })();
-    match &result {
-        Ok(left) => {
-            log::info!(
-                "firmware update: {} is left for the recovery ({} bytes{}); it is installed at the next restart",
-                left.version,
-                left.package_len,
-                if left.recovery_written { ", recovery image written" } else { "" }
-            );
-            progress(&UpdatePhase::Complete);
-        }
-        Err(e) => {
-            // Nothing is left that a recovery would act on.
-            let _ = std::fs::remove_file(&command_file);
-            let _ = std::fs::remove_file(&part);
-            log::error!("firmware update failed: {e}");
-            progress(&UpdatePhase::Failed(e.to_string()));
-        }
+    if result.is_err() {
+        let _ = std::fs::remove_file(&command_file);
     }
     result
+}
+
+/// The checksum of a D80 image's package (`opendeskphone_recovery::checksum`),
+/// from its start, as a download has it: what the metadata, the package's
+/// first file, says.  A package that does not say, as stock firmware's,
+/// is named by the CRC-32 and the length of its metadata, and zeros for
+/// the root file system, which no package of ours has.
+pub fn checksum_from_start<R: Read>(package: R) -> Result<String> {
+    let (name, metadata) = zip::read_first(package, 4096).map_err(image)?;
+    if name != opendeskphone_recovery::METADATA_ENTRY {
+        return Err(image(format!("the package starts with {name}, not its metadata")));
+    }
+    let key = format!("{}=", opendeskphone_recovery::CHECKSUM_KEY);
+    let said = String::from_utf8_lossy(&metadata).lines().find_map(|line| line.strip_prefix(&key).map(|c| c.trim().to_string()));
+    Ok(said.unwrap_or_else(|| opendeskphone_recovery::checksum(!eff::crc::crc(&metadata), metadata.len() as u64, 0, 0)))
+}
+
+/// The checksum of the package that the recovery last installed, which is
+/// what the system runs; `None` when the recovery has recorded none.
+pub fn installed(places: &Places) -> Option<String> {
+    let text = std::fs::read_to_string(places.dir().join(command::INSTALLED)).ok()?;
+    Some(text.trim().to_string()).filter(|t| !t.is_empty())
 }
 
 /// Takes back a package that was left for the recovery and not installed
@@ -342,16 +438,16 @@ mod tests {
         sig::sign_eff(&EffHeader::new(model, version).unwrap(), package, KEY, [9; 8]).unwrap()
     }
 
-    fn leave(image: &[u8], places: &Places, own: &Path) -> Result<Left> {
-        leave_for_recovery(image, places, own, |_| {})
+    fn leave(image: &[u8], places: &Places) -> Result<Left> {
+        leave_for_recovery(open(image)?, places, &mut |_| {})
     }
 
     #[test]
     fn our_package_is_left_with_its_recovery_written() {
         let (_dir, places, own) = phone();
         let package = ours();
-        let left = leave(&eff("D80", "3_1_0", &package), &places, &own).unwrap();
-        assert_eq!(left, Left { version: "3_1_0".into(), is_stock: false, recovery_written: true, package_len: package.len() as u64 });
+        let left = leave(&eff("D80", "3_1_0", &package), &places).unwrap();
+        assert_eq!(left, Left { recovery_written: true, package_len: package.len() as u64 });
         // The package, the command the recovery reads, and the recovery
         // image at the start of its partition, the rest of which is as it
         // was.
@@ -370,7 +466,7 @@ mod tests {
         assert_eq!(st.last_install, None);
 
         // Again: the recovery is there already, and is not written.
-        let left = leave(&eff("D80", "3_1_0", &package), &places, &own).unwrap();
+        let left = leave(&eff("D80", "3_1_0", &package), &places).unwrap();
         assert!(!left.recovery_written);
 
         // Taken back: the system starts, and nothing is left to install.
@@ -392,34 +488,34 @@ mod tests {
 
     #[test]
     fn what_the_recovery_would_not_install_is_refused() {
-        let (_dir, places, own) = phone();
+        let (_dir, places, _own) = phone();
         // An image for another model is refused before anything else is
         // checked.
         let container = [&eff::OTA_MAGIC.to_be_bytes()[..], &[0; 200]].concat();
         let other = eff::envelope::pack(&EffHeader::new("D60", "3_1_0").unwrap(), &container, [9; 8]).unwrap();
-        assert!(matches!(leave(&other, &places, &own), Err(UpdateError::WrongModel { .. })));
+        assert!(matches!(leave(&other, &places), Err(UpdateError::WrongModel { .. })));
         untouched(&places);
         // Not laid out as a signed package.
         let unsigned = zip::write(&[FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true }]).unwrap();
-        assert!(leave(&eff("D80", "3_1_0", &unsigned), &places, &own).unwrap_err().to_string().contains("signed package"));
+        assert!(leave(&eff("D80", "3_1_0", &unsigned), &places).unwrap_err().to_string().contains("signed package"));
         untouched(&places);
         // No recovery image, one that is none, and one too large for the
         // partition.
         let none = signed(&[FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true }]);
-        assert!(leave(&eff("D80", "3_1_0", &none), &places, &own).unwrap_err().to_string().contains("recovery.img"));
+        assert!(leave(&eff("D80", "3_1_0", &none), &places).unwrap_err().to_string().contains("recovery.img"));
         let not_one = signed(&[
             FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true },
             FileEntry { name: "recovery.img", data: b"not an image", executable: false },
         ]);
-        assert!(leave(&eff("D80", "3_1_0", &not_one), &places, &own).unwrap_err().to_string().contains("not a boot image"));
+        assert!(leave(&eff("D80", "3_1_0", &not_one), &places).unwrap_err().to_string().contains("not a boot image"));
         let large = signed(&[
             FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true },
             FileEntry { name: "recovery.img", data: &[b'A'; PARTITION + 1], executable: false },
         ]);
-        assert!(leave(&eff("D80", "3_1_0", &large), &places, &own).is_err());
+        assert!(leave(&eff("D80", "3_1_0", &large), &places).is_err());
         untouched(&places);
         // Not an EFF image at all.
-        assert!(leave(b"PK\x03\x04 and so on", &places, &own).is_err());
+        assert!(leave(b"PK\x03\x04 and so on", &places).is_err());
         untouched(&places);
     }
 
@@ -427,9 +523,9 @@ mod tests {
     fn a_failed_update_takes_an_earlier_one_with_it() {
         // The package of an earlier update is replaced by the next one's,
         // so its command must not outlive it.
-        let (_dir, places, own) = phone();
-        leave(&eff("D80", "3_1_0", &ours()), &places, &own).unwrap();
-        assert!(leave(&eff("D80", "3_1_1", b"PK\x03\x04 and nothing of a package"), &places, &own).is_err());
+        let (_dir, places, _own) = phone();
+        leave(&eff("D80", "3_1_0", &ours()), &places).unwrap();
+        assert!(leave(&eff("D80", "3_1_1", b"PK\x03\x04 and nothing of a package"), &places).is_err());
         let st = status(&places);
         assert_eq!((st.command, st.package_len), (None, None));
     }
@@ -439,7 +535,7 @@ mod tests {
         const BOOT: &[u8] = include_bytes!("../../opendeskphone-recovery/testdata/boot.img");
         const PATCH: &[u8] = include_bytes!("../../opendeskphone-recovery/testdata/recovery-from-boot.p");
         const RESOURCES: &[u8] = include_bytes!("../../opendeskphone-recovery/testdata/recovery-resource.dat");
-        let (_dir, places, own) = phone();
+        let (_dir, places, _own) = phone();
         // Signed with a key the stock recovery would accept; any key
         // stands in here.  No signature is verified on this path: the
         // vendor's key is not in this firmware, and the image signature
@@ -450,8 +546,9 @@ mod tests {
             FileEntry { name: STOCK_PATCH, data: PATCH, executable: false },
             FileEntry { name: STOCK_RESOURCES, data: RESOURCES, executable: false },
         ]);
-        let left = leave(&eff("D80", "1_12_14", &package), &places, &own).unwrap();
-        assert_eq!(left, Left { version: "1_12_14".into(), is_stock: true, recovery_written: true, package_len: package.len() as u64 });
+        assert!(open(&eff("D80", "1_12_14", &package)[..]).unwrap().is_stock);
+        let left = leave(&eff("D80", "1_12_14", &package), &places).unwrap();
+        assert_eq!(left, Left { recovery_written: true, package_len: package.len() as u64 });
         // The stored package is the image minus its signature, and the
         // recovery written is the one the package's patch produces.
         assert_eq!(std::fs::read(places.nvdata.join("recovery/update.zip")).unwrap(), package);
@@ -460,9 +557,78 @@ mod tests {
         assert!(status(&places).recovery_next);
 
         // A stock package without its recovery's parts is refused.
-        let (_dir, places, own) = phone();
+        let (_dir, places, _own) = phone();
         let bare = signed(&[FileEntry { name: UPDATE_BINARY, data: b"\x7fELF", executable: true }, FileEntry { name: STOCK_BOOT, data: BOOT, executable: false }]);
-        assert!(leave(&eff("D80", "1_12_14", &bare), &places, &own).unwrap_err().to_string().contains(STOCK_PATCH));
+        assert!(leave(&eff("D80", "1_12_14", &bare), &places).unwrap_err().to_string().contains(STOCK_PATCH));
         untouched(&places);
+    }
+
+    #[test]
+    fn an_uploaded_package_is_left_only_by_its_commit() {
+        let (_dir, places, _own) = phone();
+        let package = ours();
+        let image = eff("D80", "3_1_0", &package);
+        let upload = || open(&image[..]).unwrap();
+        let len = stage(upload(), &places, &mut |_| {}).unwrap();
+        assert_eq!(len, package.len() as u64);
+        // While it waits, there is nothing for a recovery to act on.
+        untouched(&places);
+        let left = commit(len, false, &places, &mut |_| {}).unwrap();
+        assert_eq!(left, Left { recovery_written: true, package_len: len });
+        assert_eq!(std::fs::read(places.nvdata.join("recovery/update.zip")).unwrap(), package);
+        assert!(status(&places).recovery_next);
+        // A commit of an upload that is gone leaves alone the package left
+        // before.
+        assert!(commit(len, false, &places, &mut |_| {}).unwrap_err().to_string().contains("upload it again"));
+        assert!(status(&places).command.is_some());
+        stage(upload(), &places, &mut |_| {}).unwrap();
+        discard(&places);
+        assert!(commit(len, false, &places, &mut |_| {}).is_err());
+    }
+
+    #[test]
+    fn the_updater_leaves_a_d80_image_for_the_recovery() {
+        use crate::install::{Options, Target, Updater};
+        use opendeskphone_state::{Model, Store, Update};
+        fn on_d80<'a>(flash: &'a mut opendeskphone_hal::Null, own: &Path, places: &Places) -> Updater<'a> {
+            Updater::new(flash, Model::D80, "", own).places(places.clone())
+        }
+        let (_dir, places, own) = phone();
+        let image = eff("D80", "3_1_0", &ours());
+        // A D80 has no MTD flash.
+        let mut flash = opendeskphone_hal::Null("mtd");
+        // A web upload: nothing is left until the commit.
+        let store = Store::new(Model::D80);
+        let staged = on_d80(&mut flash, &own, &places).store(store.clone()).stage_eff(&image[..]).unwrap();
+        assert_eq!(store.get::<Update>().incoming_version, "3_1_0");
+        assert!(matches!(staged.target, Target::Recovery { recovery_written: false, .. }), "{:?}", staged.target);
+        untouched(&places);
+        let done = on_d80(&mut flash, &own, &places).commit(&staged).unwrap();
+        assert!(matches!(done.target, Target::Recovery { recovery_written: true, .. }), "{:?}", done.target);
+        assert!(status(&places).recovery_next);
+        // From a stream, as provisioning has it, and with options for banks.
+        assert!(on_d80(&mut flash, &own, &places).install_eff(&image[..]).is_ok());
+        let banks = Options { allow_unbootable_other: true, ..Options::default() };
+        let refused = on_d80(&mut flash, &own, &places).options(banks).install_eff(&image[..]).unwrap_err();
+        assert!(refused.to_string().contains("no firmware banks"), "{refused}");
+    }
+
+    #[test]
+    fn a_package_is_named_by_the_checksum_its_metadata_states() {
+        let starting_with = |metadata: &str| {
+            zip::write(&[
+                FileEntry { name: opendeskphone_recovery::METADATA_ENTRY, data: metadata.as_bytes(), executable: false },
+                FileEntry { name: "boot.img", data: &[1; 100], executable: false },
+            ])
+            .unwrap()
+        };
+        let ours = starting_with("pre-device=model80\nopendeskphone-checksum=0a1b2c3d-100-0e0f1011-200\n");
+        assert_eq!(checksum_from_start(&ours[..]).unwrap(), "0a1b2c3d-100-0e0f1011-200");
+        // Stock firmware's states none, and is named so that it is never
+        // taken for one of ours.
+        let stock = starting_with("post-build=Digium/digium_model80/model80:4.4.2/1_12_14/1_12_14:eng/dev-keys\npre-device=model80\n");
+        assert!(checksum_from_start(&stock[..]).unwrap().ends_with("-00000000-0"));
+        let no_metadata = zip::write(&[FileEntry { name: "boot.img", data: &[1; 100], executable: false }]).unwrap();
+        assert!(checksum_from_start(&no_metadata[..]).unwrap_err().to_string().contains("not its metadata"));
     }
 }

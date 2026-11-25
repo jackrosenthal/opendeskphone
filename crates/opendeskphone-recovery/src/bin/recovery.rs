@@ -9,9 +9,10 @@
 //!    `update-binary` (`opendeskphone_recovery::install`), with a bar on
 //!    the screen.  It does not verify the package's signature: the
 //!    recovery installs whatever package is left for it.
-//! 3. It writes `recovery/last_install` and `recovery/last_log`, removes
-//!    the command (and the package, once installed), sets the boot
-//!    loader's `bootcmd` back to the system, and restarts.
+//! 3. It writes `recovery/last_install` and `recovery/last_log`, and the
+//!    checksum of a package it installed to `recovery/installed`; removes
+//!    the command (and the package, once installed); sets the boot
+//!    loader's `bootcmd` back to the system; and restarts.
 //!
 //! Like the stock recovery on this phone, it does not wait for anyone: the
 //! D80 has no keys.  With no command, or after a package that could not be
@@ -349,6 +350,7 @@ fn run(screen: &mut Option<Screen>, log: &Log) -> Outcome {
     match result {
         Ok(()) => {
             log("the package is installed");
+            record_installed(&dir, &package, log);
             // It is of no more use, and it is large.
             let _ = std::fs::remove_file(&package);
             Outcome::Installed
@@ -356,6 +358,29 @@ fn run(screen: &mut Option<Screen>, log: &Log) -> Outcome {
         Err(e) => {
             log(&format!("Installation aborted: {e}"));
             Outcome::Failed
+        }
+    }
+}
+
+/// Records what the system now runs, for `dphone` to compare provisioned
+/// firmware with.  After a failed installation, the record of the package
+/// installed before stays.
+fn record_installed(dir: &Path, package: &Path, log: &Log) {
+    let installed = dir.join(command::INSTALLED);
+    let checksum = std::fs::File::open(package)
+        .and_then(|file| Ok((file.metadata()?.len(), file)))
+        .ok()
+        .and_then(|(len, file)| opendeskphone_recovery::zip::Archive::open(file, len).ok())
+        .and_then(|archive| opendeskphone_recovery::package_checksum(&archive));
+    match checksum {
+        Some(checksum) => {
+            if let Err(e) = std::fs::write(&installed, format!("{checksum}\n")) {
+                log(&format!("{}: {e}", installed.display()));
+            }
+        }
+        None => {
+            log("the package has no boot image or root file system image to identify it by");
+            let _ = std::fs::remove_file(&installed);
         }
     }
 }

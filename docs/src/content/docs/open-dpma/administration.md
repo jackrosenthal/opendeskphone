@@ -85,9 +85,9 @@ Only the first firmware entry for each model applies.
 | Phone firmware | The phone installs the image when |
 | --- | --- |
 | Stock firmware | The entry's `version` text differs from the running version. |
-| Open Desk Phone | The image differs from the running image.  The phone compares the checksums and sizes of the kernel and root file system, and treats `version` as a label. |
+| Open Desk Phone | The image differs from the running image.  The phone compares the checksums and sizes of the kernel and root file system (on a D80, the boot image and root file system image), and treats `version` as a label. |
 
-The module includes the image's checksum in the entry when the image file is on the server: in `file_directory` for a `firmware` section, or in the package directory for the firmware package.  Without the checksum, an Open Desk Phone phone reads the first few kilobytes of the image from the URL.  Keep the images there, under the file names in the entries, so that a phone running the image needs no download.
+The module includes the checksum of a D40 thru D70 image in the entry when the image file is on the server: in `file_directory` for a `firmware` section, or in the package directory for the firmware package.  Without the checksum, an Open Desk Phone phone reads the first few kilobytes of the image from the URL.  Keep the images there, under the file names in the entries, so that a phone running the image needs no download.
 
 The module does not serve the images.  A web server must serve the directory at the network's `file_url_prefix`.
 

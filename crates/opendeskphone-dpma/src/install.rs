@@ -9,8 +9,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-/// Installs through the updater into the bank that is not running, and
-/// starts the trial boot.
+/// Installs through the updater: into the bank that is not running, with a
+/// trial boot, or on a D80 for its recovery.
 pub struct MtdInstaller {
     pub mtd: Arc<Mutex<Box<dyn Mtd>>>,
     pub model: Model,
@@ -25,8 +25,15 @@ impl FirmwareInstaller for MtdInstaller {
     /// The running bank's header in `ctrl`.  That record is CRC-protected
     /// and is what boot2 itself goes by; this updater writes it only after
     /// reading the whole image back from flash, so it is trusted without
-    /// reading 45 MiB of flash at every check.
+    /// reading 45 MiB of flash at every check.  A D80 has no `ctrl`: its
+    /// recovery records the checksum of the image it installed.
     fn running_image(&self) -> Result<ImageSum, String> {
+        #[cfg(feature = "d80")]
+        if self.model.is_touch() {
+            let places = opendeskphone_update::d80::Places::for_own_dir(&self.own_dir);
+            let checksum = opendeskphone_update::d80::installed(&places).ok_or("the recovery has recorded no image that it installed")?;
+            return ImageSum::parse(&checksum).ok_or_else(|| format!("the recovery's record of the image it installed is not a checksum: {checksum}"));
+        }
         let mut mtd = self.mtd.lock().map_err(|_| "flash lock poisoned".to_string())?;
         let parts = mtd.partitions().map_err(|e| e.to_string())?;
         let running = bank::running_bank(&self.cmdline, &parts).ok_or("not running from either firmware bank")?;
@@ -41,7 +48,8 @@ impl FirmwareInstaller for MtdInstaller {
     fn install(&self, image: &mut dyn Read) -> Result<(), InstallError> {
         let mut mtd = self.mtd.lock().map_err(|_| InstallError::Failed("flash lock poisoned".into()))?;
         // The download goes straight into the spare bank, one erase block
-        // at a time; the updater records the trial when it selects the bank.
+        // at a time (or a D80's nvdata); the updater records the trial when
+        // it selects the bank.
         let installed = Updater::new(mtd.as_mut(), self.model, &self.cmdline, &self.own_dir)
             .store(self.store.clone())
             .install_eff(image)
@@ -49,7 +57,7 @@ impl FirmwareInstaller for MtdInstaller {
                 UpdateError::WrongModel { .. } => InstallError::Refused(e.to_string()),
                 other => InstallError::Failed(other.to_string()),
             })?;
-        log::info!("update: installed {} into bank {:?}", installed.version, installed.bank);
+        log::info!("update: installed {} {}", installed.version, installed.target);
         Ok(())
     }
 }

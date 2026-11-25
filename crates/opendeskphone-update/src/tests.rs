@@ -14,7 +14,7 @@ use crate::bank::{self, Bank};
 use crate::boot2::{self, ZIMAGE_MAGIC};
 use crate::ctrl::{self, Replication};
 use crate::inspect::{inspect, verify_bank};
-use crate::install::{Installed, Options, Updater, abandon, check_eff, select_bank};
+use crate::install::{Installed, Options, Target, Updater, abandon, check_eff, select_bank};
 use crate::memnand::{BLOCK, MemNand, PAGE};
 use crate::trial;
 use crate::{UpdateError, flash};
@@ -329,10 +329,8 @@ fn install_into_the_spare_bank_both_families_both_directions() {
                 .progress(|p| phases.push(p.clone()))
                 .install_eff(&new.eff[..])
                 .unwrap();
-            assert_eq!((done.bank, done.previous), (target, running));
+            assert_eq!(done.target, Target::Bank { bank: target, previous: running, header: new.header, bad_blocks: (1, 2) });
             assert_eq!((done.version.as_str(), done.is_stock), ("3_0_0", false));
-            assert_eq!(done.header, new.header);
-            assert_eq!(done.bad_blocks, (1, 2));
             assert_bank_holds(&nand, target, &new);
             assert_bank_holds(&nand, running, &old);
             let boot = boot2::simulate(&mut m).unwrap();
@@ -502,7 +500,7 @@ fn ram_boot_targets_the_bank_boot2_would_not_boot() {
     let new = image("D60", "3_0_0", 3, kl, rl);
     let nand = phone(Model::D60, &old, &old, Bank::B);
     let done = install(&nand, Model::D60, "root=/dev/mtdblock8 ro", &new.eff).unwrap();
-    assert_eq!((done.bank, done.previous), (Bank::A, Bank::B));
+    assert!(matches!(done.target, Target::Bank { bank: Bank::A, previous: Bank::B, .. }), "{:?}", done.target);
     assert_bank_holds(&nand, Bank::A, &new);
 }
 
@@ -1049,13 +1047,8 @@ fn a_bad_file_touches_neither_the_flash_nor_the_trial_record() {
         .unwrap_err();
     assert!(matches!(err, UpdateError::WrongModel { .. }), "{err}");
     assert_eq!(nand.ops(), ops);
-    // A D80 has no banks: nothing is installed on one from here, whatever
-    // the image, and nothing is read or written for the attempt.
-    let err = Updater::new(&mut m, Model::D80, CMD_A, dir.path())
-        .install_eff_file(std::io::Cursor::new(&new.eff))
-        .unwrap_err();
-    assert!(matches!(&err, UpdateError::Refused(why) if why.contains("D80")), "{err}");
-    assert!(matches!(check_eff(&new.eff[..], Model::D80), Err(UpdateError::Refused(_))));
+    // A D80 has no banks: nothing is read or written for an attempt on one.
+    assert!(Updater::new(&mut m, Model::D80, CMD_A, dir.path()).install_eff_file(std::io::Cursor::new(&new.eff)).is_err());
     assert_eq!(nand.ops(), ops);
     assert_eq!(check_eff(&new.eff[..], Model::D60).unwrap(), "3_0_0");
     Updater::new(&mut m, Model::D60, CMD_A, dir.path()).install_eff_file(std::io::Cursor::new(&new.eff)).unwrap();
@@ -1134,7 +1127,8 @@ fn a_staged_image_is_selected_only_by_the_commit() {
     let dir = tempfile::tempdir().unwrap();
     let mut m = nand.clone();
     let staged = Updater::new(&mut m, Model::D60, CMD_A, dir.path()).stage_eff(&new.eff[..]).unwrap();
-    assert_eq!((staged.bank, staged.previous, staged.version.as_str()), (Bank::B, Bank::A, "3_0_0"));
+    assert!(matches!(staged.target, Target::Bank { bank: Bank::B, previous: Bank::A, .. }), "{:?}", staged.target);
+    assert_eq!(staged.version, "3_0_0");
     assert_eq!(boot2::simulate(&mut m).unwrap().side, Bank::A);
     assert!(!ctrl::read(m.open("ctrl").unwrap().as_mut()).unwrap().sides[1].is_valid());
     assert!(!trial::record_path(dir.path()).exists());
@@ -1147,7 +1141,7 @@ fn a_staged_image_is_selected_only_by_the_commit() {
     nand.flip_bit("root1", 3 * BLOCK as usize);
     // As staged: selected, with the trial recorded.
     let done = Updater::new(&mut m, Model::D60, CMD_A, dir.path()).commit(&staged).unwrap();
-    assert_eq!((done.bank, done.previous), (Bank::B, Bank::A));
+    assert!(matches!(done.target, Target::Bank { bank: Bank::B, previous: Bank::A, .. }), "{:?}", done.target);
     assert_eq!(boot2::simulate(&mut m).unwrap().side, Bank::B);
     assert_bank_holds(&nand, Bank::B, &new);
     assert_eq!(trial::load(dir.path()).unwrap().previous_bank, Bank::A);

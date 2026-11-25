@@ -43,3 +43,27 @@ pub const RECOVERY_ENTRY: &str = "recovery.img";
 /// The stock firmware's name for the D80 (`ro.product.device`), which a
 /// package's script checks before it writes anything.
 pub const ANDROID_DEVICE: &str = "model80";
+/// A package's metadata, its first file.
+pub const METADATA_ENTRY: &str = "META-INF/com/android/metadata";
+/// The boot image and the root file system image in one of our packages.
+pub const BOOT_ENTRY: &str = "boot.img";
+pub const ROOTFS_ENTRY: &str = "rootfs.img";
+/// The key in one of our packages' metadata whose value is the package's
+/// [`checksum`].
+pub const CHECKSUM_KEY: &str = "opendeskphone-checksum";
+
+/// What identifies one of our packages: the CRC-32 and the size of its
+/// boot image and its root file system image, as
+/// `<boot CRC>-<boot size>-<root CRC>-<root size>`, the CRCs in eight
+/// lowercase hexadecimal digits and the sizes in decimal bytes.  This is
+/// the form of the firmware checksum that provisioning compares.
+pub fn checksum(boot_crc: u32, boot_size: u64, rootfs_crc: u32, rootfs_size: u64) -> String {
+    format!("{boot_crc:08x}-{boot_size}-{rootfs_crc:08x}-{rootfs_size}")
+}
+
+/// The [`checksum`] of a package, from its directory; `None` when the
+/// package has no boot image or no root file system image.
+pub fn package_checksum<R: std::io::Read + std::io::Seek>(archive: &zip::Archive<R>) -> Option<String> {
+    let (boot, rootfs) = (archive.entry(BOOT_ENTRY)?, archive.entry(ROOTFS_ENTRY)?);
+    Some(checksum(boot.crc(), boot.size, rootfs.crc(), rootfs.size))
+}

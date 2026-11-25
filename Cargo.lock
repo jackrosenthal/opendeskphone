@@ -2731,6 +2731,7 @@ dependencies = [
  "md-5 0.10.6",
  "opendeskphone-config",
  "opendeskphone-hal",
+ "opendeskphone-recovery",
  "opendeskphone-sip",
  "opendeskphone-state",
  "opendeskphone-update",

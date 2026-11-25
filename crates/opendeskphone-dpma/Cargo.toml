@@ -11,6 +11,8 @@ publish = false
 default = ["sip", "update", "https"]
 # The provisioned-firmware installer over opendeskphone-update.
 update = ["dep:opendeskphone-update", "dep:opendeskphone-hal"]
+# Provisioned firmware on a D80 (opendeskphone-update's `d80`).
+d80 = ["update", "opendeskphone-update/d80"]
 # Downloads over https (rustls with the RustCrypto provider).
 https = ["dep:rustls", "dep:rustls-rustcrypto"]
 # Adapter that carries DPMA over opendeskphone-sip's out-of-dialog MESSAGE.
@@ -35,6 +37,7 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+opendeskphone-recovery = { path = "../opendeskphone-recovery" }
 opendeskphone-hal = { path = "../opendeskphone-hal" }
 opendeskphone-update = { path = "../opendeskphone-update" }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros", "test-util"] }

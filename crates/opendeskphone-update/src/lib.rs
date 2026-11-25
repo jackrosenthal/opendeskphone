@@ -5,7 +5,8 @@
 //! - [`install::Updater`]: write an EFF (ours or stock) into the bank that
 //!   is not running, read it back and compare, and select it.  A file is
 //!   checked in full before anything is written; a stream goes straight
-//!   into the spare bank.
+//!   into the spare bank.  On a D80, which has no banks, the image is left
+//!   for its recovery instead (`d80`, with the feature of that name).
 //! - [`lock`]: one update at a time.
 //! - [`ctrl`]: the `ctrl` partition's replication layout per family and a
 //!   power-cut-tolerant writer (shared with the early-boot stage through
@@ -61,4 +62,4 @@ pub use bank::Bank;
 pub use ctrl::{Replication, replication_for};
 pub use error::{Result, UpdateError};
 pub use inspect::{BankStatus, Status, inspect, verify_bank};
-pub use install::{D80_NOT_HERE, Installed, Options, Staged, Updater, abandon, check_eff, is_stock_version, select_bank};
+pub use install::{D80_NOT_HERE, Installed, Options, Staged, Target, Updater, abandon, check_eff, is_stock_version, select_bank};

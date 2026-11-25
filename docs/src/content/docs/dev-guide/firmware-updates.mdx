@@ -36,6 +36,8 @@ The **Firmware** card on the **System** page shows the running version and the a
 2. Click **Install** to select the new image, or **Discard** to keep the selection.
 3. Reboot the phone.
 
+On a D80, the phone writes the upload to nvdata instead, and **Install** leaves the upload for the recovery, which installs the image during the reboot.
+
 ### `dphone update install`
 
 `dphone update install` writes an image from standard input, a URL, or a file to the inactive bank, reads the image back to verify the write, and selects the bank for the next boot.

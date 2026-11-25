@@ -15,8 +15,11 @@
 //! ([`ImageSum`]).  The running side comes from the running bank's header
 //! in `ctrl`; the provisioned side from the first few hundred bytes of the
 //! URL (the OTA header at the start of the decrypted EFF), or from an
-//! optional `checksum` attribute on the entry.  The version string is
-//! shown and logged only.
+//! optional `checksum` attribute on the entry.  A D80 has a boot image and
+//! a root file system image in their place: the running side is what its
+//! recovery recorded when it installed the image, and the provisioned side
+//! is in the metadata at the start of the image's package.  The version
+//! string is shown and logged only.
 //!
 //! When a checksum cannot be obtained there is no update: it is logged and
 //! looked at again at the next check.  An image that failed to install, or
@@ -128,14 +131,25 @@ pub struct ImageInfo {
 }
 
 /// Reads just the headers of an EFF stream: the label, the salt block,
-/// the four inner fields, and the OTA header, 676 bytes in all.  The
-/// streaming decryptor reads a buffer ahead, so a few kilobytes are taken
-/// from the stream; the caller then drops it, which ends the transfer.
+/// the four inner fields, and the OTA header, 676 bytes in all, or a D80's
+/// package's metadata.  The streaming decryptor reads a buffer ahead, so a
+/// few kilobytes are taken from the stream; the caller then drops it,
+/// which ends the transfer.
 pub fn peek(stream: &mut dyn Read) -> Result<ImageInfo, String> {
     let mut eff = eff::EffReader::new(stream).map_err(|e| format!("not a firmware image: {e}"))?;
     let header = eff.header().clone();
     let mut ota = [0u8; eff::ota::OTA_HEADER_LEN];
-    eff.read_exact(&mut ota).map_err(|e| format!("firmware image is cut short: {e}"))?;
+    let cut_short = |e: std::io::Error| format!("firmware image is cut short: {e}");
+    eff.read_exact(&mut ota[..4]).map_err(cut_short)?;
+    // A D80's image carries an Android OTA package: a zip archive.
+    #[cfg(feature = "d80")]
+    if ota[..4] == *b"PK\x03\x04" {
+        let checksum = opendeskphone_update::d80::checksum_from_start((&ota[..4]).chain(&mut eff))
+            .map_err(|e| format!("not a firmware image: {e}"))?;
+        let sum = ImageSum::parse(&checksum).ok_or_else(|| format!("not a firmware image: its checksum {checksum} is not one"))?;
+        return Ok(ImageInfo { model: header.model.trim().to_string(), version: header.version.trim().to_string(), sum });
+    }
+    eff.read_exact(&mut ota[4..]).map_err(cut_short)?;
     let ota = eff::OtaHeader::parse(&ota).map_err(|e| format!("not a firmware image: {e}"))?;
     Ok(ImageInfo {
         model: header.model.trim().to_string(),
@@ -181,12 +195,12 @@ impl std::fmt::Display for InstallError {
 /// The flash side.  [`crate::install::MtdInstaller`] is the real one, over
 /// `opendeskphone-update`.
 pub trait FirmwareInstaller: Send + Sync + 'static {
-    /// What the running bank holds, from its header in `ctrl`.  An error
-    /// means it cannot be known (RAM boot, no valid record).
+    /// What the running image is: the running bank's header in `ctrl`, or
+    /// on a D80 the recovery's record.  An error means it cannot be known
+    /// (RAM boot, no valid record).
     fn running_image(&self) -> Result<ImageSum, String>;
-    /// Installs the EFF read from `image` into the other bank and selects
-    /// it for the next boot.  On error the running firmware stays the one
-    /// that boots.
+    /// Installs the EFF read from `image` for the next boot.  On error the
+    /// running firmware stays the one that boots.
     fn install(&self, image: &mut dyn Read) -> Result<(), InstallError>;
 }
 
@@ -515,6 +529,21 @@ mod tests {
         assert_eq!(select(&[fw("D60", "4", "")], &[], "D60"), None);
         // The model comparison is exact, like stock's.
         assert_eq!(select(&[fw("d60", "4", "http://x")], &[], "D60"), None);
+    }
+
+    #[cfg(feature = "d80")]
+    #[test]
+    fn a_d80_image_is_known_by_its_package_checksum() {
+        use opendeskphone_recovery::zip::{FileEntry, write};
+        let metadata = b"pre-device=model80\nopendeskphone-checksum=0a1b2c3d-100-0e0f1011-200\n";
+        let package = write(&[
+            FileEntry { name: opendeskphone_recovery::METADATA_ENTRY, data: metadata, executable: false },
+            FileEntry { name: "rootfs.img", data: &[0; 3000], executable: false },
+        ])
+        .unwrap();
+        let image = eff::envelope::pack(&eff::envelope::EffHeader::new("D80", "3_1_0").unwrap(), &package, [9; 8]).unwrap();
+        let sum = ImageSum::parse("0a1b2c3d-100-0e0f1011-200").unwrap();
+        assert_eq!(peek(&mut &image[..]).unwrap(), ImageInfo { model: "D80".into(), version: "3_1_0".into(), sum });
     }
 
     #[test]

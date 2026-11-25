@@ -50,8 +50,8 @@ impl ConfigHub {
 /// The flash, shared between the update command handler and diagnostics.
 pub type SharedMtd = Arc<Mutex<Box<dyn Mtd>>>;
 
-/// What writing an image into the spare bank takes; for the web upload,
-/// which goes into flash as it arrives.
+/// What installing an image takes; for the web upload, which goes into
+/// the spare bank (or a D80's nvdata) as it arrives.
 #[derive(Clone)]
 pub struct Flash {
     pub mtd: SharedMtd,
@@ -68,9 +68,9 @@ pub fn flash() -> Option<Flash> {
     FLASH.get().cloned()
 }
 
-/// The image a web upload wrote into the spare bank and verified there.
-/// It is not selected: `Command::InstallFirmware` with [`STAGED_PATH`]
-/// commits it.
+/// The image a web upload wrote into the spare bank (or a D80's nvdata)
+/// and verified there.  It is not installed: `Command::InstallFirmware`
+/// with [`STAGED_PATH`] commits it.
 pub static STAGED: Mutex<Option<opendeskphone_update::Staged>> = Mutex::new(None);
 
 /// The `path` of `Command::InstallFirmware` that means the staged image.
@@ -98,6 +98,11 @@ pub fn start(ctx: &Context, parts: Parts) {
             own_dir: ctx.paths.own_dir(),
             store: ctx.store.clone(),
         });
+        // An upload that waited to be installed went with the system that
+        // received it (on a D80, it would fill nvdata).
+        if let Ok(mut m) = mtd.lock() {
+            Updater::new(m.as_mut(), state_model(ctx.model), "", &ctx.paths.own_dir()).discard_staged();
+        }
     }
     // Seed the update state: running bank and trial status.
     if let Some(mtd) = mtd {
@@ -376,8 +381,9 @@ pub(super) fn install(
         ))
     };
     if path == STAGED_PATH {
-        // A web upload: the image is in the spare bank already, verified
-        // and not selected.  The commit reads it back once more.
+        // A web upload: the image is in the spare bank (or a D80's
+        // nvdata) already, verified and not installed.  The commit checks
+        // it once more.
         let mut slot = STAGED.lock().map_err(|_| CommandError::Failed("staged image lock poisoned".into()))?;
         let staged = slot.as_ref().ok_or_else(|| CommandError::Failed("no uploaded image is waiting; upload it again".into()))?;
         if staged.is_stock && !allow_stock {
@@ -389,7 +395,7 @@ pub(super) fn install(
             .commit(staged)
             .map_err(|e| CommandError::Failed(e.to_string()))?;
         *slot = None;
-        info!("update: selected {} in bank {:?}", installed.version, installed.bank);
+        info!("update: installed {} {}", installed.version, installed.target);
         return Ok(Reply::Text(installed.version));
     }
     let mut file = std::fs::File::open(path)
@@ -409,7 +415,7 @@ pub(super) fn install(
         .store(store.clone())
         .install_eff_file(file)
         .map_err(|e| CommandError::Failed(e.to_string()))?;
-    info!("update: installed {} into bank {:?}", installed.version, installed.bank);
+    info!("update: installed {} {}", installed.version, installed.target);
     Ok(Reply::Text(installed.version))
 }
 

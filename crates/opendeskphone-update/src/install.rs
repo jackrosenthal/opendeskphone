@@ -1,4 +1,6 @@
-//! Installing an EFF into the bank that is not running.
+//! Installing an EFF into the bank that is not running, or on a D80, which
+//! has no banks, leaving it for the recovery (`crate::d80`).  Every way of
+//! installing firmware goes through [`Updater`].
 //!
 //! The order of operations, and the state boot2 sees after each:
 //!
@@ -76,53 +78,69 @@ pub struct Options {
     pub allow_unbootable_other: bool,
 }
 
-/// A finished, committed installation.
+/// A finished installation: the image is what the next boot starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Installed {
-    /// The bank now selected for the next boot.
-    pub bank: Bank,
-    /// The bank that was kept; the rollback target.
-    pub previous: Bank,
     /// Version from the EFF's encrypted header.
     pub version: String,
     /// The image is stock firmware (version below 3).
     pub is_stock: bool,
-    /// The header now stored in `ctrl` for `bank`.
-    pub header: AppHeader,
-    /// Bad blocks skipped in the kernel and root partitions.
-    pub bad_blocks: (u32, u32),
+    pub target: Target,
 }
 
-/// An image written to the spare bank and verified there, but not
-/// selected: its `ctrl` header is still invalid, so boot2 cannot boot it.
-/// [`Updater::commit`] selects it.
+/// An image received and verified, which [`Updater::commit`] installs.
+/// Until then the next boot starts what it did: the bank's `ctrl` header
+/// is still invalid, so boot2 cannot boot it, or a D80's package is not
+/// left for the recovery.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Staged {
-    pub bank: Bank,
-    pub previous: Bank,
     pub version: String,
     pub is_stock: bool,
-    pub header: AppHeader,
-    pub bad_blocks: (u32, u32),
+    pub target: Target,
 }
 
-/// Why nothing here installs an image on a D80.  Its image is an Android
-/// OTA package, which its recovery writes to the eMMC; it has no flash
-/// banks, no `ctrl` partition, and no boot2.  `d80` (with the feature of
-/// that name) leaves a package for the recovery, and `dphone update
-/// install` uses it; the updater of this module, which the web interface
-/// and provisioning use, does not.
-pub const D80_NOT_HERE: &str = "a D80's firmware is an Android OTA package, which the phone's recovery installs; \
-     'dphone update install' leaves one for the recovery, and nothing else in this firmware does yet";
+/// Where an image went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// A bank of the D40 thru D70.
+    Bank {
+        /// The bank written.
+        bank: Bank,
+        /// The bank kept; the rollback target.
+        previous: Bank,
+        /// The header stored in `ctrl` for `bank` when it is selected.
+        header: AppHeader,
+        /// Bad blocks skipped in the kernel and root partitions.
+        bad_blocks: (u32, u32),
+    },
+    /// The D80's recovery, which installs the package at the next restart.
+    Recovery {
+        /// The recovery partition was written (it had another recovery).
+        /// A staged package has written nothing.
+        recovery_written: bool,
+        /// The package's length.
+        package_len: u64,
+    },
+}
+
+impl std::fmt::Display for Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Target::Bank { bank, .. } => write!(f, "in bank {bank:?}"),
+            Target::Recovery { .. } => f.write_str("for the recovery"),
+        }
+    }
+}
+
+/// Why a firmware built without the feature `d80` installs nothing on a
+/// D80.
+pub const D80_NOT_HERE: &str = "this firmware is built without the D80's updater";
 
 /// Reads a whole EFF through every check that needs no flash: the
 /// envelope, the model, the OTA header and its CRCs, the kernel's header as
 /// boot2 reads it, both component CRCs, and the end of the stream.
 /// Returns the envelope's version.
 pub fn check_eff<R: Read>(reader: R, model: Model) -> Result<String> {
-    if model.is_touch() {
-        return Err(UpdateError::Refused(D80_NOT_HERE.into()));
-    }
     let eff = EffReader::new(reader)?;
     let header = eff.header().clone();
     let phone = model.to_string();
@@ -166,12 +184,15 @@ pub struct Updater<'a> {
     store: Option<Store>,
     progress: Option<ProgressFn<'a>>,
     last: UpdatePhase,
+    #[cfg(feature = "d80")]
+    places: crate::d80::Places,
 }
 
 impl<'a> Updater<'a> {
     /// `cmdline` is the kernel command line (`/proc/cmdline`), from which the
     /// running bank is taken.  `own_dir` is `/nvdata/opendeskphone`: the
-    /// update lock is taken on it and the trial record lives in it.
+    /// update lock is taken on it and the trial record lives in it.  A D80
+    /// has no MTD flash, and its updates go to nvdata instead.
     pub fn new(mtd: &'a mut dyn Mtd, model: Model, cmdline: &str, own_dir: &Path) -> Self {
         Updater {
             mtd,
@@ -182,7 +203,16 @@ impl<'a> Updater<'a> {
             store: None,
             progress: None,
             last: UpdatePhase::Idle,
+            #[cfg(feature = "d80")]
+            places: crate::d80::Places::for_own_dir(own_dir),
         }
+    }
+
+    /// The D80's eMMC and nvdata in other places than a phone's.
+    #[cfg(all(test, feature = "d80"))]
+    pub(crate) fn places(mut self, places: crate::d80::Places) -> Self {
+        self.places = places;
+        self
     }
 
     pub fn options(mut self, options: Options) -> Self {
@@ -230,7 +260,13 @@ impl<'a> Updater<'a> {
     /// trial.  Nothing is written.
     fn begin(&mut self) -> Result<UpdateLock> {
         if self.model.is_touch() {
-            return Err(UpdateError::Refused(D80_NOT_HERE.into()));
+            if !cfg!(feature = "d80") {
+                return Err(UpdateError::Refused(D80_NOT_HERE.into()));
+            }
+            if self.options.target.is_some() || self.options.allow_unbootable_other {
+                return Err(UpdateError::Refused("a D80 has no firmware banks to choose between".into()));
+            }
+            return lock::acquire(&self.own_dir);
         }
         let lock = lock::acquire(&self.own_dir)?;
         if let Some(t) = trial::load(&self.own_dir) {
@@ -257,6 +293,10 @@ impl<'a> Updater<'a> {
     pub fn install_eff<R: Read>(&mut self, reader: R) -> Result<Installed> {
         let result = (|| {
             let _lock = self.begin()?;
+            #[cfg(feature = "d80")]
+            if self.model.is_touch() {
+                return self.leave_for_recovery(reader);
+            }
             let staged = self.stage(reader)?;
             self.commit_staged(&staged, false)
         })();
@@ -268,8 +308,13 @@ impl<'a> Updater<'a> {
     pub fn install_eff_file<R: Read + Seek>(&mut self, mut file: R) -> Result<Installed> {
         let result = (|| {
             let _lock = self.begin()?;
-            self.phase(UpdatePhase::Checking);
             file.seek(SeekFrom::Start(0))?;
+            // A D80's package is checked in full before it is left.
+            #[cfg(feature = "d80")]
+            if self.model.is_touch() {
+                return self.leave_for_recovery(&mut file);
+            }
+            self.phase(UpdatePhase::Checking);
             check_eff(&mut file, self.model)?;
             file.seek(SeekFrom::Start(0))?;
             let staged = self.stage(&mut file)?;
@@ -285,6 +330,10 @@ impl<'a> Updater<'a> {
     pub fn stage_eff<R: Read>(&mut self, reader: R) -> Result<Staged> {
         let result = (|| {
             let _lock = self.begin()?;
+            #[cfg(feature = "d80")]
+            if self.model.is_touch() {
+                return self.stage_for_recovery(reader);
+            }
             self.stage(reader)
         })();
         // Not `Complete`: nothing is installed until the commit.
@@ -297,9 +346,66 @@ impl<'a> Updater<'a> {
     pub fn commit(&mut self, staged: &Staged) -> Result<Installed> {
         let result = (|| {
             let _lock = self.begin()?;
-            self.commit_staged(staged, true)
+            match staged.target {
+                #[cfg(feature = "d80")]
+                Target::Recovery { package_len, .. } => self.commit_for_recovery(staged, package_len),
+                _ => self.commit_staged(staged, true),
+            }
         })();
         self.finished(result, UpdatePhase::Complete)
+    }
+
+    /// Gives up what [`Updater::stage_eff`] staged: a D80's upload is
+    /// removed, and a bank keeps what was written, unselectable.
+    pub fn discard_staged(&mut self) {
+        #[cfg(feature = "d80")]
+        if self.model.is_touch() {
+            crate::d80::discard(&self.places);
+        }
+    }
+
+    /// What an image says it is, for the state store and the log.
+    fn note_incoming(&self, model: &str, version: &str, is_stock: bool) {
+        if let Some(s) = &self.store {
+            s.update::<Update, _>(|u| {
+                u.incoming_version = version.to_string();
+                u.incoming_is_stock = is_stock;
+            });
+        }
+        log::info!("firmware update: {} {}{}", model.trim(), version, if is_stock { " (stock firmware)" } else { "" });
+    }
+
+    #[cfg(feature = "d80")]
+    fn incoming<R: Read>(&mut self, reader: R) -> Result<crate::d80::Incoming<R>> {
+        self.phase(UpdatePhase::Checking);
+        let incoming = crate::d80::open(reader)?;
+        self.note_incoming(&incoming.model, &incoming.version, incoming.is_stock);
+        Ok(incoming)
+    }
+
+    #[cfg(feature = "d80")]
+    fn leave_for_recovery<R: Read>(&mut self, reader: R) -> Result<Installed> {
+        let incoming = self.incoming(reader)?;
+        let (version, is_stock) = (incoming.version.clone(), incoming.is_stock);
+        let places = self.places.clone();
+        let left = crate::d80::leave_for_recovery(incoming, &places, &mut |p: &UpdatePhase| self.phase(p.clone()))?;
+        Ok(left_for_recovery(version, is_stock, left))
+    }
+
+    #[cfg(feature = "d80")]
+    fn stage_for_recovery<R: Read>(&mut self, reader: R) -> Result<Staged> {
+        let incoming = self.incoming(reader)?;
+        let (version, is_stock) = (incoming.version.clone(), incoming.is_stock);
+        let places = self.places.clone();
+        let package_len = crate::d80::stage(incoming, &places, &mut |p: &UpdatePhase| self.phase(p.clone()))?;
+        Ok(Staged { version, is_stock, target: Target::Recovery { recovery_written: false, package_len } })
+    }
+
+    #[cfg(feature = "d80")]
+    fn commit_for_recovery(&mut self, staged: &Staged, package_len: u64) -> Result<Installed> {
+        let places = self.places.clone();
+        let left = crate::d80::commit(package_len, staged.is_stock, &places, &mut |p: &UpdatePhase| self.phase(p.clone()))?;
+        Ok(left_for_recovery(staged.version.clone(), staged.is_stock, left))
     }
 
     fn stage<R: Read>(&mut self, reader: R) -> Result<Staged> {
@@ -311,18 +417,7 @@ impl<'a> Updater<'a> {
             return Err(UpdateError::WrongModel { image: header.model, phone });
         }
         let is_stock = is_stock_version(&header.version);
-        if let Some(s) = &self.store {
-            s.update::<Update, _>(|u| {
-                u.incoming_version = header.version.clone();
-                u.incoming_is_stock = is_stock;
-            });
-        }
-        log::info!(
-            "firmware update: {} {}{}",
-            header.model,
-            header.version,
-            if is_stock { " (stock firmware)" } else { "" }
-        );
+        self.note_incoming(&header.model, &header.version, is_stock);
         let version = header.version;
 
         // The 160-byte header: magic, type 0, and both header CRCs.
@@ -432,12 +527,9 @@ impl<'a> Updater<'a> {
         drop((kpart, rpart, ctrl_part));
         self.read_back(target, &app)?;
         Ok(Staged {
-            bank: target,
-            previous: keep,
             version,
             is_stock,
-            header: app,
-            bad_blocks: (kbad.max(kskipped), rbad.max(rskipped)),
+            target: Target::Bank { bank: target, previous: keep, header: app, bad_blocks: (kbad.max(kskipped), rbad.max(rskipped)) },
         })
     }
 
@@ -452,14 +544,17 @@ impl<'a> Updater<'a> {
 
     /// Step 5.  With `reverify`, the bank is read back again first.
     fn commit_staged(&mut self, staged: &Staged, reverify: bool) -> Result<Installed> {
-        let (target, keep) = (staged.bank, staged.previous);
+        let Target::Bank { bank: target, previous: keep, header, .. } = &staged.target else {
+            return Err(UpdateError::Refused("the image is not staged in a bank".into()));
+        };
+        let (target, keep) = (*target, *keep);
         let (ti, ki) = (bank::index(target), bank::index(keep));
         let parts = self.mtd.partitions()?;
         if bank::running_bank(&self.cmdline, &parts) == Some(target) {
             return Err(UpdateError::Refused(format!("bank {target:?} holds the running system")));
         }
         if reverify {
-            self.read_back(target, &staged.header)?;
+            self.read_back(target, header)?;
         }
         let mut ctrl_part = self.mtd.open(CTRL_PART)?;
         let mut rec = ctrl::read(ctrl_part.as_mut())?;
@@ -475,7 +570,7 @@ impl<'a> Updater<'a> {
             trial::record(&self.own_dir, keep, target)
                 .map_err(|e| UpdateError::Io(std::io::Error::new(e.kind(), format!("recording the trial boot: {e}"))))?;
         }
-        rec.sides[ti] = Side::from_header(&staged.header);
+        rec.sides[ti] = Side::from_header(header);
         rec.active = ti as u32;
         let committed = (|| {
             ctrl::write(ctrl_part.as_mut(), &rec, ctrl::replication_for(self.model.family()))?;
@@ -499,15 +594,18 @@ impl<'a> Updater<'a> {
             let _ = trial::clear(&self.own_dir);
         }
         log::info!("firmware update: bank {target:?} written and selected ({})", staged.version);
-        Ok(Installed {
-            bank: target,
-            previous: keep,
-            version: staged.version.clone(),
-            is_stock: staged.is_stock,
-            header: staged.header,
-            bad_blocks: staged.bad_blocks,
-        })
+        Ok(Installed { version: staged.version.clone(), is_stock: staged.is_stock, target: staged.target.clone() })
     }
+}
+
+#[cfg(feature = "d80")]
+fn left_for_recovery(version: String, is_stock: bool, left: crate::d80::Left) -> Installed {
+    log::info!(
+        "firmware update: {version} is left for the recovery ({} bytes{}); it is installed at the next restart",
+        left.package_len,
+        if left.recovery_written { ", recovery image written" } else { "" }
+    );
+    Installed { version, is_stock, target: Target::Recovery { recovery_written: left.recovery_written, package_len: left.package_len } }
 }
 
 /// Makes `bank` the next boot without writing any image: sets the active

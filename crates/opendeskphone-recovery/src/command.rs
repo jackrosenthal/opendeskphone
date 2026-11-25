@@ -15,6 +15,9 @@ pub const PACKAGE: &str = "update.zip";
 pub const LAST_INSTALL: &str = "last_install";
 /// The recovery's log of its last run.
 pub const LAST_LOG: &str = "last_log";
+/// The [`crate::checksum`] of the package the recovery last installed,
+/// which is what the system runs.
+pub const INSTALLED: &str = "installed";
 
 /// The command that has the recovery install the package `dphone` left.
 pub fn install_command() -> String {
