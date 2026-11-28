@@ -20,7 +20,7 @@ enum Xtask {
     Deploy(deploy::Deploy),
     /// Regenerate the phone's time zone rule table from a zone database
     TzTable(tz::TzTable),
-    /// Regenerate kernel/{patches,files,configs} from a v7.3 working tree
+    /// Regenerate kernel/{patches,files,configs} from a v7.3.5 working tree
     KernelSync(kernel::KernelSync),
 }
 

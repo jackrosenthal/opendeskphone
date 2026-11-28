@@ -1,6 +1,6 @@
 # Kernel
 
-This directory holds the Open Desk Phone kernel: mainline Linux 7.3 with two ports.  One is to the Broadcom BCMRING family of system-on-chip processors, which the Digium D40, D45, D50, D60, D62, D65, and D70 phones are built on.  The other is to the Digium D80, which is built on the NXP i.MX 6DualLite, a processor that Linux 7.3 already supports.  The Linux source itself is not in this repository.  The build downloads the Linux 7.3 release and applies what is here.
+This directory holds the Open Desk Phone kernel: Linux 7.3.5 with two ports.  One is to the Broadcom BCMRING family of system-on-chip processors, which the Digium D40, D45, D50, D60, D62, D65, and D70 phones are built on.  The other is to the Digium D80, which is built on the NXP i.MX 6DualLite, a processor that Linux already supports.  The Linux source itself is not in this repository.  The build downloads the Linux 7.3.5 release and applies what is here.
 
 Both ports are in one source tree, and the build makes two kernels of it: one for the seven BCMRING phones, and one for the D80.  Except for [The D80's kernel](#the-d80s-kernel), the sections below describe the kernel of the BCMRING phones.
 
@@ -8,7 +8,7 @@ Both ports are in one source tree, and the build makes two kernels of it: one fo
 
 | Path | Contents |
 | --- | --- |
-| `patches/` | Changes to files that exist in Linux 7.3, with one patch file for each kernel subsystem.  The build applies them in the order of their file names with `patch -p1`. |
+| `patches/` | Changes to files that exist in Linux 7.3.5, with one patch file for each kernel subsystem.  The build applies them in the order of their file names with `patch -p1`. |
 | `files/` | Files that the port adds (drivers, device trees, device tree binding documents, and headers), stored at the paths they have in the kernel tree.  The build copies them into the patched tree. |
 | `configs/` | Kernel configurations.  The build copies them to `arch/arm/configs/`.  The firmware of the BCMRING phones uses `bcmring_tiny_defconfig`.  `bcmring_defconfig` is a larger configuration that the firmware build does not use.  The D80's kernel uses `d80_defconfig`. |
 
@@ -18,12 +18,12 @@ Nix builds the kernel, and `nix/kernel.nix` is the recipe.
 
 | Command | Result |
 | --- | --- |
-| `nix build .#kernel` | The compressed kernel (`zImage`), one device tree for each model (`dtbs/`), the loadable modules (`lib/modules/7.3.0/`), and the full configuration that was used (`config`). |
+| `nix build .#kernel` | The compressed kernel (`zImage`), one device tree for each model (`dtbs/`), the loadable modules (`lib/modules/7.3.5/`), and the full configuration that was used (`config`). |
 | `nix build .#kernel-d60` | `kernel.bin`, the file that is written to the kernel partition of a D60.  There is one such output for each model. |
 | `nix build .#kernel-d80` | The D80's kernel.  See [The D80's kernel](#the-d80s-kernel). |
 | `nix build .#boot-d80` | The D80's Android boot image, which is written to the first partition of its eMMC. |
 | `nix build .#recovery-d80` | The D80's recovery image, which is written to the second partition of its eMMC: the same kernel, with the recovery program in its ramdisk. |
-| `nix build .#kernel-source` | The Linux 7.3 tree with both ports applied and nothing built. |
+| `nix build .#kernel-source` | The Linux 7.3.5 tree with both ports applied and nothing built. |
 | `nix build .#eff-d60` | The complete firmware image for a D60, which contains `kernel.bin`. |
 
 The compiled kernel is the same for all seven BCMRING models, and only the device tree differs.  Any change under `kernel/` makes Nix build both kernels again, because a Nix build cannot reuse object files from an earlier build.
@@ -48,7 +48,7 @@ The compiled kernel is the same for all seven BCMRING models, and only the devic
 | `zImage` | The compressed kernel. |
 | `dtbs/imx6dl-digium-d80.dtb` | The device tree (`files/arch/arm/boot/dts/nxp/imx/imx6dl-digium-d80.dts`). |
 | `zImage-dtb` | `zImage` followed by the device tree, which is the form the boot loader starts. |
-| `lib/modules/7.3.0/` | The loadable modules (sound, Wi-Fi, Bluetooth, and some file systems), and `modules.dep`, from which the firmware takes the order to load them in. |
+| `lib/modules/7.3.5/` | The loadable modules (sound, Wi-Fi, Bluetooth, and some file systems), and `modules.dep`, from which the firmware takes the order to load them in. |
 | `config` | The full configuration that was used. |
 
 The port adds one driver, for the ZL38040 voice processor (`files/sound/soc/codecs/zl38040.c`), and an entry for the RTL8363NB Ethernet switch in the `rtl8365mb` driver.  Everything else is the device tree and the configuration.
@@ -76,21 +76,21 @@ The firmware loads the sound and Bluetooth modules when it starts, from the list
 
 - **Sound is one PCM device, and a mixer control selects the path.**  The control `Audio Path` of the ZL38040 driver selects `Speaker`, `Handset`, `Headset`, or `Bluetooth`.  `Master Playback Volume` is 0 to 10 and starts at 0, which is silence.  The PCM device is stereo at 8 or 16 kHz, with the voice in the left channel in both directions.
 - **The panel is mounted upside down.**  The first line of the frame buffer is at the bottom of the screen as the phone is viewed, and the device tree says so (`rotation = <180>`).  The kernel does not rotate the picture, and the touchscreen reports positions in the frame buffer's coordinates.
-- **`CONFIG_DRM_IMX_PARALLEL_DISPLAY` is on only to make the kernel link.**  In Linux 7.3, the LVDS driver (`CONFIG_DRM_IMX_LDB`) needs `CONFIG_DRM_DISPLAY_HELPER` and does not select it.  The parallel display driver, which the phone does not use, does.
+- **`CONFIG_DRM_IMX_PARALLEL_DISPLAY` is on only to make the kernel link.**  In Linux 7.3.5, the LVDS driver (`CONFIG_DRM_IMX_LDB`) needs `CONFIG_DRM_DISPLAY_HELPER` and does not select it.  The parallel display driver, which the phone does not use, does.
 - **`make dtbs_check` reports two problems in the device tree.**  The panel has no compatible for its part, which is unknown.  The Ethernet switch has an `mdio` node, which the driver requires and the binding allows only for a switch on the other kind of bus.
 
 ## Working on the kernel
 
-The ports are developed in an ordinary git checkout of the Linux `v7.3` tag, outside this repository.  The `patches/`, `files/`, and `configs/` directories are generated from that checkout.
+The ports are developed in an ordinary git checkout of the Linux `v7.3.5` tag, outside this repository.  The `patches/`, `files/`, and `configs/` directories are generated from that checkout.
 
 To create the checkout with the ports applied:
 
 ```text
-git clone --depth 1 --branch v7.3 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git ~/linux-bcmring
+git clone --depth 1 --branch v7.3.5 https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git ~/linux-bcmring
 cp -r --no-preserve=mode "$(nix build .#kernel-source --no-link --print-out-paths)"/. ~/linux-bcmring/
 ```
 
-The checkout's `HEAD` stays at `v7.3`, so `git status` and `git diff` in it show exactly the ports.
+The checkout's `HEAD` stays at `v7.3.5`, so `git status` and `git diff` in it show exactly the ports.
 
 After editing the checkout, regenerate this directory and build:
 
@@ -99,7 +99,7 @@ cargo xtask kernel-sync ~/linux-bcmring
 nix build .#kernel
 ```
 
-`kernel-sync` replaces the contents of all three directories.  It writes every modified file of the checkout into a patch in `patches/`, with one numbered patch for each subsystem, copies every new file to `files/`, and copies the files under `arch/arm/configs/` to `configs/`.  It reads `git diff HEAD` and the list of untracked files, so the checkout's `HEAD` must be `v7.3`.
+`kernel-sync` replaces the contents of all three directories.  It writes every modified file of the checkout into a patch in `patches/`, with one numbered patch for each subsystem, copies every new file to `files/`, and copies the files under `arch/arm/configs/` to `configs/`.  It reads `git diff HEAD` and the list of untracked files, so the checkout's `HEAD` must be `v7.3.5`.
 
 ## Trying a kernel without installing it
 

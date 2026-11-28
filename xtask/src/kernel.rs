@@ -3,11 +3,11 @@
 //! The port is kept in the repository as:
 //!
 //! - `kernel/patches/NNNN-<group>.patch`: changes to files that exist in
-//!   mainline v7.3, one patch per subsystem group, applied with `patch -p1`;
+//!   Linux v7.3.5, one patch per subsystem group, applied with `patch -p1`;
 //! - `kernel/files/`: files the port adds, at their kernel-tree paths;
 //! - `kernel/configs/`: the defconfigs (they belong in `arch/arm/configs/`).
 //!
-//! `kernel-sync` regenerates all three from a git checkout of v7.3 whose
+//! `kernel-sync` regenerates all three from a git checkout of v7.3.5 whose
 //! working tree holds the port.  The build itself is the Nix derivation in
 //! `nix/kernel.nix`; `kernel/README.md` says how to get a tree to edit.
 

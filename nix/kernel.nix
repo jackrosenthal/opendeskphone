@@ -1,4 +1,4 @@
-# Mainline Linux v7.3 with the ports to the phones: kernel/patches applied in
+# Linux v7.3.5 with the ports to the phones: kernel/patches applied in
 # name order, kernel/files copied over the tree, configured from
 # kernel/configs.  The one source tree has both ports, and this file builds
 # one kernel of it; nix/default.nix calls it once for each:
@@ -69,7 +69,7 @@
   depmod ? false,
 }:
 let
-  version = "7.3";
+  version = "7.3.5";
   cross = pkgsCross.arm-embedded.buildPackages;
   patchDir = kernelSrc + "/patches";
   patches = map (n: patchDir + "/${n}") (
@@ -86,13 +86,13 @@ let
     "HOSTCC=cc"
     "KBUILD_BUILD_USER=opendeskphone"
     "KBUILD_BUILD_HOST=opendeskphone"
-    # Fixed release string (7.3.0), so the module directory has one name.
+    # No local version, so the module directory is named by the version alone.
     "LOCALVERSION="
     "KBUILD_BUILD_TIMESTAMP=1970-01-01"
   ];
   src = fetchurl {
     url = "mirror://kernel/linux/kernel/v7.x/linux-${version}.tar.xz";
-    hash = "sha256-hzY8JPEOBjIes2J2VSEJTpRHH2v/i84taz5A858ASVM=";
+    hash = "sha256-jyk/g9VPC3ub5Whj68Xk6nnXPlMLSuVcVyvpfvOfCZA=";
   };
 
   applyPort = ''
@@ -100,8 +100,8 @@ let
     cp ${kernelSrc + "/configs"}/* arch/arm/configs/
   '';
 
-  # The v7.3 tree with the ports applied and nothing built: what a developer
-  # copies over a git checkout of v7.3 to work on them (kernel/README.md).
+  # The v7.3.5 tree with the ports applied and nothing built: what a developer
+  # copies over a git checkout of v7.3.5 to work on them (kernel/README.md).
   source = stdenv.mkDerivation {
     pname = "linux-opendeskphone-source";
     inherit version src patches;
@@ -175,12 +175,12 @@ stdenv.mkDerivation {
     make $makeFlags INSTALL_MOD_PATH=$out INSTALL_MOD_STRIP=1 DEPMOD=true modules_install
     rm -f $out/lib/modules/*/build $out/lib/modules/*/source
     ${lib.optionalString depmod ''
-      depmod --basedir $out ${version}.0
+      depmod --basedir $out ${version}
       # Only the text index is read; the others are for a `modprobe` that
       # the root file system does not have.
-      find $out/lib/modules/${version}.0 -maxdepth 1 -name 'modules.*' \
+      find $out/lib/modules/${version} -maxdepth 1 -name 'modules.*' \
         ! -name modules.dep ! -name modules.order ! -name modules.builtin -delete
-      test -s $out/lib/modules/${version}.0/modules.dep
+      test -s $out/lib/modules/${version}/modules.dep
     ''}
     runHook postInstall
   '';

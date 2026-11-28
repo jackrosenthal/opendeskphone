@@ -2,7 +2,7 @@
 #
 #   kernel                 zImage, DTBs, modules (one build for the D40 thru
 #                          the D70)
-#   kernel-source          v7.3 with the ports applied, unbuilt (for editing)
+#   kernel-source          v7.3.5 with the ports applied, unbuilt (for editing)
 #   kernel-<model>         boot image for the k0/k1 slot, D40 thru D70
 #   kernel-d80             the D80's kernel: zImage, DTB, the two as one
 #                          file, and modules
