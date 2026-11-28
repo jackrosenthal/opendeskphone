@@ -1168,6 +1168,15 @@ fn display_menu() -> Box<dyn Screen> {
             .value(if dim { tr::ON } else { tr::OFF })
             .switch(dim),
         );
+        v.push(
+            Item::new(tr::DIM_LEVEL, |_| {
+                Nav::Push(
+                    Level::boxed(tr::DIM_LEVEL, opendeskphone_hal::BRIGHTNESS_SETTING_MAX, |cx| cx.cfg.backlight_dim_level, |_, _| {})
+                        .with_commit(|cx, v| set(cx, "backlight_dim_level", v.to_string())),
+                )
+            })
+            .value(cx.cfg.backlight_dim_level.to_string()),
+        );
         // Touch: a choice of a few times; the other skins type the seconds.
         let timeout = cx.cfg.backlight_timeout_secs;
         if cx.th.touch() {

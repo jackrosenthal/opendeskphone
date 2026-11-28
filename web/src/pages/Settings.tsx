@@ -140,6 +140,7 @@ const display: Item[] = [
   { id: "time_short_format", label: "Time format", type: "text" },
   { id: "date_short_format", label: "Date format", type: "text" },
   { id: "dim_backlight", label: "Dim backlight when idle", type: "bool" },
+  { id: "backlight_dim_level", label: "Dim level", type: "number", min: 0, max: 10, hint: "0 = off" },
   { id: "small_clock", label: "Small clock", type: "bool" },
 ];
 

@@ -412,8 +412,8 @@ fn a_theme_is_chosen_and_shown_by_a_tap() {
     r.tap(row(MENU_SETTINGS));
     r.tap(row(SETTINGS_DISPLAY));
     assert_eq!(r.screen(), "display");
-    // Brightness, Dim when idle, Backlight timeout, Theme.
-    r.tap(row(3));
+    // Brightness, Dim when idle, Dim level, Backlight timeout, Theme.
+    r.tap(row(4));
     assert_eq!(r.screen(), "theme");
     all_large(&r);
     // No buttons: a tap is the choice.
@@ -449,7 +449,7 @@ fn a_finger_moves_the_themes_by_the_pixel_and_chooses_none() {
         r.show("menu");
         r.tap(row(MENU_SETTINGS));
         r.tap(row(SETTINGS_DISPLAY));
-        r.tap(row(3));
+        r.tap(row(4));
         assert_eq!(r.screen(), "theme");
         assert_eq!(r.ui.motion_deadline().is_some(), moving);
         // This finds the rows with the check mark at their left.
@@ -580,8 +580,16 @@ fn display_settings_are_switched_and_chosen() {
     r.tap(row(1));
     assert_eq!(setting(taken(&r.config)), vec![pair("dim_backlight", "0")]);
     assert_eq!(r.screen(), "display");
-    // The backlight's timeout: a choice of five, a tap choosing.
+    // The dim level: saved as the level screen closes.
     r.tap(row(2));
+    assert_eq!(r.screen(), "level");
+    r.tap(Hit::Custom(2));
+    assert!(taken(&r.config).is_empty());
+    r.tap(Hit::Key(Key::Cancel));
+    assert_eq!(setting(taken(&r.config)), vec![pair("backlight_dim_level", "3")]);
+    assert_eq!(r.screen(), "display");
+    // The backlight's timeout: a choice of five, a tap choosing.
+    r.tap(row(3));
     assert_eq!(r.screen(), "backlight_timeout");
     all_large(&r);
     assert_eq!(r.rows(), vec![0, 1, 2, 3, 4]);

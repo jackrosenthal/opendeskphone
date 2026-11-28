@@ -477,7 +477,7 @@ fn the_theme_selector_is_the_idle_screen_with_a_bubble() {
     r.show("settings");
     r.tap(Key::Digit(3)); // Display
     assert_eq!(r.ui.screen_name(), "display");
-    r.tap(Key::Digit(4)); // Theme
+    r.tap(Key::Digit(5)); // Theme
     assert_eq!(r.ui.screen_name(), "theme");
     let all = wallpaper::all();
     let skin = Theme::for_model(Model::D65);
@@ -544,7 +544,7 @@ fn the_theme_selector_is_the_idle_screen_with_a_bubble() {
     assert_eq!(at(&r.frame(), 470, 5), skin.title_bg);
     assert!(r.commands().is_empty());
     // Select saves the one that is showing.
-    r.tap(Key::Digit(4));
+    r.tap(Key::Digit(5));
     r.tap(Key::Right);
     r.tap(Key::Right);
     r.tap(Key::Soft(1));
@@ -560,7 +560,7 @@ fn a_fixed_wallpaper_cannot_be_changed_in_the_menu() {
     let mut r = Rig::new(UiConfig { theme: "slate".into(), theme_locked: true, ..UiConfig::default() });
     r.show("settings");
     r.tap(Key::Digit(3));
-    r.tap(Key::Digit(4));
+    r.tap(Key::Digit(5));
     assert_eq!(r.ui.screen_name(), "theme");
     r.tap(Key::Right);
     r.tap(Key::Soft(1));
@@ -622,9 +622,9 @@ fn gray_models_are_unaffected() {
         }
         assert_eq!(named.frame(), plain.frame(), "{model}: display menu");
         assert_eq!(pictured.frame(), plain.frame(), "{model}: display menu");
-        // Brightness, Contrast, Dim when idle, Backlight timeout: a fifth
-        // item would open on 5.
-        named.tap(Key::Digit(5));
+        // Brightness, Contrast, Dim when idle, Dim level, Backlight timeout:
+        // a sixth item would open on 6.
+        named.tap(Key::Digit(6));
         assert_eq!(named.ui.screen_name(), "display", "{model}");
     }
 }
@@ -994,7 +994,7 @@ fn the_theme_softkey() {
     gray.show("settings");
     gray.tap(Key::Digit(3));
     assert_eq!(gray.ui.screen_name(), "display");
-    gray.tap(Key::Digit(5));
+    gray.tap(Key::Digit(6));
     assert_ne!(gray.ui.screen_name(), "theme");
 }
 

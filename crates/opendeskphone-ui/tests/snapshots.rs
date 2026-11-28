@@ -974,7 +974,7 @@ fn d80_touch() {
     touch(&mut r, Hit::Custom(2));
     r.shot("t23-brightness");
     touch(&mut r, Hit::Key(Key::Cancel));
-    touch(&mut r, row(3));
+    touch(&mut r, row(4));
     assert_eq!(r.ui.screen_name(), "theme");
     r.shot("t24-theme");
     // The sheet shows the theme in use, second, after the one before it.
@@ -1008,7 +1008,7 @@ fn d80_touch() {
     r.shot("t33-paging");
     r.show("settings");
     touch(&mut r, row(2));
-    touch(&mut r, row(2));
+    touch(&mut r, row(3));
     assert_eq!(r.ui.screen_name(), "backlight_timeout");
     r.shot("t34-backlight-timeout");
 }

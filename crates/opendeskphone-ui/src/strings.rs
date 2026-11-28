@@ -191,6 +191,7 @@ pub const STATUS: &str = "Status";
 pub const BRIGHTNESS: &str = "Brightness";
 pub const CONTRAST: &str = "Contrast";
 pub const DIM_BACKLIGHT: &str = "Dim when idle";
+pub const DIM_LEVEL: &str = "Dim level";
 pub const BACKLIGHT_TIMEOUT: &str = "Backlight timeout";
 pub const RINGTONE: &str = "Ringtone";
 pub const THEME: &str = "Theme";
