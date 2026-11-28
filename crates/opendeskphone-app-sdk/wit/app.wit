@@ -6,7 +6,7 @@
 /// at once and deliver their result later as an event, so an app never
 /// blocks the phone.  An app is given the interfaces its component
 /// imports, and no others.
-package opendeskphone:app@3.1.0;
+package opendeskphone:app@3.1.1;
 
 interface types {
   /// A widget handle.  Handle 0 is the app's root window (the app content

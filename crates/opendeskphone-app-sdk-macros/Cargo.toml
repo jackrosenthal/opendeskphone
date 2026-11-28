@@ -13,7 +13,7 @@ repository.workspace = true
 proc-macro = true
 
 [dependencies]
-opendeskphone-svg = { path = "../opendeskphone-svg", version = "=3.1.0" }
+opendeskphone-svg = { path = "../opendeskphone-svg", version = "=3.1.1" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", default-features = false, features = ["parsing", "printing", "proc-macro"] }

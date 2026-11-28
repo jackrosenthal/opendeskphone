@@ -49,7 +49,7 @@ members = [
 exclude = ["apps"]
 
 [workspace.package]
-version = "3.1.0"
+version = "3.1.1"
 edition = "2024"
 license = "GPL-2.0-or-later"
 authors = ["Jack Rosenthal <jack@rosenth.al>"]
@@ -61,7 +61,7 @@ dpma-ast = { path = "open-dpma/crates/dpma-ast" }
 dpma-sys = { path = "open-dpma/crates/dpma-sys" }
 # dpma-proto is published with this requirement.  It is exact, so that cargo
 # refuses to build when it is not the version above.
-dpma-bytes = { path = "open-dpma/crates/dpma-bytes", version = "=3.1.0" }
+dpma-bytes = { path = "open-dpma/crates/dpma-bytes", version = "=3.1.1" }
 dpma-proto = { path = "open-dpma/crates/dpma-proto" }
 bstr = { version = "1.13", default-features = false, features = ["std"] }
 bindgen = "0.73"

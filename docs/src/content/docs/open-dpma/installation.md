@@ -73,7 +73,7 @@ In the Asterisk CLI:
     ```text
     *CLI> module show like res_open_dpma
     *CLI> digium_phones show version
-    Open DPMA version 3.1.0
+    Open DPMA version 3.1.1
     ```
 
 2. Check the `[general]` settings, especially the two authentication lines:

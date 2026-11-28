@@ -342,7 +342,7 @@ async fn values_follow_the_state() {
     let r = request(p.addr, "GET", "/metrics", &[]).await;
     let m = parse(&r.body);
 
-    assert_eq!(value(&m, "opendeskphone_build_info", &[("version", "3.1.0"), ("model", "D60")]), 1.0);
+    assert_eq!(value(&m, "opendeskphone_build_info", &[("version", "3.1.1"), ("model", "D60")]), 1.0);
     assert_eq!(value(&m, "opendeskphone_system_phase", &[("phase", "running")]), 1.0);
     assert_eq!(value(&m, "opendeskphone_system_phase", &[("phase", "starting")]), 0.0);
     assert_eq!(value(&m, "opendeskphone_time_synced", &[]), 1.0);

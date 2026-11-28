@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "dpma-ast"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "dpma-bytes",
  "dpma-sys",
@@ -1120,14 +1120,14 @@ dependencies = [
 
 [[package]]
 name = "dpma-bytes"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "bstr",
 ]
 
 [[package]]
 name = "dpma-proto"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -1151,14 +1151,14 @@ dependencies = [
 
 [[package]]
 name = "dpma-sys"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "bindgen",
 ]
 
 [[package]]
 name = "dpma-tests"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "dpma-xtask"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "eff"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "aes",
  "md-5 0.10.6",
@@ -2169,7 +2169,7 @@ checksum = "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4"
 
 [[package]]
 name = "jffs2-image"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "clap",
  "miniz_oxide 0.8.9",
@@ -2288,7 +2288,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "lightup-game"
-version = "3.1.0"
+version = "3.1.1"
 
 [[package]]
 name = "linux-raw-sys"
@@ -2613,7 +2613,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "opendeskphone"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "async-trait",
  "clap",
@@ -2653,7 +2653,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-app-sdk"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
  "opendeskphone-app-sdk-macros",
@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-app-sdk-macros"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-svg",
  "proc-macro2",
@@ -2673,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-apps"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "clap",
  "dpma-proto",
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-bt"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "libc",
  "log",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-config"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "buffa",
  "buffa-codegen",
@@ -2720,11 +2720,11 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-ctrl"
-version = "3.1.0"
+version = "3.1.1"
 
 [[package]]
 name = "opendeskphone-dpma"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "async-trait",
  "dpma-proto",
@@ -2746,14 +2746,14 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-early"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-ctrl",
 ]
 
 [[package]]
 name = "opendeskphone-hal"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "clap",
  "libc",
@@ -2763,7 +2763,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-image"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "clap",
  "eff",
@@ -2777,7 +2777,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-media"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "aes",
  "audio-codec",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-net"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "libc",
  "log",
@@ -2800,7 +2800,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-recovery"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "bzip2-rs",
  "eff",
@@ -2817,7 +2817,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-sip"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-state"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "log",
  "serde",
@@ -2848,14 +2848,14 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-svg"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "resvg",
 ]
 
 [[package]]
 name = "opendeskphone-ui"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "bytemuck",
  "fontdue",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-update"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "eff",
  "libc",
@@ -2882,7 +2882,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-vpm"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "libc",
  "serde_json",
@@ -2890,7 +2890,7 @@ dependencies = [
 
 [[package]]
 name = "opendeskphone-web"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "base64 0.22.1",
  "brotli",
@@ -3529,7 +3529,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "res_open_dpma"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "dpma-ast",
  "dpma-proto",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "test-inputs"
-version = "3.1.0"
+version = "3.1.1"
 
 [[package]]
 name = "thiserror"
@@ -4423,7 +4423,7 @@ dependencies = [
 
 [[package]]
 name = "timer-face"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "fontdue",
 ]
@@ -5677,7 +5677,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "clap",
 ]

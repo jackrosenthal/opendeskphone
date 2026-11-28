@@ -36,7 +36,7 @@ enum HealthState {
 
 message SystemInfo {
   Model model = 1;
-  // "3.1.0"
+  // "3.1.1"
   string version = 2;
   SystemPhase phase = 3;
   string mac = 4;

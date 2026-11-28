@@ -57,7 +57,7 @@ The macro `glyph!` makes the glyph from an SVG file while the app compiles.  The
 
 ```toml
 [dependencies]
-opendeskphone-app-sdk = { version = "=3.1.0", features = ["glyph"] }
+opendeskphone-app-sdk = { version = "=3.1.1", features = ["glyph"] }
 ```
 
 The path is relative to the source file that has the macro, as for `include_bytes!`, and editing the SVG file recompiles the app.  The macro renders the SVG as tall as the phone's status icons, at each of their heights: 13, 15, 22, and 44 pixels.  Only the shape counts: the phone tints the glyph.  The app doesn't compile if the SVG file:

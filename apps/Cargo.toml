@@ -3,7 +3,7 @@ resolver = "3"
 members = ["contacts", "voicemail", "status", "parking", "queues", "hotdesking", "calendar", "alarms", "diagnostics", "desksparrow", "boxpusher", "boxpusher/game", "lightup", "lightup/game", "timer", "timer/face"]
 
 [workspace.package]
-version = "3.1.0"
+version = "3.1.1"
 edition = "2024"
 license = "GPL-2.0-or-later"
 authors = ["Jack Rosenthal <jack@rosenth.al>"]

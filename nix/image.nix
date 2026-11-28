@@ -31,10 +31,10 @@
   dspFirmware,
   cacert,
   apps ? null,
-  version, # e.g., "3.1.0"
+  version, # e.g., "3.1.1"
 }:
 let
-  # Stock-style version string: 3_1_0.
+  # Stock-style version string: 3_1_1.
   wireVersion = lib.replaceStrings [ "." ] [ "_" ] version;
 
   models = {

@@ -22,7 +22,7 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "opendeskphone-web-frontend";
-  version = "3.1.0";
+  version = "3.1.1";
   inherit src;
   sourceRoot = "source/web";
   nativeBuildInputs = [

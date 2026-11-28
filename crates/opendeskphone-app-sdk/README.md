@@ -20,7 +20,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-opendeskphone-app-sdk = "=3.1.0"
+opendeskphone-app-sdk = "=3.1.1"
 
 [profile.release]
 opt-level = "s"

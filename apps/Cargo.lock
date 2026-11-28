@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "alarms"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -79,7 +79,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
 name = "boxpusher"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "boxpusher-game",
  "opendeskphone-app-sdk",
@@ -87,11 +87,11 @@ dependencies = [
 
 [[package]]
 name = "boxpusher-game"
-version = "3.1.0"
+version = "3.1.1"
 
 [[package]]
 name = "calendar"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -144,7 +144,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "contacts"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -160,14 +160,14 @@ dependencies = [
 
 [[package]]
 name = "desksparrow"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
 
 [[package]]
 name = "diagnostics"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -228,7 +228,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hotdesking"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -277,7 +277,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "lightup"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "lightup-game",
  "opendeskphone-app-sdk",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "lightup-game"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "clap",
 ]
@@ -310,14 +310,14 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opendeskphone-app-sdk"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "wit-bindgen",
 ]
 
 [[package]]
 name = "parking"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -343,7 +343,7 @@ dependencies = [
 
 [[package]]
 name = "queues"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "status"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "timer"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
  "timer-face",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "timer-face"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "fontdue",
 ]
@@ -467,7 +467,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "voicemail"
-version = "3.1.0"
+version = "3.1.1"
 dependencies = [
  "opendeskphone-app-sdk",
 ]
