@@ -93,14 +93,11 @@ static int bcmring_gpio_direction_output(struct gpio_chip *gc,
 
 	raw_spin_lock_irqsave(&bg->lock, flags);
 	/*
-	 * The vendor driver switches the direction first and writes the level
-	 * afterwards.  Writing the latch first avoids a glitch, provided the
-	 * data latch is writable while the line is an input.
+	 * The data latch ignores writes while the line is an input (seen on a
+	 * D65), so the level can only be written after the direction.  Until
+	 * then the line drives whatever the latch last held.
 	 */
-	bcmring_gpio_rmw(bg, BCMRING_GPIO_DATA, BIT(offset),
-			 value ? BIT(offset) : 0);
 	bcmring_gpio_rmw(bg, BCMRING_GPIO_DIR, 0, BIT(offset));
-	/* Write the level again in case the latch ignored the first write. */
 	bcmring_gpio_rmw(bg, BCMRING_GPIO_DATA, BIT(offset),
 			 value ? BIT(offset) : 0);
 	raw_spin_unlock_irqrestore(&bg->lock, flags);
