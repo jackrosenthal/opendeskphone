@@ -1,0 +1,14 @@
+[package]
+name = "timer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+opendeskphone-app-sdk.workspace = true
+timer-face = { path = "face" }

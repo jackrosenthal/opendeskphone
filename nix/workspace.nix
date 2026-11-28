@@ -35,11 +35,13 @@ let
       # The DPMA module for Asterisk and its libraries, two of which the
       # firmware uses too (dpma-proto and dpma-bytes).
       (root + "/open-dpma")
-      # The Light Up app's game library, which the host's test of that app
-      # (crates/opendeskphone-apps/tests/lightup.rs) links, and the manifest of
-      # the apps' workspace, from which it inherits its package fields.
+      # The Light Up app's game library and the Timer app's digits, which
+      # the host's tests of those apps (crates/opendeskphone-apps/tests)
+      # link, and the manifest of the apps' workspace, from which they
+      # inherit their package fields.
       (root + "/apps/Cargo.toml")
       (root + "/apps/lightup/game")
+      (root + "/apps/timer/face")
       # Service definitions, read by the build scripts of opendeskphone-config
       # and opendeskphone-web.
       (root + "/proto")

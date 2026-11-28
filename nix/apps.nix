@@ -36,6 +36,9 @@ let
         (root + "/crates/opendeskphone-app-sdk")
         (root + "/crates/opendeskphone-app-sdk-macros")
         (root + "/crates/opendeskphone-svg")
+        # The fonts of the Timer app's digits, made into tables as it builds.
+        (root + "/assets/fonts/Roboto-Thin.ttf")
+        (root + "/assets/fonts/bitmap/helvB24-100dpi.bdf")
       ];
     };
     cargoRoot = dir;

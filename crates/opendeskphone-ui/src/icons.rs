@@ -46,7 +46,7 @@ pub fn names() -> Vec<&'static str> {
     crate::atlas::ICONS_COLOR.iter().map(|r| r.name).collect()
 }
 
-const TWINS: [(&str, &str); 20] = [
+const TWINS: [(&str, &str); 21] = [
     ("app-alarms", "alarm"),
     ("app-app", "apps"),
     ("app-boxpusher", "boxpusher"),
@@ -65,6 +65,7 @@ const TWINS: [(&str, &str); 20] = [
     ("app-queues", "conference"),
     ("app-settings", "settings"),
     ("app-status", "presence"),
+    ("app-timer", "timer"),
     ("app-update", "update"),
     ("app-voicemail", "voicemail"),
 ];

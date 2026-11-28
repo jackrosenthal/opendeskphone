@@ -62,4 +62,7 @@ opendeskphone-ui = { path = "../opendeskphone-ui" }
 # The Light Up test makes the puzzles the app is expected to make, with the
 # app's own game library (in the app's directory) built for this machine.
 lightup-game = { path = "../../apps/lightup/game" }
+# The Timer test reads the digits on screen by drawing them as the app
+# does, with the app's library of large digits.
+timer-face = { path = "../../apps/timer/face" }
 png = "0.18"

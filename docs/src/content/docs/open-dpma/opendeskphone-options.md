@@ -137,7 +137,7 @@ Built-in apps to hide.  A disabled app is missing from the list of apps and cann
 - **Repeatable:** each occurrence adds names.
 - **Default:** none.
 
-Built-in app names: `alarms`, `boxpusher`, `calendar`, `contacts`, `desksparrow`, `diagnostics`, `hotdesking`, `lightup`, `parking`, `queues`, `status`, and `voicemail`.  Disable apps for services that the server lacks, e.g., `queues` without `app_queue`.
+Built-in app names: `alarms`, `boxpusher`, `calendar`, `contacts`, `desksparrow`, `diagnostics`, `hotdesking`, `lightup`, `parking`, `queues`, `status`, `timer`, and `voicemail`.  Disable apps for services that the server lacks, e.g., `queues` without `app_queue`.
 
 ### `opendeskphone_theme`
 

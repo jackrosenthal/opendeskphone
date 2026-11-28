@@ -300,6 +300,7 @@ fn fabricate(store: &Store, model: Model) {
             app("boxpusher", "Box Pusher", "Push every box onto a target"),
             app("desksparrow", "Desk Sparrow", "A one-key flying game"),
             app("lightup", "Light Up", "Light every cell of the grid"),
+            app("timer", "Timer", "A countdown timer and a stopwatch"),
         ];
     });
     store.update::<st::Ui, _>(|u| {

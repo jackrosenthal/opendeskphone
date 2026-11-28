@@ -424,14 +424,16 @@ mod tests {
     #[test]
     fn the_interface_names_every_icon_of_the_phone() {
         let mut ours: Vec<&str> = ICONS.iter().map(|i| icon_name(*i)).collect();
-        // The boot screen's artwork is not an icon for apps.  Neither are
-        // the five twins that are not status icons too, because an app
-        // names the app icon, e.g., `app-calendar`, and another case in the
-        // interface's enum would make the phone refuse apps built without
-        // it.
-        let twins = ["boxpusher", "calendar", "desksparrow", "diagnostics", "lightup"];
-        let mut phone: Vec<&str> =
-            opendeskphone_ui::icons::names().into_iter().filter(|n| *n != "splash" && !twins.contains(n)).collect();
+        // The boot screen's artwork is not an icon for apps.  Another case
+        // in the interface's enum would make the phone refuse apps built
+        // without it, so neither are the six twins that are not status
+        // icons too (an app names the app icon, e.g., `app-calendar`), nor
+        // the Timer's icon, which the phone finds by the app's name.
+        let twins = ["boxpusher", "calendar", "desksparrow", "diagnostics", "lightup", "timer"];
+        let mut phone: Vec<&str> = opendeskphone_ui::icons::names()
+            .into_iter()
+            .filter(|n| !["splash", "app-timer"].contains(n) && !twins.contains(n))
+            .collect();
         ours.sort();
         phone.sort();
         assert_eq!(ours, phone);
